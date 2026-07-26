@@ -1,5 +1,5 @@
 (ns nihilite.test.hooks-cell-backed
-  "Wave 6 Task 3 contract test — `nihilite.hooks/install!`,
+  "Cell-backed hook contract test — `nihilite.hooks/install!`,
    `hot-swap!`, `uninstall!` must operate through a stable
    per-keyword cell-backed delegating IFn. The same delegating
    IFn object identity MUST be returned to the registry by both
@@ -44,7 +44,7 @@
      :method-name "hotSwapProbe"
      :position     :entry
      :arity        1
-     :note         "Wave 6 Task 3 cell-backed contract test"}))
+     :note         "cell-backed contract test"}))
 
 (deftest install-creates-stable-bridge
   (setup-target!)
@@ -126,7 +126,7 @@
     (nihilite.hooks/install! :on-test-signal f)
     (let [r (nihilite.registry/dispatch "on-test-signal"
                                         nil (object-array 0))]
-      ;; Per Wave 6 Task 3 EOC: user-hook throws are isolated, the
+      ;; User-hook throws are isolated: the
       ;; Minecraft thread should not see them; the dispatcher
       ;; returns nil and records nothing as :ok.
       (is (nil? r) "throwing user-hook returns nil; no :ok / :fired marker"))))

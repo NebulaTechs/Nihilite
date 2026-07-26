@@ -4,15 +4,13 @@
    than as IFn (the IFn-as-atom shortcut for map lookup was
    removed from clojure 1.12's Atom impl).
 
-   Wave 6 Task 3: cell + delegating-bridge pattern.
-     - install! registers ONE stable delegating IFn
-       `(fn [ctx] (when-let [f @cell] (f ctx)))` as the
-       registry's bridge, then resets the per-keyword cell to
-       the user IFn.
+   The cell + delegating-bridge pattern keeps a single stable
+   bridge IFn across install!/hot-swap!/uninstall!:
+     - install! registers the delegating IFn as the registry's
+       bridge, then resets the per-keyword cell to the user IFn.
      - hot-swap! only resets the cell.
-     - uninstall! clears the cell AND removes the spec AND
-       drops the cached bridge, so a re-install! creates a
-       fresh stable delegating IFn."
+     - uninstall! clears the cell, removes the spec, and drops
+       the cached bridge so a re-install! creates a fresh one."
   (:require [clojure.tools.logging :as log]
             [nihilite.registry :as reg]))
 
@@ -94,8 +92,8 @@
 
 (defn hot-swap!
   "Atomically replace the IFn associated with kw. Returns
-   `new-ifn`. Wave 6 Task 3 contract: only resets the cell;
-   the spec remains registered with the same bridge object."
+   `new-ifn`. Only resets the cell — the spec remains
+   registered with the same bridge object on the JVM side."
   [kw new-ifn]
   (reset! (cell-for kw) new-ifn)
   new-ifn)

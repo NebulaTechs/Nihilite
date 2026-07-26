@@ -13,9 +13,9 @@
    a new `:my-runtime` keyword at any time without touching this
    ns or the Java shell.
 
-   v0 ships the `:minecraft` defmethods only (Wave 3 deliverable,
-   `examples/minecraft/init.clj`). Other runtimes land as future
-   `examples/<runtime>/init.clj` files.
+    v0 ships the `:minecraft` defmethods only — see
+    `examples/minecraft/init.clj`. Other runtimes land as future
+    `examples/<runtime>/init.clj` files.
 
    The forward-path for Minecraft is:
      (nihilite.facade/send-system-message!

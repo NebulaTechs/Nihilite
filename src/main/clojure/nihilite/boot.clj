@@ -12,12 +12,6 @@
    - stop!      closes that listener idempotently.
    - load-init! loads a single file from -Dnihilite.init (passed by path).
 
-   The earlier multi-listener mode (`--transport`, `--no-transport`,
-   `--transport-port=<n>`, `-Dnihilite.transport?`,
-   `-Dnihilite.transport-port`, `-Dnihilite.http.port`) has been
-   REMOVED. ServerMain no longer recognizes any of those flags; the
-   dispatcher owns one socket, always.
-
    Anything more complex belongs in the init file: (require ...),
    (def ...), protocol extensions, hook wiring, etc. Nihilite itself
    does NOT auto-discover files."

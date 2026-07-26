@@ -24,26 +24,25 @@
   "Append `entry` to the shared history. No-op (returns the previous
    deque unchanged) when `entry` equals the most-recent entry.
 
-   When the post-add count exceeds `history-cap`, the oldest entry
-   is dropped. The dedup check + cap check + drop happen inside the
-   `swap!` function so concurrent adders cannot race past the cap."
+   When `count` reaches `history-cap`, every further insert becomes
+   `pop ∘ conj` (each O(1) for `PersistentQueue`), so the cap-exceeded
+   path never rebuilds the queue. The dedup check + cap check + drop
+   all happen inside `swap!` so concurrent adders cannot race past
+   the cap."
   [^String entry]
   (let [e (str entry)]
     (swap! history
            (fn [q]
-             (let [newest (when (seq q) (last q))
-                   dedup? (and newest (= newest e))]
+             (let [newest (when (seq q) (last q))]
                (cond
-                 dedup?
+                 (and newest (= newest e))
                  q
 
                  (< (count q) history-cap)
                  (conj q e)
 
                  :else
-                 (let [overflowed (conj q e)
-                       dropped    (pop overflowed)]
-                   (reduce conj PersistentQueue/EMPTY dropped))))))))
+                 (pop (conj q e))))))))
 
 (defn history-reset!
   "Clear all history. Test-only — never call from production code."

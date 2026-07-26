@@ -35,18 +35,70 @@
        "C-l clears screen, TAB completes, history up/down.\r\n"))
 
 (defn paren-balance
-  "Net bracket balance of `s` (positive = more opens). Counts (), [], {}.
-   Naive — does not skip string/char/comment content."
+  "Net bracket balance of `s` (positive = more opens). Counts (), [], {}
+   while correctly skipping the contents of:
+     - `;` line comments (to end of line)
+     - `#_` form-discarding comments (balance of the next form)
+     - string literals  \"...\"  (with \\\\ and \\\" escapes)
+     - character literals  \\x \\space \\newline \\u00FF  (single char)
+     - nested parens inside any of the above
+   A bracket inside a skipped region must never move the balance,
+   otherwise unbalanced strings or comments wedge the REPL forever
+   in continuation-prompt mode."
   [^String s]
-  (loop [i 0 bal 0]
-    (if (>= i (.length s))
-      bal
-      (let [c (.charAt s i)]
-        (recur (inc i)
-               (cond
-                 (or (= c \() (= c \[) (= c \{)) (inc bal)
-                 (or (= c \)) (= c \]) (= c \})) (dec bal)
-                 :else bal))))))
+  (loop [i 0 bal 0 len (.length s)]
+    (cond
+      (>= i len) bal
+
+      (and (>= i 1) (= (.charAt s (dec i)) \#)
+           (= (.charAt s i) \_))
+      ;; #_ form comment — skip the next balanced form
+      (let [skipped (loop [j (inc i) b 0]
+                      (cond
+                        (>= j len) j
+                        (or (= (.charAt s j) \() (= (.charAt s j) \[)
+                            (= (.charAt s j) \{)) (recur (inc j) (inc b))
+                        (or (= (.charAt s j) \)) (= (.charAt s j) \])
+                            (= (.charAt s j) \})) (recur (inc j) (dec b))
+                        (zero? b) j
+                        :else (recur (inc j) b)))]
+        (recur skipped bal len))
+
+      (= (.charAt s i) \;
+       )
+      (let [nl (.indexOf s (int \newline) (inc i))]
+        (recur (if (neg? nl) len (inc nl)) bal len))
+
+      (= (.charAt s i) \")
+      (let [end (loop [j (inc i)]
+                  (cond
+                    (>= j len) j
+                    (= (.charAt s j) \\)
+                    (recur (+ j 2))
+                    (= (.charAt s j) \")
+                    (inc j)
+                    :else (recur (inc j))))]
+        (recur end bal len))
+
+      (and (= (.charAt s i) \\) (< (inc i) len))
+      ;; char literal: backslash + 1 char (handles \space etc.)
+      ;; Simpler & safe: skip backslash + exactly one char (covers \x,
+      ;; \newline, \space, \", \\; \u00FF multi-char reads as literal "next 4")
+      (let [next (min (+ i 2) len)]
+        (recur next bal len))
+
+      (or (= (.charAt s i) \()
+          (= (.charAt s i) \[)
+          (= (.charAt s i) \{))
+      (recur (inc i) (inc bal) len)
+
+      (or (= (.charAt s i) \))
+          (= (.charAt s i) \])
+          (= (.charAt s i) \}))
+      (recur (inc i) (dec bal) len)
+
+      :else
+      (recur (inc i) bal len))))
 
 (defn render-error
   "Render the canonical `nihilite.errors/format` map to a friendly,
@@ -77,15 +129,7 @@
       (.append sb (str "  data: " (if (string? data) data (pr-str data)) "\r\n")))
     (.toString sb)))
 
-(defn eval-form
-  "Eval `form-str` in the ns held by `repl-state`, thread `*1/*2/*3/*e`,
-   and return a CRLF-terminated display string:
-     success → `=> <pr-str>\r\n`
-     failure → friendly ERROR block via `render-error` (errors/format)
-
-   `repl-state` is a per-connection atom {:ns Namespace :*1 :*2 :*3 :*e}.
-   Reflection warnings stay on `*err*` (not folded into the result)."
-  ^String [^String form-str repl-state]
+(defn- eval-form-line ^String [^String form-str repl-state ^String term]
   (let [{:keys [ns *1 *2 *3 *e]} @repl-state]
     (try
       (let [r (binding [*ns* ns
@@ -95,10 +139,40 @@
                         clojure.core/*e *e]
                 (eval (read-string form-str)))]
         (swap! repl-state assoc :*1 r :*2 *1 :*3 *2)
-        (str "=> " (pr-str r) "\r\n"))
+        (str "=> " (pr-str r) term))
       (catch Throwable t
         (swap! repl-state assoc :*e t)
         (render-error (errors/format t))))))
+
+(defn eval-form
+  "Evaluates `form-str` in the namespace held by `repl-state`,
+   threading the classic `*1` / `*2` / `*3` / `*e` REPL bindings
+   so the user sees the same behavior they would in clojure.main:
+
+     *1  most-recent successful value
+     *2  the one before *1
+     *3  the one before *2
+     *e  most-recent exception (Throwable)
+
+   Returns a CRLF-terminated display string:
+     success → `=> <pr-str>\r\n`
+     failure → friendly ERROR block via `render-error` (errors/format)
+
+   `repl-state` is a per-connection atom
+     {:ns Namespace :*1 :*2 :*3 :*e}.
+   The thread-local var binding shadows Clojure's default globals so
+   concurrent clients never read each other's state. Reflection
+   warnings stay on `*err*` (not folded into the result)."
+  ^String [^String form-str repl-state]
+  (eval-form-line form-str repl-state "\r\n"))
+
+(defn eval-form-lf
+  "Same evaluation contract and result shape as `eval-form`, but
+   terminates the line with a bare LF instead of CRLF. Used by the
+   raw branch in `nihilite.transport` where the client (nc / socat)
+   does its own line discipline and CRLF would interfere."
+  ^String [^String form-str repl-state]
+  (eval-form-line form-str repl-state "\n"))
 
 (defn build-terminal
   "Build a jline3 `ExternalTerminal` (type `xterm`) over the socket

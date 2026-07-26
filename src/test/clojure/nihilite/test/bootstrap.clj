@@ -1,5 +1,5 @@
 (ns nihilite.test.bootstrap
-  "Bootstrap contract test (Wave 6 Task 1).
+  "Bootstrap contract test.
 
    Smoke for the test runner itself. Asserts `clojure.test`-shape
    primitives and the `nihilite.test.runner/TEST_NAMESPACES` registry.

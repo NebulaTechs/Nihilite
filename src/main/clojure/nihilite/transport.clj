@@ -55,7 +55,6 @@
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
             [clojure.walk :as walk]
-            [nihilite.errors :as errors]
             [nihilite.readline :as readline]
             [nrepl.bencode :as bencode]
             [nrepl.server :as nrserver]
@@ -289,70 +288,15 @@
       (.write out (.getBytes (raw-crlf s) "UTF-8"))
       (.flush out))))
 
-(defn- repl-caught-format
-  "Format a thrown Throwable to a readable multi-line string mirroring
-   clojure.main/repl-caught: first line is 'class-name: message', then
-   `first 5 frames` of the stack trimmed to the nihilite.* + user*
-   frames (we filter out Clojure compiler/REPL noise)."
-  ^String [^Throwable t]
-  (let [cls (.getName (class t))
-        m   (.getMessage t)
-        msg (if (or (nil? m) (clojure.string/blank? m)) "" (str ": " m))
-        user-frame? (fn [^String f]
-                      (or (clojure.string/includes? f "nihilite.")
-                          (clojure.string/includes? f "user/")
-                          (clojure.string/includes? f "user$")))
-        frames (->> (.getStackTrace t)
-                    seq                 ; java array → seq of StackTraceElement
-                    (map str)
-                    (filter user-frame?))
-        capped (take 5 frames)
-        stack  (if (seq capped)
-                 (str "\n  " (clojure.string/join "\n  " capped))
-                 "")]
-    (str "ERROR " cls msg stack)))
-
-(defn- repl-result-format
-  "Format a successful evaluation result the classic way:
-     '=> <pr-str>' on one line, then a blank line for legibility.
-   Empty `*ns*` value still shows '=> #' to make it obvious the prompt
-   bound something."
-  ^String [v]
-  (str "=> " (pr-str v) "\n"))
-
 (defn- safe-eval-line
-  "Eval `form-str` in `ns`, update the per-connection REPL state atom
-   AND thread-local `*1`/`*2`/`*3`/`*e` so the user sees a classic
-   clojure.main/repl behavior:
-     - `*1`  = most-recent successful value
-     - `*2`  = the one before
-     - `*3`  = the one before *2
-     - `*e`  = most-recent exception (Throwable)
-   Returns a UTF-8 line including a trailing newline:
-     Success: '=> <pr-str>'.
-     Failure: 'ERROR <class>: <msg>\\n  <frames>'.
-   Per-connection state is held in `repl-state` (atom); the thread-local
-   var binding shadows Clojure's default globals so concurrent clients
-   never read each other's state."
+  "Thin wrapper: delegates the eval+`*1`/`*2`/`*3`/`*e` state to
+   `nihilite.readline/eval-form-lf`, then sets the namespace on the
+   per-connection state atom. The raw branch uses the LF-terminated
+   variant because the client (nc / socat) does its own line
+   discipline and CRLF would interfere."
   ^String [^String form-str ns repl-state]
-  (try
-    (let [old1  (:*1  @repl-state)
-          old2  (:*2  @repl-state)
-          r     (binding [*ns* ns
-                         *1  old1
-                         *2  old2
-                         *3  (:*3 @repl-state)
-                         *e  (:*e @repl-state)]
-                   (eval (read-string form-str)))]
-      (swap! repl-state assoc
-             :ns  ns
-             :*1  r
-             :*2  old1
-             :*3  old2)
-      (repl-result-format r))
-    (catch Throwable t
-      (swap! repl-state assoc :*e t)
-      (readline/render-error (errors/format t)))))
+  (swap! repl-state assoc :ns ns)
+  (readline/eval-form-lf form-str repl-state))
 
 ;; ===========================================================================
 
@@ -437,7 +381,7 @@
         repl-state (atom {:ns user-ns :*1 nil :*2 nil :*3 nil :*e nil})
         write! (fn [^String s] (raw-write! raw-out s))]
     (try
-      ;; IAC nudge is side-effect only; JLine keeps the weadline snug ~
+      ;; IAC nudge is side-effect only; jline3 keeps the readline snug
       (negotiate-echo-mode! sock buf-in raw-out)
       (raw-write! raw-out readline/banner)
       (raw-write! raw-out (str "Connect time: " (java.time.LocalTime/now) "\n"))

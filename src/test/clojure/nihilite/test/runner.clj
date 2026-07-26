@@ -1,5 +1,5 @@
 (ns nihilite.test.runner
-  "No-new-dependency Clojure contract test runner (Wave 6 Task 1).
+  "No-new-dependency Clojure contract test runner.
 
    Wired into Gradle as the `clojureContractTest` JavaExec task:
      mainClass   = clojure.main

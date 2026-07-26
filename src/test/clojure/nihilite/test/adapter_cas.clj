@@ -1,5 +1,5 @@
 (ns nihilite.test.adapter-cas
-  "Wave 6 Task 7 — `nihilite.adapter/install-default!` is
+  "`nihilite.adapter/install-default!` is
    compare-and-set: two concurrent non-forced installs admit
    exactly one winner; force? replaces. `default-adapter` and
    `set-default-adapter!` obey the same record shape."

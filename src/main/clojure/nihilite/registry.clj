@@ -23,10 +23,9 @@
    cell-backed IFn from the spec. Errors are swallowed after
    logging; the instrumented engine never sees a Nihilite exception.
 
-   Anything more complex (custom phase injection,RETURN/cancel/
-   override semantics, multi-spec-per-method fanout) is explicitly
-   future work — see `nihilite.hooks.plan-executed` Wave 2 close-
-   out notes for the slice this ns is open against."
+    Anything more complex (custom phase injection, RETURN/cancel/
+    override semantics, multi-spec-per-method fanout) is explicitly
+    future work and is not in this ns's open surface today."
   (:require [clojure.core :as core]
             [clojure.tools.logging :as log])
   (:import [java.util.concurrent ConcurrentHashMap]))

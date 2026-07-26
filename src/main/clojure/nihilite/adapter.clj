@@ -8,10 +8,10 @@
    new runtime is still easy — implement the protocol via
    `install-default!` from the runtime's init file.
 
-   The v0 `:minecraft/vanilla` implementation lives in
-   `examples/minecraft/init.clj` (Wave 3 deliverable). It uses
-   `(defrecord MinecraftVanillaAdapter [] nihilite.adapter/BootSentinel ...)`
-   and calls `(nihilite.adapter/install-default! :minecraft/vanilla recordInstance)`.
+    The v0 `:minecraft/vanilla` implementation lives in
+    `examples/minecraft/init.clj`. It uses
+    `(defrecord MinecraftVanillaAdapter [] nihilite.adapter/BootSentinel ...)`
+    and calls `(nihilite.adapter/install-default! :minecraft/vanilla recordInstance)`.
 
    Workers in `nihilite.agent.Agent` query `default-adapter` at
    boot and call its `wait-until-runtime-ready!` instead of doing

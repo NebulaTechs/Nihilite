@@ -96,7 +96,7 @@
 (defn- safe-data [^Throwable ex]
   (let [raw (ex-data ex)]
     (when (map? raw)
-      ;; keep onwy weaw usew ex-data — compiwew intewnaaws go night-night ~
+      ;; Keep only user-owned ex-data — compiler internals do not surface.
       (let [data (into {} (remove (fn [[k _]] (compiler-internal-key? k)) raw))]
         (when (seq data)
           (try

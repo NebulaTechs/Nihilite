@@ -277,7 +277,7 @@
    (reify Completer
      (complete [_this _reader line candidates]
        (let [prefix  (.word ^org.jline.reader.ParsedLine line)
-             ;; fiwst wook wide, then cap the cozy TAB bundle ~
+             ;; first look wide, then cap the TAB bundle
              matched (prefix-matches (completions-source ns extra-ns-names) prefix)
              capped  (capped-list matched)]
          (.addAll ^java.util.List candidates capped))))))

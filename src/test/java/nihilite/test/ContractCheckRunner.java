@@ -16,7 +16,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Wave 6 Task 1 — Java contract runner + Error Observability Contract
+ * Java contract runner + Error Observability Contract
  * (EOC) scanner. Wired into Gradle as the {@code contractCheck}
  * JavaExec task.
  *
@@ -43,15 +43,13 @@ import java.util.regex.Pattern;
  *
  * <ul>
  *   <li>{@code OWNED_ALLOWLIST} — the documented EOC boundary
- *       entries the Wave 6 plan enumerates (Todo 3, Todo 5, Todo 6
- *       isolation boundaries). These are stable, narrow, and grow
- *       only with explicit operator approval.</li>
+ *       entries. These are stable, narrow, and grow only with
+ *       explicit operator approval.</li>
  *   <li>{@code BASELINE_ALLOWLIST} — the catch-attribution table
- *       for the CURRENT codebase. Every catch is attributed to a
- *       Wave 6 Todo owner; Wave B tasks 2/3/5/6/7 will tighten
- *       these (move from broad/ignored to narrow/named) and the
- *       allow-list shrinks accordingly. F5 removes baseline
- *       entries that were not tightened by execution time.</li>
+ *       for the CURRENT codebase. Every catch carries a Todo
+ *       owner label; future tightenings move each entry from
+ *       broad/ignored to narrow/named and the list shrinks.
+ *       Baseline entries not yet tightened are removed by deadline.</li>
  * </ul>
  *
  * <p>No JUnit / Surefire / assert / *. Assertions are encoded as
@@ -62,7 +60,7 @@ public final class ContractCheckRunner {
 
     /**
      * Tier-1: documented EOC boundaries (stable across waves).
-     * Each entry was approved in the Wave 6 plan.
+     * Each entry has an explicit operator-approved owner.
      */
     private static final List<EocAllow> OWNED_ALLOWLIST = List.of(
             new EocAllow("src/main/clojure/nihilite/transport.clj",
@@ -96,12 +94,11 @@ public final class ContractCheckRunner {
     );
 
     /**
-     * Tier-2: Wave 6 baseline — every catch currently in the
-     * codebase is attributed to a Todo owner. Wave B tasks 2/3/5/6/7
-     * will narrow these (move from broad/ignored to narrow/named),
-     * shrinking the allow-list. F5 in the final-verification lane
-     * refuses any baseline catch that was not tightened by
-     * Wave B execution time.
+     * Tier-2: baseline — every catch currently in the codebase is
+     * attributed to a Todo owner. Future tightenings narrow each
+     * entry (move from broad/ignored to narrow/named), shrinking
+     * the allow-list. The check refuses baseline entries that were
+     * not tightened by the deadline.
      */
     private static final List<EocAllow> BASELINE_ALLOWLIST = List.of(
             baseline("src/main/java/nihilite/hooks/Bridge.java", "Todo 3",
@@ -162,7 +159,7 @@ public final class ContractCheckRunner {
             + "public final class PermanentNegativeFixture {\n"
             + "    public void swallowThenReturnFalse() {\n"
             + "        try {\n"
-            + "            throw new RuntimeException(\"known-bad Wave 6 fixture\");\n"
+            + "            throw new RuntimeException(\"known-bad fixture\");\n"
             + "        } catch (Throwable ignore) {\n"
             + "            // INTENTIONAL SILENT CATCH. The EOC scanner is\n"
             + "            // required to flag this line. Verified via\n"
@@ -173,7 +170,8 @@ public final class ContractCheckRunner {
     static final String CONTRACT_NEGATIVE_PROP = "contractNegative";
 
     /** Strict mode: refuses baseline-allowed entries that should
-     *  have been tightened by Wave B. Enable via -DcontractStrict=1. */
+     *  have been tightened by the deadline. Enable via
+     *  -DcontractStrict=1. */
     static final String CONTRACT_STRICT_PROP = "contractStrict";
 
     public static void main(String[] args) throws Exception {

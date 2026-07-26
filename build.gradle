@@ -22,10 +22,13 @@ plugins {
 }
 
 group = 'nihilite'
-// Auto-generated timestamp version; updated on every Gradle invocation.
-// Format: dev-YYYYMMDD-HHmmss (local time). The Java/Clojure side reads
-// this from the jar's META-INF/MANIFEST.MF Implementation-Version.
-version = "dev-${new Date().format('yyyyMMdd-HHmmss')}"
+// Static version. Kept stable so Gradle task input hashing does not
+// flip on every invocation (which would invalidate the Java compile
+// + jar task caches for unchanged sources). Build-time/date metadata
+// is logged to stdout from the jar task instead of pinned into the
+// artifact version, so the produced nihilite.jar is byte-stable
+// when nothing changed.
+version = 'dev-SNAPSHOT'
 
 java {
     // Minecraft 26.1 requires Java 25. We compile to class file v69.
@@ -169,12 +172,31 @@ tasks.register('sourcesJar', Jar) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+// Local timestamp formatter for build-time logging only. Deliberately
+// not used to drive any task input or artifact content — see the note
+// on `version` above.
+def buildTimestamp = {
+    def fmt = new java.text.SimpleDateFormat('yyyyMMdd-HHmmss')
+    fmt.setTimeZone(java.util.TimeZone.getDefault())
+    fmt.format(new Date())
+}
+
+jar {
+    doLast {
+        def f = archiveFile.get().asFile
+        if (f.exists()) {
+            logger.lifecycle("[jar] ${f.name} built at dev-${buildTimestamp.call()} "
+                             + "(size=${f.length()} bytes)")
+        }
+    }
+}
+
 tasks.named('assemble') {
     dependsOn sourcesJar
 }
 
-// Wave 6+ Task — JAR content gate. The agent/runtime fat jar must NEVER
-// bundle operator-side filesystem content under examples/, nor any
+// JAR content gate. The agent/runtime fat jar must NEVER bundle
+// operator-side filesystem content under examples/, nor any
 // top-level init.clj / minecraft/init.clj / fabric/init.clj. Examples
 // stay external — they are discovered at runtime, never packaged.
 //
@@ -219,15 +241,15 @@ tasks.register('verifyJarContents') {
     }
 }
 
-// Wave 6 Task 1 — dependency-free contract-test / verification harness.
+// Dependency-free contract-test / verification harness.
 //
 // The java plugin already creates a `test` task (type Test) which scans
 // for JUnit tests. We must NOT register/delete/overwrite that task; we
 // only disable it (it has no JUnit tests today, so `enabled = false` is
-// correct). The two NEW verification tasks below are JavaExec and run
-// fully self-contained test sources; they have provider-safe wiring
-// into the existing `check` lifecycle so `./gradlew --no-daemon check`
-// invokes both runners in addition to the (disabled) java-plugin test.
+// correct). The contract-test runners below are JavaExec and run fully
+// self-contained test sources; they have provider-safe wiring into the
+// existing `check` lifecycle so `./gradlew --no-daemon check` invokes
+// them in addition to the (disabled) java-plugin test.
 tasks.named('test') { enabled = false }
 
 sourceSets {
@@ -254,7 +276,7 @@ def clojureContractTest = tasks.register('clojureContractTest', JavaExec) {
 }
 
 def contractCheck = tasks.register('contractCheck', JavaExec) {
-    description = 'Wave 6 EOC scanner + permanent-negative-fixture gate'
+    description = 'Contract EOC scanner + permanent-negative-fixture gate'
     group = 'verification'
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
