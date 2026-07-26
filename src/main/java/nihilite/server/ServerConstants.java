@@ -1,0 +1,35 @@
+package nihilite.server;
+
+/** Pure-config constants for nihilite.server — no logic. */
+public final class ServerConstants {
+    private ServerConstants() {}
+
+    public static final String DEFAULT_HOST = "127.0.0.1";
+
+    public static final int DEFAULT_PORT = 7888;
+
+    public static final String VERSION_FALLBACK = "Indev-dev";
+
+    public static final String PORT_ARG_PREFIX = "--port=";
+
+    public static final String BIND_ARG_PREFIX = "--bind=";
+
+    public static final String PORT_PROPERTY = "nihilite.port";
+
+    public static final String BIND_PROPERTY = "nihilite.bind";
+
+    public static final String INIT_PROPERTY = "nihilite.init";
+
+    public static final String EXAMPLES_PROPERTY = "nihilite.examples";
+
+    public static final String EXAMPLES_ENV = "NIHILITE_EXAMPLES";
+
+    public static String runtimeVersion() {
+        Package pkg = ServerConstants.class.getPackage();
+        if (pkg != null) {
+            String impl = pkg.getImplementationVersion();
+            if (impl != null && !impl.isEmpty()) return impl;
+        }
+        return VERSION_FALLBACK;
+    }
+}

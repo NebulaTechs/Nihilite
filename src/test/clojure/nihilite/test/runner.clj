@@ -1,0 +1,104 @@
+(ns nihilite.test.runner
+  "No-new-dependency Clojure contract test runner (Wave 6 Task 1).
+
+   Wired into Gradle as the `clojureContractTest` JavaExec task:
+     mainClass   = clojure.main
+     args        = -m nihilite.test.runner
+     classpath   = sourceSets.test.runtimeClasspath
+
+   The runner loads every namespace in TEST_NAMESPACES and calls
+   `clojure.test/test-ns` on each. test-ns locally binds
+   `clojure.test/*report-counters*` to a ref of a sorted-map and
+   exercises every `(deftest …)` form via `test-all-vars`.
+
+   We retrieve the post-run counter ref via the return value of
+   `test-ns`, then deref it to read pass/fail/error counts. We
+   DO NOT deref `clojure.test/*report-counters*` directly from
+   outside a binding form — its root value is `nil` and a
+   bare `@clojure.test/*report-counters*` routes through
+   `clojure.core/deref` → `deref-future` under clojure 1.12's
+   protocol dispatch, which throws a `Future.get() fut is null`
+   NPE.
+
+   On completion the runner calls `System/exit` based on the
+   accumulated (fail + error) count.
+
+   No JUnit, Surefire, third-party plugin, or `assert` keyword.
+   Pure `clojure.test`."
+  (:require [clojure.test]))
+
+(def ^:const TEST_NAMESPACES
+  ["nihilite.test.bootstrap"
+   "nihilite.test.hooks-cell-backed"
+   "nihilite.test.adapter-cas"
+   "nihilite.test.readline-history"
+   "nihilite.test.readline-completion"
+   "nihilite.errors-test"])
+
+(defn- safe-deref
+  "Deref a Ref safely; on nil returns `{}` for downstream destructuring."
+  [r]
+  (if r @r {}))
+
+(defn- run-one
+  "Run `clojure.test/test-ns` against ns-sym. Returns
+   {:counters <map after test-ns> :throwable Throwable-or-nil}."
+  [ns-sym]
+  (try
+    (require ns-sym)
+    (let [r (clojure.test/test-ns ns-sym)] ; returns the final counters ref's deref'd value
+      {:counters (if (instance? clojure.lang.IRef r)
+                   (safe-deref r)
+                   r)
+       :throwable nil})
+    (catch Throwable t
+      {:counters nil :throwable t})))
+
+(defn -main
+  [& _args]
+  (let [loaded (atom [])
+        load-failures (atom [])
+        agg (atom {:pass 0 :fail 0 :error 0})]
+    (binding [*out* *err*]
+      (println "[nihilite.test.runner] discovered" (count TEST_NAMESPACES)
+               "ns(s):" (vec TEST_NAMESPACES))
+      (flush))
+    (try
+      (doseq [ns-sym (map symbol TEST_NAMESPACES)]
+        (let [{:keys [counters throwable]} (run-one ns-sym)]
+          (if throwable
+            (do
+              (swap! load-failures conj
+                     {:ns (str ns-sym)
+                      :throwable-class (.getName (class throwable))
+                      :message (.getMessage throwable)})
+              (binding [*out* *err*]
+                (println "[nihilite.test.runner] load/run failure:" ns-sym
+                         (.getMessage throwable))
+                (flush)))
+            (do
+              (swap! loaded conj ns-sym)
+              (swap! agg
+                     (fn [{:keys [pass fail error] :as cur}]
+                       (assoc cur
+                              :pass  (+ pass  (:pass counters 0))
+                              :fail  (+ fail  (:fail counters 0))
+                              :error (+ error (:error counters 0)))))))))
+      (let [{:keys [pass fail error]} @agg
+            load-fail-bias (* (count @load-failures) 1000)
+            total-fail (+ fail error load-fail-bias)]
+        (println "[nihilite.test.runner] summary: pass=" pass
+                 "fail=" fail "error=" error
+                 "load-failures=" (count @load-failures)
+                 "loaded=" (vec @loaded))
+        (when (pos? total-fail)
+          (binding [*out* *err*]
+            (println "[nihilite.test.runner] FAIL — non-zero exit pending")
+            (flush)))
+        (System/exit (if (zero? total-fail) 0 1)))
+      (catch Throwable t
+        (binding [*out* *err*]
+          (println "[nihilite.test.runner] CRASH:" (class t) (.getMessage t))
+          (.printStackTrace t)
+          (flush))
+        (System/exit 1)))))
