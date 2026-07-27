@@ -33,6 +33,10 @@
    "nihilite.test.adapter-cas"
    "nihilite.test.readline-history"
    "nihilite.test.readline-completion"
+   "nihilite.test.paren-balance-test"
+   "nihilite.test.eval-test"
+   "nihilite.test.reload-test"
+   "nihilite.test.sniff-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref
