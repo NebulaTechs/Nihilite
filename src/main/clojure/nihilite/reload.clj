@@ -76,36 +76,32 @@
         sorted-names (vec (sort (keys by-name)))
         color (atom (zipmap sorted-names (repeat :white)))
         cycle-path (atom [])
+        cycled? (atom false)
         order (atom [])
         visit
         (fn visit [n]
           (let [c (@color n)]
             (cond
-              (= c :black)      nil
+              (= c :black) nil
               (= c :gray)
               (do (swap! cycle-path conj n)
-                  :cycle)
+                  (reset! cycled? true))
               :else
-              (swap! color assoc n :gray)
-              (let [deps (vec (get-in by-name [n :requires]))]
-                (doseq [d sorted-names
-                        :when (and (contains? (set deps) d)
-                                   (= (@color d) :white))]
-                  (visit d)))
-              (swap! color assoc n :black)
-              (swap! order conj n))))]
-    ;; iterative driver: walk modules in sorted order; on first
-    ;; cycle hit, walk the cyc stack to extract the path.
+              (do (swap! color assoc n :gray)
+                  (let [deps (mapv module-ns (get-in by-name [n :requires]))]
+                    (doseq [d sorted-names
+                            :when (contains? (set deps) d)]
+                      (visit d)))
+                  (swap! color assoc n :black)
+                  (swap! order conj n)))))]
     (doseq [n sorted-names]
       (when (= (@color n) :white)
-        (when (= (visit n) :cycle)
-          (let [path @cycle-path]
-            (when (zero? (count path))
-              (swap! cycle-path conj n)))
-            (throw (ex-info "module cycle detected"
-                            {:nihilite/kind :nihilite/cycle
-                             :cycle-path @cycle-path}))))))
-    @order)
+        (visit n)))
+    (when @cycled?
+      (throw (ex-info "module cycle detected"
+                      {:nihilite/kind :nihilite/cycle
+                       :cycle-path @cycle-path})))
+    @order))
 
 (defn discover-ordered
   "Walk modules-dir and return the ordered seq of ns symbols
@@ -115,20 +111,6 @@
    (->> (discover-modules modules-dir)
         topo-sort
         vec)))
-
-(defn- reload-one!
-  "Force a reload of one ns. Returns true on success, false on failure.
-   The per-ns failure is logged to *err*; the orchestrator aggregates
-   and re-surfaces them so a partial reload is never silent."
-  [ns-sym]
-  (try
-    (require ns-sym :reload)
-    true
-    (catch Throwable t
-      (binding [*out* *err*]
-        (log/error t "reload failed for" ns-sym)
-        (flush))
-      false)))
 
 (defn- run-init!
   "Run the init file. Failures logged and swallowed."
