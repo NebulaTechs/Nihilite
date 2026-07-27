@@ -14,40 +14,23 @@
    `java.util.concurrent.ConcurrentHashMap`s back both indexes —
    `by-id` for fast unregister/lookup, `by-target` for the
    transformer's per-class-name lookup. `by-target.values()` returns
-   a stable snapshot at call time; spec registration after the
-   snapshot is a future retransform (out of scope for v0, the
-   manifest's Can-Retransform-Classes=false locks that out).
+   a stable snapshot at call time; the manifest's
+   Can-Retransform-Classes=false locks out later retransforms.
 
    Bridge contract: `Bridge.fire(id, self, args)` calls
    `dispatch` here which builds a HookContext map and invokes the
    cell-backed IFn from the spec. Errors are swallowed after
-   logging; the instrumented engine never sees a Nihilite exception.
-
-    Anything more complex (custom phase injection, RETURN/cancel/
-    override semantics, multi-spec-per-method fanout) is explicitly
-    future work and is not in this ns's open surface today."
-  (:require [clojure.core :as core]
-            [clojure.tools.logging :as log])
+   logging; the instrumented engine never sees a Nihilite exception."
+  (:require [clojure.tools.logging :as log])
   (:import [java.util.concurrent ConcurrentHashMap]))
 
-;; --- position keyword set ---------------------------------------------------
+;; position keyword set
 
 (def ^:const ENTRY :entry)
-(def ^:const EXCATCH :excatch)    ;; future; defined for completeness
-(def ^:const RETURN :return)      ;; future; defined for completeness
+(def ^:const EXCATCH :excatch)
+(def ^:const RETURN :return)
 
-(defn- position-keyword->int
-  "Map a position keyword to a small int (for diagnostics only;
-   transformer gating ignores position today since only :entry is
-   wired). Returns 0 for unknown — non-fatal."
-  [k]
-  (case k
-    (:entry :ENTRY ::entry) 1
-    (:return :RETURN ::return) 2
-    (:excatch :EXCATCH ::excatch) 3
-    0))
-
-;; --- defrecords -------------------------------------------------------------
+;; defrecords
 
 (defrecord HookSpec
   [id target-internal method-name position arity bridge note])
@@ -55,7 +38,7 @@
 (defrecord HookContext
   [hookId self args phase returnValue cancelled])
 
-;; --- indexes ----------------------------------------------------------------
+;; indexes
 
 (defonce ^:private ^ConcurrentHashMap by-id
   (ConcurrentHashMap.))
@@ -72,7 +55,7 @@
           fresh
           (.get by-target t)))))
 
-;; --- install / uninstall ----------------------------------------------------
+;; install / uninstall
 
 (defn install!
   "Add or replace a spec keyed by `:id`. Returns true on install,
@@ -84,7 +67,7 @@
      :id                unique non-empty string
      :target-internal  JVM internal name (e.g. \"net/minecraft/server/MinecraftServer\")
      :method-name       non-empty string
-     :position         one of :entry (only entry wired in v0)
+     :position         one of :entry (only entry wired)
      :arity             integer ≥ 0 (or nil = any arity)
      :bridge            IFn or atom-backed delegating IFn
      :note              freeform string
@@ -149,7 +132,7 @@
   (.clear by-target)
   nil)
 
-;; --- read views (the transformer consumes these) ---------------------------
+;; read views (the transformer consumes these)
 
 (defn matching
   "Return the live list of specs targeting `target-internal`. The
@@ -182,7 +165,7 @@
    equals `parameter-count`). Return type is intentionally NOT
    compared -- multiple overloads of the same name with the same
    arity share the same advice entry; dispatcher routes on full
-   descriptor if needed in future work.
+   descriptor if needed.
 
    Used by `nihilite.hooks.HookAdvice.onEntry` from inlined advice
    bytecode. Per-class-list allocation is avoided by going through
@@ -211,9 +194,8 @@
    Errors are swallowed and logged -- the instrumented engine
    must never see a Nihilite exception.
 
-   Today only :entry is dispatched (only phase the transformer
-   emits); we still tag ctx.phase = :entry so Clojure-side
-   handlers can dispatch on phase if they wish."
+   Tags ctx.phase = :entry so Clojure-side handlers can dispatch
+   on phase."
   [spec-id self args]
   (try
     (when-let [spec (lookup spec-id)]
@@ -317,16 +299,15 @@
   []
   (sort (vec (.keySet by-id))))
 
-;; --- dispatch (Bridge.fire targets this) -----------------------------------
+;; dispatch (Bridge.fire targets this)
 
 (defn dispatch
   "Worker for `Bridge.fire(id, self, args)`. Builds a HookContext
    map, looks up the spec by id, invokes the spec's `bridge` IFn
    with the context. Errors are swallowed after logging.
 
-   Today only :entry is dispatched (the only phase the transformer
-   emits); we still tag ctx.phase = :entry so Clojure-side handlers
-   can dispatch on phase if they wish."
+   Tags ctx.phase = :entry so Clojure-side handlers can dispatch
+   on phase."
   [id self args]
   (try
     (when-let [spec (lookup id)]
@@ -344,7 +325,7 @@
       (try (log/error t "registry dispatch failed (id=" id ")")
            (catch Throwable _)))))
 
-;; --- ctx accessors (used by Clojure-side handlers) -------------------------
+;; ctx accessors (used by Clojure-side handlers)
 
 (defn ctx-self
   "The receiver of the instrumented call, or nil."
@@ -370,19 +351,19 @@
 
 (defn ctx-return
   "The return value (populated only at :return phase; nil at
-   :entry). Future — see :return phase semantics in registry/EXCATCH."
+   :entry)."
   [ctx]
   (when (and ctx (instance? HookContext ctx))
     (.-returnValue ^HookContext ctx)))
 
 (defn ctx-phase
-  "The phase keyword (:entry for v0)."
+  "The phase keyword."
   [ctx]
   (when (and ctx (instance? HookContext ctx))
     (let [^HookContext c ctx] (.-phase c))))
 
 (defn ctx-cancel!
-  "Mark ctx as cancelled (Step 2's ENTRY veto knob; future)."
+  "Mark ctx as cancelled (ENTRY veto knob)."
   [ctx value]
   (when (and ctx (instance? HookContext ctx))
     (set! (.-cancelled ^HookContext ctx) (boolean value))))

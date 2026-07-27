@@ -20,10 +20,6 @@ public final class ServerConstants {
 
     public static final String INIT_PROPERTY = "nihilite.init";
 
-    public static final String EXAMPLES_PROPERTY = "nihilite.examples";
-
-    public static final String EXAMPLES_ENV = "NIHILITE_EXAMPLES";
-
     public static String runtimeVersion() {
         Package pkg = ServerConstants.class.getPackage();
         if (pkg != null) {

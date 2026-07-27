@@ -22,9 +22,7 @@
   (:import [org.jline.reader Candidate Completer]
            [org.jline.reader.impl DefaultParser]))
 
-;; ---------------------------------------------------------------------------
 ;; helpers
-;; ---------------------------------------------------------------------------
 
 (defn- in-fresh-ns
   "Run `body-fn` inside a freshly-created ns named `ns-name` (string).
@@ -72,9 +70,7 @@
   [haystack needles]
   (every? (fn [n] (some #(= % n) haystack)) needles))
 
-;; ---------------------------------------------------------------------------
 ;; Completions include core symbols
-;; ---------------------------------------------------------------------------
 
 (deftest completions-include-clojure-core-map-symbols
   ;; The first-100 cap can drop some clojure.core symbols in
@@ -111,9 +107,7 @@
                                        "clojure.core/map?"])
             "short-name prefix filter on clojure.core must yield map/mapcat/map-entry?/map-indexed/map?")))))
 
-;; ---------------------------------------------------------------------------
 ;; Current ns interned symbol
-;; ---------------------------------------------------------------------------
 
 (deftest completions-include-current-ns-interns
   (in-fresh-ns
@@ -136,9 +130,7 @@
           (is (= 100 (count all))
               "completions-for must return exactly 100 entries (capped)"))))))
 
-;; ---------------------------------------------------------------------------
 ;; Required ns handling — :as alias
-;; ---------------------------------------------------------------------------
 
 (deftest completions-include-aliased-required-ns-by-full-name-only
   (in-fresh-ns
@@ -170,9 +162,7 @@
           (is (empty? (filter #(str/starts-with? % "str/") all))
               "no entry in the candidate list may start with `str/`"))))))
 
-;; ---------------------------------------------------------------------------
 ;; Required ns handling — no :as
-;; ---------------------------------------------------------------------------
 
 (deftest completions-include-unaliased-required-ns
   ;; Stock Clojure does NOT persist `:require` libspecs to ns
@@ -208,9 +198,7 @@
           (is (= 100 (count all))
               "completions-for must return exactly 100 entries (capped)"))))))
 
-;; ---------------------------------------------------------------------------
 ;; Empty prefix → first 100 alphabetical, total > 100
-;; ---------------------------------------------------------------------------
 
 (deftest completions-cap-is-100-alphabetical
   (let [all (completion/completions-for *ns*)
@@ -225,18 +213,14 @@
         (is (neg? (compare (first all) (last all)))
             "first candidate < last candidate alphabetically")))))
 
-;; ---------------------------------------------------------------------------
 ;; completer-for returns a Completer instance
-;; ---------------------------------------------------------------------------
 
 (deftest completer-for-returns-completer-instance
   (let [c (completion/completer-for *ns*)]
     (is (some? c) "completer-for must return a non-nil Completer instance")
     (is (instance? Completer c) "returned object must implement org.jline.reader.Completer")))
 
-;; ---------------------------------------------------------------------------
 ;; Completer SAM contract — invokes with a parsed line, mutates result list
-;; ---------------------------------------------------------------------------
 
 (deftest completer-appends-candidate-objects-on-tab
   (let [completer (completion/completer-for *ns*)

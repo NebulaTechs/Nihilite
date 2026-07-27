@@ -1,14 +1,13 @@
 (ns nihilite.adapter
   "Runtime-binding protocols for nihilite internals.
 
-   Where [[nihilite.facade]] is open-dispatched (multimethod),
-   this ns is closed-dispatched (defprotocol) because the methods
+   This ns is closed-dispatched (defprotocol) because the methods
    here are on the runtime-internal hot path: boot sentinel
    polling, scheduler routing, event-registry strategy. Adding a
    new runtime is still easy — implement the protocol via
    `install-default!` from the runtime's init file.
 
-    The v0 `:minecraft/vanilla` implementation lives in
+    The `:minecraft/vanilla` implementation lives in
     `examples/minecraft/init.clj`. It uses
     `(defrecord MinecraftVanillaAdapter [] nihilite.adapter/BootSentinel ...)`
     and calls `(nihilite.adapter/install-default! :minecraft/vanilla recordInstance)`.
@@ -19,10 +18,9 @@
    to whether we're attached to vanilla MC, Spigot, Folia, Spring,
    JOOQ, Kafka, generic JRE, etc."
 
-  (:require [clojure.core :as core]
-            [clojure.tools.logging :as log]))
+  (:require [clojure.tools.logging :as log]))
 
-;; --- protocols --------------------------------------------------------------
+;; protocols
 
 (defprotocol BootSentinel
   (wait-until-runtime-ready!
@@ -68,7 +66,7 @@
                               `EventFactory.createArrayBacked`.
     Returns a keyword."))
 
-;; --- default-adapter storage -----------------------------------------------
+;; default-adapter storage
 
 (def ^{:doc "Single-cell holder for the runtime-default adapter.
        Replaces the previous volatile!+check-then-set path so two

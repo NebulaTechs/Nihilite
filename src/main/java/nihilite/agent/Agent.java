@@ -7,6 +7,7 @@ import clojure.lang.IFn;
 import clojure.lang.IPersistentMap;
 import clojure.lang.Symbol;
 import nihilite.hooks.HookInstaller;
+import nihilite.server.ServerConstants;
 
 import java.lang.instrument.Instrumentation;
 import java.util.concurrent.atomic.AtomicReference;
@@ -35,7 +36,7 @@ public final class Agent {
     public static void premain(String args, Instrumentation inst) {
         long t0 = System.nanoTime();
 
-        String initPath = System.getProperty("nihilite.init", "");
+        String initPath = System.getProperty(ServerConstants.INIT_PROPERTY, "");
         if (!initPath.isEmpty()) {
             try {
                 IFn loadFile = Clojure.var("clojure.core", "load-file");
@@ -69,8 +70,8 @@ public final class Agent {
 
     private static final class AgentWorker implements Runnable {
 
-        private static final int DEFAULT_PORT = 7888;
-        private static final String DEFAULT_BIND = "127.0.0.1";
+        private static final int DEFAULT_PORT = ServerConstants.DEFAULT_PORT;
+        private static final String DEFAULT_BIND = ServerConstants.DEFAULT_HOST;
 
         @Override
         public void run() {
@@ -93,7 +94,6 @@ public final class Agent {
             require.invoke(Symbol.intern("nihilite.transport"));
             require.invoke(Symbol.intern("nihilite.boot"));
             require.invoke(Symbol.intern("nihilite.registry"));
-            require.invoke(Symbol.intern("nihilite.facade"));
             require.invoke(Symbol.intern("nihilite.adapter"));
             require.invoke(Symbol.intern("nihilite.hooks"));
 

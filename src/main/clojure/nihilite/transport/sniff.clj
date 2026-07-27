@@ -1,0 +1,75 @@
+(ns nihilite.transport.sniff
+  "Connection-level protocol detection. Mark+reset the first bytes of a
+   fresh connection and classify it as :bencode, :http, or :raw without
+   consuming the prefix."
+  (:require [nihilite.transport.io :as io])
+  (:import [java.net Socket SocketTimeoutException]
+           [java.io BufferedInputStream]
+           [java.util Arrays]))
+
+(def ^:const ^:long sniff-bytes 16)
+(def ^:const ^:long sniff-timeout-ms 2000)
+
+(defn- ascii-digit-byte? [^long b]
+  (and (>= b 0x30) (<= b 0x39)))
+
+(defn- bencode-prefix?
+  "True iff `prefix[0..n)` begins a non-empty bencode map: 'd' (0x64),
+   then one-or-more ASCII decimal digits, then ':' (0x3A)."
+  [^bytes prefix ^long n]
+  (cond
+    (< n 3) false
+    (not (== (aget prefix 0) (byte 0x64))) false
+    :else
+    (loop [i 1]
+      (cond
+        (>= i n) false
+        (ascii-digit-byte? (aget prefix i)) (recur (inc i))
+        (== (aget prefix i) (byte 0x3A)) (>= i 2)
+        :else false))))
+
+(def ^:private http-method-prefixes
+  [[(byte-array [(byte 0x44) (byte 0x45) (byte 0x4C)
+                 (byte 0x45) (byte 0x54) (byte 0x45) (byte 0x20)]) 7] ; "DELETE "
+   [(byte-array [(byte 0x4F) (byte 0x50) (byte 0x54)
+                 (byte 0x49) (byte 0x4F) (byte 0x4E) (byte 0x53) (byte 0x20)]) 8] ; "OPTIONS "
+   [(byte-array [(byte 0x47) (byte 0x45) (byte 0x54) (byte 0x20)]) 4] ; "GET "
+   [(byte-array [(byte 0x48) (byte 0x45) (byte 0x41) (byte 0x44) (byte 0x20)]) 5] ; "HEAD "
+   [(byte-array [(byte 0x50) (byte 0x55) (byte 0x54) (byte 0x20)]) 4] ; "PUT "
+   [(byte-array [(byte 0x50) (byte 0x4F) (byte 0x53) (byte 0x54) (byte 0x20)]) 5] ; "POST "
+   [(byte-array [(byte 0x50) (byte 0x41) (byte 0x54) (byte 0x43)
+                 (byte 0x48) (byte 0x20)]) 6]])                            ; "PATCH "
+
+(defn- http-method-prefix?
+  "True iff `prefix[0..n)` starts with an HTTP/1.1 method token + SP,
+   or the HTTP/2.0 preface 'PRI * HTTP/2.0'."
+  [^bytes prefix ^long n]
+  (boolean
+    (or (some (fn [[bytes len]]
+                (and (>= n len)
+                     (java.util.Arrays/equals
+                       (Arrays/copyOfRange prefix 0 len)
+                       bytes)))
+              http-method-prefixes)
+        (and (>= n 4)
+             (= (aget prefix 0) (byte 0x50))
+             (= (aget prefix 1) (byte 0x52))
+             (= (aget prefix 2) (byte 0x49))
+             (= (aget prefix 3) (byte 0x20))))))
+
+(defn sniff
+  "Mark+reset the first up to `sniff-bytes` bytes of `in` and classify
+   the prefix. Returns :bencode, :http, or :raw."
+  [^Socket sock ^BufferedInputStream in]
+  (.setSoTimeout sock (int sniff-timeout-ms))
+  (.mark in (int sniff-bytes))
+  (let [buf (byte-array sniff-bytes)
+        n (try (.read in buf 0 (int sniff-bytes))
+               (catch SocketTimeoutException _ -1)
+               (catch Throwable _ -1))]
+    (io/safe-reset! in)
+    (cond
+      (neg? (int n)) :raw
+      (bencode-prefix? buf (long n)) :bencode
+      (http-method-prefix? buf (long n)) :http
+      :else :raw)))

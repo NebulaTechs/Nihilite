@@ -5,7 +5,7 @@
    command line.
 
    What this file does:
-   1. Implements nihilite.facade multimethods under :fabric
+   1. Defines :fabric server accessors and message helpers
    2. Defines the per-runtime :fabric/adapter defrecord satisfying
       the 3 nihilite.adapter protocols with :event-factory strategy
    3. Pre-registers three HookSpec demos -- one per hook phase --
@@ -14,14 +14,13 @@
         :return   -> MinecraftServer.sendSystemMessage (mutate return)
         :redefine -> the dummy class nihilite.test.retransformDriver$DummyTarget
                      (full body substitution; demonstrates hot-rewriting)"
-  (:require [nihilite.facade :as f]
-            [nihilite.adapter :as a]
+  (:require [nihilite.adapter :as a]
             [nihilite.registry :as reg])
   (:import [net.minecraft.server MinecraftServer]
            [net.minecraft.network.chat Component]))
 
-(defmethod f/get-server-instance :fabric
-  [_runtime]
+(defn get-server-instance
+  []
   (try
     (let [mc-c (Class/forName "net.minecraft.server.MinecraftServer"
                               false (ClassLoader/getSystemClassLoader))
@@ -41,24 +40,24 @@
       (walk mc-c))
     (catch Throwable _ nil)))
 
-(defmethod f/send-system-message! :fabric
-  [runtime server msg]
+(defn send-system-message!
+  [server msg]
   (if (nil? server)
-    {:runtime runtime :status :server-not-ready :message msg}
+    {:status :server-not-ready :message msg}
     (try
       (let [component (Component/literal msg)
             on-mc-thread? (.isSameThread server)
             delivered? (if on-mc-thread?
                          (do (.sendSystemMessage server component false) true)
                          (do (.execute server (fn [] (.sendSystemMessage server component false))) true))]
-        {:runtime runtime :status :ok :scheduled delivered? :message msg})
+        {:status :ok :scheduled delivered? :message msg})
       (catch Throwable t
-        {:runtime runtime :status :errored :error (str t)}))))
+        {:status :errored :error (str t)}))))
 
-(defmethod f/list-players :fabric [server]
+(defn list-players [server]
   (vec (.getPlayers (.getPlayerList server))))
 
-(defmethod f/schedule-on-target-thread! :fabric [server runnable]
+(defn schedule-on-target-thread! [server runnable]
   (.execute server ^Runnable (reify Runnable (run [_] (runnable)))))
 
 (defrecord FabricAdapter []
@@ -76,7 +75,7 @@
           :else (do (Thread/sleep 100) (recur (inc attempt)))))))
   a/TargetThreadDispatcher
   (schedule-on-target-thread! [_ runnable]
-    (when-let [server (f/get-server-instance :fabric)]
+    (when-let [server (get-server-instance)]
       (.execute server ^Runnable (reify Runnable (run [_] (runnable))))))
   a/EventRegistryStrategy
   (strategy [_] :event-factory))
@@ -130,7 +129,7 @@
 
 (a/install-default! :fabric/adapter (->FabricAdapter))
 
-(println (str "[examples.fabric.init] loaded nihilite.facade + nihilite.adapter "
+(println (str "[examples.fabric.init] loaded nihilite.adapter "
               "for :fabric/adapter. Get server via "
-              "(nihilite.facade/get-server-instance :fabric)."))
+              "(examples.fabric.init/get-server-instance)."))
 (flush)

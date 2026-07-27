@@ -29,11 +29,6 @@
 (defonce ^:private cells   (atom {}))
 (defonce ^:private bridges (atom {}))
 
-(defn- get-cell
-  "Return the cell-atom for kw, or nil if not yet installed."
-  [kw]
-  (clojure.core/get @cells kw))
-
 (defn- cell-for
   "Return the cell-atom for kw, creating a fresh empty one if
    no entry exists yet."
@@ -128,9 +123,7 @@
   [kw]
   (clojure.core/get @bridges kw))
 
-;; ---------------------------------------------------------------------------
 ;; Context accessors
-;; ---------------------------------------------------------------------------
 
 (defn ctx-self        [ctx]          (reg/ctx-self ctx))
 (defn ctx-arg         [ctx n]        (reg/ctx-arg ctx n))

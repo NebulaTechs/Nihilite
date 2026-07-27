@@ -9,9 +9,7 @@
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.readline.history :as h]))
 
-;; ---------------------------------------------------------------------------
 ;; fixtures
-;; ---------------------------------------------------------------------------
 
 (defn- reset-history!
   []
@@ -26,9 +24,7 @@
     (reset-history!)
     (run-tests)))
 
-;; ---------------------------------------------------------------------------
 ;; basic add / read
-;; ---------------------------------------------------------------------------
 
 (deftest add-one-entry-then-read-entries
   (h/history-add! "first")
@@ -41,9 +37,7 @@
   (is (= ["a" "b" "c" "d" "e"] (h/history-entries))
       "5 distinct entries → oldest-first vec, all 5 present"))
 
-;; ---------------------------------------------------------------------------
 ;; consecutive dedup
-;; ---------------------------------------------------------------------------
 
 (deftest consecutive-duplicate-is-noop
   (h/history-add! "foo")
@@ -62,9 +56,7 @@
   (is (= ["foo" "bar" "foo"] (h/history-entries))
       "non-consecutive duplicates both retained"))
 
-;; ---------------------------------------------------------------------------
 ;; cap-at-1000 (FIFO drop oldest)
-;; ---------------------------------------------------------------------------
 
 (deftest cap-at-thousand-drops-oldest
   (let [n 1001]
@@ -82,9 +74,7 @@
       (is (= "entry-1" (first es)))
       (is (= "entry-1000" (last es))))))
 
-;; ---------------------------------------------------------------------------
 ;; find-prefix
-;; ---------------------------------------------------------------------------
 
 (deftest find-prefix-returns-matches-in-order
   (doseq [e ["foo" "bar" "foobar" "qux"]]
@@ -104,9 +94,7 @@
   (is (= ["foo" "foobar"] (h/history-find-prefix "foo"))
       "prefix-match (substring-from-0): 'foo' also matches 'foobar'"))
 
-;; ---------------------------------------------------------------------------
 ;; concurrency
-;; ---------------------------------------------------------------------------
 
 (deftest concurrent-add-stays-within-cap-and-loses-no-fresh-entries
   ;; 10 threads × 100 entries = 1000 attempted adds. Each thread
@@ -160,9 +148,7 @@
       (is (= expected (set es))
           "every distinct entry that was added is present (none lost)"))))
 
-;; ---------------------------------------------------------------------------
 ;; reset
-;; ---------------------------------------------------------------------------
 
 (deftest reset-clears-history
   (h/history-add! "x")
@@ -173,9 +159,7 @@
   (is (= [] (h/history-find-prefix "x"))
       "find-prefix after reset returns empty"))
 
-;; ---------------------------------------------------------------------------
 ;; string-type discipline
-;; ---------------------------------------------------------------------------
 
 (deftest non-string-entry-is-coerced-via-str
   ;; The fn is typed ^String in the arglist, but Clojure is

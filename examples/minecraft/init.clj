@@ -6,7 +6,7 @@
    imports net.minecraft.* classes.
 
    What this file does:
-   1. Implements nihilite.facade multimethods under :minecraft
+   1. Defines :minecraft/vanilla server accessors and message helpers
    2. Defines the per-runtime :minecraft/vanilla adapter (a
       defrecord satisfying the 3 nihilite.adapter protocols)
    3. Pre-registers a :default-event HookSpec for
@@ -21,26 +21,23 @@
    After this init file loads (synchronously, before addTransformer),
    the user can from nREPL evaluate:
 
-     (nihilite.facade/send-system-message!
-       (nihilite.facade/get-server-instance :minecraft)
+     (examples.minecraft.init/send-system-message!
+       (examples.minecraft.init/get-server-instance)
        \"hi\")
 
-   and the message lands in MC's logs/latest.log. The forward
-   path uses no bytecode hook — :default-event is for
-   observability / interception only."
-  (:require [nihilite.facade :as f]
-            [nihilite.adapter :as a]
+    and the message lands in MC's logs/latest.log. The forward
+    path uses no bytecode hook — :default-event is for
+    observability / interception only."
+  (:require [nihilite.adapter :as a]
             [nihilite.registry :as reg])
   (:import [net.minecraft.server MinecraftServer]
            [net.minecraft.network.chat Component]))
 
 ;; ---------------------------------------------------------------------------
-;; User-facing facade defmethods under :minecraft runtime keyword.
-;; Each runtime that nihilite wants to support adds its own
-;; :<runtime>/<variant> impls; this file is the :minecraft/vanilla one.
+;; Per-runtime server accessors and message helpers for :minecraft/vanilla.
 ;; ---------------------------------------------------------------------------
 
-(defmethod f/get-server-instance :minecraft
+(defn get-server-instance
   ;; Reflect for the running vanilla-MC singleton. Mojang 26.1
   ;; stores the singleton in a static field of a subclass
   ;; (e.g. DedicatedServer), NOT on MinecraftServer itself, and
@@ -48,7 +45,7 @@
   ;; hierarchy and search for any static field whose value
   ;; instanceof MinecraftServer. Returns nil if MC's main thread
   ;; has not yet initialized the singleton.
-  [_runtime]
+  []
   (let [mc-c (Class/forName "net.minecraft.server.MinecraftServer")
         find-on-class (fn find-on-class [c]
                         (some (fn [field]
@@ -65,16 +62,14 @@
                      (walk parent))))]
     (walk mc-c)))
 
-(defmethod f/send-system-message! :minecraft
-  ;; Wave 6 Task 4: drei unterscheidbare Outcomes — :server-not-ready
-  ;; (kein NPE), :errored (reflection or thread threw), :ok (live
-  ;; delivery plus marker broadcast). nil ist kein automatischer
-  ;; Error — pre-maturity nil heisst :server-not-ready; ein echter
-  ;; Throw faellt auf :errored mit throwable + stack.
-  [runtime ^MinecraftServer server ^String msg]
+(defn send-system-message!
+  ;; Three distinguishable outcomes: :server-not-ready (no NPE),
+  ;; :errored (reflection or thread threw), :ok (live delivery).
+  ;; A pre-maturity nil server means :server-not-ready; a real
+  ;; throw falls to :errored with throwable + stack.
+  [^MinecraftServer server ^String msg]
   (if (nil? server)
-    {:runtime runtime
-     :scheduled false
+    {:scheduled false
      :status   :server-not-ready
      :message  msg}
     (try
@@ -83,25 +78,23 @@
             delivered? (if on-mc-thread?
                          (do (.sendSystemMessage server component false) true)
                          (do (.execute server (fn [] (.sendSystemMessage server component false))) true))]
-        {:runtime  runtime
-         :scheduled delivered?
+        {:scheduled delivered?
          :status   :ok
          :thread   (if on-mc-thread? "main" "nrepl")
          :message  msg})
       (catch Throwable t
-        {:runtime  runtime
-         :scheduled false
+        {:scheduled false
          :status   :errored
          :throwable-class (.getName (class t))
          :message  (.getMessage t)
          :error    (str t)}))))
 
-(defmethod f/list-players :minecraft
+(defn list-players
   ;; Return a vector of currently connected ServerPlayer instances.
   [^MinecraftServer server]
   (vec (.getPlayers (.getPlayerList server))))
 
-(defmethod f/schedule-on-target-thread! :minecraft
+(defn schedule-on-target-thread!
   ;; Submit a no-arg thunk to MC's main thread (.execute on the
   ;; MinecraftServer instance). Non-blocking from the caller's side.
   [^MinecraftServer server runnable]
@@ -137,7 +130,7 @@
               (recur (inc attempt)))))))
   a/TargetThreadDispatcher
   (schedule-on-target-thread! [_ runnable]
-    (when-let [server (f/get-server-instance :minecraft)]
+    (when-let [server (get-server-instance)]
       (.execute server ^Runnable
                 (reify Runnable (run [_] (runnable))))))
   a/EventRegistryStrategy
@@ -149,8 +142,8 @@
 ;; The bridge fn reads minecraft.handlers/on-system-message on every
 ;; dispatch. The user can (alter-var-root #'minecraft.handlers/on-system-message
 ;; ...) to swap implementations live — the next MC event will go
-;; through the new body. This is the Phase 4 / Wave 2 live-rewrite
-;; story, plumbed through the per-runtime init file.
+;; through the new body. Live-rewrite plumbed through the
+;; per-runtime init file.
 ;; ---------------------------------------------------------------------------
 
 (def minecraft-handler
@@ -180,7 +173,7 @@
 
 (a/install-default! :minecraft/vanilla (->MinecraftVanillaAdapter))
 
-(println (str "[examples.minecraft.init] loaded nihilite.facade + nihilite.adapter "
+(println (str "[examples.minecraft.init] loaded nihilite.adapter "
               "for :minecraft/vanilla. Get server via "
-              "(nihilite.facade/get-server-instance :minecraft)."))
+              "(examples.minecraft.init/get-server-instance)."))
 (flush)

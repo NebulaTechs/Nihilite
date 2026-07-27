@@ -4,7 +4,6 @@
    No fuzzy matching; prefix-only, case-sensitive, alphabetical, 100-cap.
    The cap is applied AFTER the prefix filter, so prefix matches past
    position 100 in the raw pool are still surfaced on TAB."
-  (:require [clojure.string :as str])
   (:import [java.util ArrayList]
            [org.jline.reader Candidate Completer LineReader ParsedLine]))
 
@@ -43,43 +42,6 @@
            (filter #(instance? clojure.lang.Var %))
            (map (fn [^clojure.lang.Var v] (str (.sym v))))
            (into [])))))
-
-(defn- libspec-ns-names
-  "From a single libspec entry (e.g. from `(:require *ns*)`), return
-   the set of ns-name strings to include in the completion search,
-   per spec §3.1 row 2:
-     - the original ns name (if it's a fully-qualified symbol)
-     - the `:as` alias ns name (NOT `:as-alias` — that doesn't create
-       a real namespace, just an alias usable inside the same libspec)
-
-   Supported libspec shapes (the only ones Clojure emits from
-   `(:require ...)` after macroexpansion):
-     'foo.bar                           → #{\"foo.bar\"}
-     '[foo.bar]                         → #{\"foo.bar\"}
-     '[foo.bar :as fb]                  → #{\"foo.bar\" \"fb\"}
-     '[foo.bar :refer [...]]            → #{\"foo.bar\"}
-     '[foo.bar :as fb :refer [...]]     → #{\"foo.bar\" \"fb\"}
-     '([prefix-ns syms])                → #{} (refer-all list; skip)
-     anything else                      → #{} (silently skipped)"
-  [libspec]
-  (cond
-    (symbol? libspec)
-    #{(str libspec)}
-
-    (vector? libspec)
-    (let [ns-sym (first libspec)
-          alias  (when-let [as-idx (.indexOf libspec :as)]
-                   (.get libspec (unchecked-inc as-idx)))]
-      (cond-> #{}
-        (and (symbol? ns-sym)
-             (not (str/starts-with? (str ns-sym) ".")))
-        (conj (str ns-sym))
-
-        (and (symbol? alias)
-             (not (str/starts-with? (str alias) ".")))
-        (conj (str alias))))
-
-    :else #{}))
 
 (defn- ns-aliases-of
   "Names of nses that the current ns has aliased via `:as`. Spec §3.1
