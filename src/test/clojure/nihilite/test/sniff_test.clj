@@ -24,7 +24,7 @@
       (is (false? (http-fn (to-bytes "HELLO") 5)))))
 
   (testing "WebSocket Sec-WebSocket-Accept key calculation"
-    (let [accept-fn @#'nihilite.transport.ws/ws-accept-key]
+    (let [accept-fn @#'nihilite.transport.ws.handshake/ws-accept-key]
       ;; RFC 6455 Section 1.3 test vector
       (is (= "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
              (accept-fn "dGhlIHNhbXBsZSBub25jZQ=="))))))

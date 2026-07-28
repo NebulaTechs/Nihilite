@@ -29,14 +29,26 @@
 
 (def ^:const TEST_NAMESPACES
   ["nihilite.test.bootstrap"
+   "nihilite.test.hook-keys"
    "nihilite.test.hooks-cell-backed"
    "nihilite.test.adapter-cas"
+   "nihilite.test.hook-observers"
    "nihilite.test.readline-history"
    "nihilite.test.readline-completion"
    "nihilite.test.paren-balance-test"
    "nihilite.test.eval-test"
    "nihilite.test.reload-test"
    "nihilite.test.sniff-test"
+   "nihilite.test.observers-selector"
+   "nihilite.test.observers-subscriber"
+   "nihilite.test.observers-sinks"
+   "nihilite.test.observers-stats"
+   "nihilite.test.pipeline-transducer-test"
+   "nihilite.test.hook-throw-test"
+   "nihilite.test.observers-trace-test"
+   "nihilite.test.hook-invoke-test"
+   "nihilite.test.observers-stack-test"
+   "nihilite.test.dispatch-return-cancel-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref
