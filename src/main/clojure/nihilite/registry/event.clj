@@ -10,7 +10,8 @@
   (:require [clojure.tools.logging :as log]
             [nihilite.registry.spec :as rs]
             [nihilite.registry.spec :refer [map->HookEvent]]
-            [nihilite.registry.index :as ix])
+            [nihilite.registry.index :as ix]
+            [nihilite.registry.stats :as stats])
   (:import (nihilite.registry.spec HookEvent)))
 
 (def ^:private FRAME-SKIP 3)
@@ -75,12 +76,20 @@
   "Invoke a single observer IFn with the given event. Per-observer
    try/catch isolation. Returns the IFn's return value (or
    `::no-return` if the IFn threw or was absent). Never
-   propagates a throwable to the caller."
+   propagates a throwable to the caller.
+
+   On observer throw the per-spec `:exceptions` counter is bumped
+   via `nihilite.registry.stats/bump-exception!` so the metric is
+   observable end-to-end; the per-spec isolation is preserved
+   because the bump is keyed on `(:spec-id ev)`, not on the
+   throwable itself."
   [ifn ev]
   (if (nil? ifn)
     ::no-return
     (try
       (ifn ev)
       (catch Throwable t
-        (log/error t "observer threw (id=" (:spec-id ev) ")")
+        (try (log/error t "observer threw (id=" (:spec-id ev) ")")
+             (catch Throwable _))
+        (stats/bump-exception! (:spec-id ev))
         ::no-return))))
