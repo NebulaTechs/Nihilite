@@ -93,6 +93,7 @@ public final class HookInstaller {
 
         java.util.List<String> entryMethods = new java.util.ArrayList<>();
         java.util.List<String> returnMethods = new java.util.ArrayList<>();
+        java.util.List<String> throwMethods = new java.util.ArrayList<>();
         java.util.List<String> redefineMethods = new java.util.ArrayList<>();
 
         Object posKey = null, methodNameKey = null;
@@ -119,8 +120,9 @@ public final class HookInstaller {
             Object mn = methodNameKey == null ? null : sm.get(methodNameKey);
             String name = mn == null ? null : mn.toString();
             if (name == null) continue;
-            if (p.endsWith("entry")) entryMethods.add(name);
-            else if (p.endsWith("return")) returnMethods.add(name);
+            if (p.equals(":entry")) entryMethods.add(name);
+            else if (p.equals(":return")) returnMethods.add(name);
+            else if (p.equals(":throw")) throwMethods.add(name);
             else if (p.endsWith("redefine")) redefineMethods.add(name);
         }
 
@@ -141,6 +143,15 @@ public final class HookInstaller {
                     net.bytebuddy.asm.Advice.withCustomMapping()
                             .with(new net.bytebuddy.asm.Advice.AssignReturned.Factory())
                             .to(ReturnAdvice.class)
+                            .on(m.and(ElementMatchers.not(ElementMatchers.isConstructor()))
+                                    .and(ElementMatchers.not(ElementMatchers.isTypeInitializer()))));
+        }
+        if (!throwMethods.isEmpty()) {
+            ElementMatcher.Junction<MethodDescription> m = ElementMatchers.none();
+            for (String name : throwMethods) m = m.or(ElementMatchers.named(name));
+            builder = builder.visit(
+                    net.bytebuddy.asm.Advice.withCustomMapping()
+                            .to(ThrowAdvice.class)
                             .on(m.and(ElementMatchers.not(ElementMatchers.isConstructor()))
                                     .and(ElementMatchers.not(ElementMatchers.isTypeInitializer()))));
         }
