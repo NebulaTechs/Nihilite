@@ -113,19 +113,21 @@ sourceSets {
     }
 }
 
-// Fat-jar assembly. Bundles all runtime classpath entries (clojure, nrepl,
-// spec.alpha, core.specs.alpha) into build/libs/nihilite.jar. The manifest
-// declares both the standalone Main-Class AND the Javaagent Premain-Class +
-// Agent-Class on the same jar. Can-Redefine-Classes is intentionally false:
-// the hot-rewrite story is alter-var-root (live var rebind), not bytecode
-// retransform. No Boot-Class-Path (Java 9+ package split would corrupt
-// Clojure/nrepl resolution). The fat-jar + system classloader is sufficient
-// for the agent path too — MC classes on the attached server load off the
-// same system loader once -javaagent:nihilite.jar is parsed.
-// Branch-naming specification: build/libs/nihilite.jar. The jar task
-// sets archiveFileName directly; the branch-aware computeJarName +
-// git-rev-parse lookup are gone now that the java25 branch has been
-// deleted and there is no second artifact name to disambiguate.
+// Local timestamp formatter for build-time logging only. Deliberately
+// not used to drive any task input or artifact content — see the note
+// on `version` above.
+def buildTimestamp = {
+    def fmt = new java.text.SimpleDateFormat('yyyyMMdd-HHmmss')
+    fmt.setTimeZone(java.util.TimeZone.getDefault())
+    fmt.format(new Date())
+}
+
+// Fat-jar assembly. Single artifact at build/libs/nihilite.jar with
+// dual-manifest (Main-Class + Premain-Class + Agent-Class) so both
+// `java -jar` and `-javaagent` resolve off the same file. No
+// Boot-Class-Path (Java 9+ package split would corrupt
+// clojure.* / spec.alpha.* / nrepl.* resolution). Fat-jar +
+// system classloader is sufficient for the agent path.
 
 jar {
     archiveFileName = 'nihilite.jar'
@@ -163,25 +165,9 @@ jar {
     }
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
-}
 
-tasks.register('sourcesJar', Jar) {
-    archiveBaseName = 'nihilite'
-    archiveClassifier = 'sources'
-    from sourceSets.main.allSource
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
-
-// Local timestamp formatter for build-time logging only. Deliberately
-// not used to drive any task input or artifact content — see the note
-// on `version` above.
-def buildTimestamp = {
-    def fmt = new java.text.SimpleDateFormat('yyyyMMdd-HHmmss')
-    fmt.setTimeZone(java.util.TimeZone.getDefault())
-    fmt.format(new Date())
-}
-
-jar {
+    // Build-time size log (development only — not driven from any task
+    // input or artifact content; see the note on `version` above).
     doLast {
         def f = archiveFile.get().asFile
         if (f.exists()) {
@@ -189,6 +175,13 @@ jar {
                              + "(size=${f.length()} bytes)")
         }
     }
+}
+
+tasks.register('sourcesJar', Jar) {
+    archiveBaseName = 'nihilite'
+    archiveClassifier = 'sources'
+    from sourceSets.main.allSource
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
 tasks.named('assemble') {
