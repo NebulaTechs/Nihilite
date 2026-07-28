@@ -40,6 +40,7 @@
            [java.util.concurrent Executors]))
 
 (def ^:const ^:long accept-timeout-ms 200)
+(def ^:const ^:long idle-timeout-ms  30000)
 
 (defn- dispatch [^Socket sock active]
   (try
@@ -63,7 +64,7 @@
 
    Options:
      :port    - int, default 7888
-     :bind    - str, default `127.0.0.1`
+     :bind    - str, default 127.0.0.1
      :threads - int, default 16"
   ([] (start! {}))
   ([{:keys [port bind threads]
@@ -91,6 +92,7 @@
                           nil))]
              (when sock
                (try
+                 (.setSoTimeout sock (int idle-timeout-ms))
                  (.submit pool ^Runnable
                           (fn [] (dispatch sock active)))
                  (catch Throwable t
