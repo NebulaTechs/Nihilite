@@ -44,6 +44,7 @@
      :method-name "hotSwapProbe"
      :position     :entry
      :arity        1
+     :descriptor   "(I)V"
      :note         "cell-backed contract test"}))
 
 (deftest install-creates-stable-bridge

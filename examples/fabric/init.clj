@@ -106,6 +106,8 @@
      :method-name "runServer"
      :position :entry
      :arity 0
+     :descriptor "()V"
+     :action :observe
      :bridge (fn [ctx] (let [f @entry-var] (f ctx)))
      :note "Fabric :entry demo on MinecraftServer.runServer"})
 
@@ -114,18 +116,21 @@
      :target-internal "net/minecraft/server/MinecraftServer"
      :method-name "sendSystemMessage"
      :position :return
-     :arity 2
+     :arity 1
+     :descriptor "(Lnet/minecraft/network/chat/Component;Z)V"
+     :action :modify
      :bridge (fn [ctx] (let [f @return-var] (f ctx)))
      :note "Fabric :return demo on MinecraftServer.sendSystemMessage"})
 
   (reg/install!
     {:id "fabric-redefine-demo"
      :target-internal "nihilite/test/retransformDriver$DummyTarget"
-     :method-name "probeRedefined"
+     :method-name "probeRedef"
      :position :redefine
-     :arity 1
+     :arity 0
+     :descriptor "()Ljava/lang/String;"
      :bridge (fn [args method-name] (redefine-fn args method-name))
-     :note "Fabric :redefine demo on a sentinel probeRedefined method"}))
+     :note "Fabric :redefine demo on a sentinel probeRedef method"}))
 
 (a/install-default! :fabric/adapter (->FabricAdapter))
 

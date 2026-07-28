@@ -161,11 +161,13 @@
      :method-name "sendSystemMessage"
      :position :entry
      :arity 1
+     :descriptor "(Lnet/minecraft/network/chat/Component;Z)V"
+     :action :observe
      :bridge (fn [ctx]
                (let [f @handler-var]
                  (f ctx)))
      :note "Default MC sendSystemMessage event — bridge forwards to
-            minecraft-handler; alter-var-root for live rewrite."}))
+             minecraft-handler; alter-var-root for live rewrite."}))
 
 ;; ---------------------------------------------------------------------------
 ;; Install the adapter as the default; print the banner.

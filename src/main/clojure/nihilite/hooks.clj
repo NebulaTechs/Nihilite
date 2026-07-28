@@ -20,12 +20,6 @@
   (swap! targets assoc kw partial-spec)
   (kw @targets))
 
-(defn list-targets []
-  (into (sorted-map)
-        (map (fn [[k v]]
-               [k (select-keys v [:target-internal :method-name :arity])]))
-        @targets))
-
 (defonce ^:private cells   (atom {}))
 (defonce ^:private bridges (atom {}))
 
@@ -49,15 +43,12 @@
 
 (defn install!
   "Install a Clojure IFn as a hook for a known keyword. Returns
-   nil. Throws :nihilite/unknown-hook for an unknown kw.
+   nil. Throws `:nihilite/unknown-hook` for an unknown kw.
 
-   Cell + delegating-bridge:
-     - The stable delegating IFn is cached in `@bridges`; the
-       bridge object's identity is preserved across install!/hot-swap!.
-     - install! resets the cell to `ifn`.
-     - spec.bridge is the (cached) delegating IFn, NOT the user
-       IFn directly — the dispatcher reads the latest cell
-       value on every call."
+   Forwards `:descriptor` from the registered target spec into
+   `reg/install!`; callers of `register-target!` MUST include
+   `:descriptor` (JLS field descriptor) so the descriptor-keyed
+   registry lookup resolves correctly."
   [kw ifn]
   (let [m (clojure.core/get @targets kw)]
     (when-not m
@@ -79,11 +70,12 @@
          :arity            (when-some [a (:arity m)]
                              (if (number? a) (int a)
                                  (Integer/parseInt (str a))))
+         :descriptor       (:descriptor m)
          :bridge           bridge
-:note             (or (:note m) "")})
-       (log/info "installed:" (name kw)
-                 "→" (:method-name m) "target=" (:target-internal m))
-       nil)))
+         :note             (or (:note m) "")})
+      (log/info "installed:" (name kw)
+                "→" (:method-name m) "target=" (:target-internal m))
+      nil)))
 
 (defn hot-swap!
   "Atomically replace the IFn associated with kw. Returns
@@ -122,8 +114,6 @@
    nil. Diagnostic."
   [kw]
   (clojure.core/get @bridges kw))
-
-;; Context accessors
 
 (defn ctx-self        [ctx]          (reg/ctx-self ctx))
 (defn ctx-arg         [ctx n]        (reg/ctx-arg ctx n))
