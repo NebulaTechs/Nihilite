@@ -19,9 +19,16 @@
    return type; mismatches throw ClassCastException at JVM level
    via the DynamicAssigner + verifier, NOT inside the advice).
 
-   P1 (D2.2): `:subscriber` short-circuits the bucket after
-   the bridge returns. `stats/bump-fired!` is recorded for
-   every spec whose bridge runs.
+    P1 (D2.2): `:subscriber` short-circuits the bucket after
+    the bridge returns. `stats/bump-fired!` is recorded for
+    every spec whose bridge runs.
+
+    Wave-1 T2b (P1.S2a.2): `stats/bump-modified!` is recorded for
+    each `:modify` spec whose non-nil return value is accepted
+    as the new winner. Counts here match the actual observable
+    modify-wins rate. A `:modify` whose bridge returns nil
+    (no-op) is NOT counted, per the
+    `(and (= action :modify) (nil? rv)) nil` cond branch.
 
    P2.4 (plan v2.1 §6): honours `(:cancelled? event)` between
    observers in the bucket — once any observer flips it,
@@ -54,9 +61,10 @@
                     (and (= action :modify) (nil? rv))
                     nil
 
-                    :else
-                    (do (reset! winner rv)
-                        (reset! decided? true)))
+                     :else
+                     (do (reset! winner rv)
+                         (reset! decided? true)
+                         (stats/bump-modified! (:id s))))
                   (recur (next remaining)))))
             @winner)
           current-return))

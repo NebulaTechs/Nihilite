@@ -51,6 +51,7 @@
    "nihilite.test.dispatch-return-cancel-test"
    "nihilite.test.install-redefine-reject-test"
    "nihilite.test.dispatch-exception-test"
+   "nihilite.test.dispatch-modified-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref
