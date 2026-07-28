@@ -29,13 +29,9 @@
   [hookId self args phase returnValue cancelled])
 
 (defrecord HookEvent
-  ;; Cancellation: `:cancelled?` and `:cancel!` are closures
-  ;; over a per-event `AtomicBoolean`. The dispatcher reads via
-  ;; `(:cancelled? ev)` (closure invocation); observers flip via
-  ;; `((:cancel! ev) true)`. Clojure 1.11 defrecord fields
-  ;; cannot be `:volatile-mutable`, so this closure-cell
-  ;; pattern is the portable way to thread mutable state
-  ;; through a record.
+  ;; Cancellation: `:cancelled?` and `:cancel!` are closures over a per-event
+  ;; `AtomicBoolean`; `(:cancelled? ev)` reads it and `((:cancel! ev) true)`
+  ;; flips it. #_see event.clj:5
   [spec-id source phase self args return-value throwable
    cancelled? cancel! thread-name timestamp-ns sequence note stack])
 
