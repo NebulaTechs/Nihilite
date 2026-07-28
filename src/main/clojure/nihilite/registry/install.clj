@@ -19,15 +19,22 @@
    :tag, :capture-stack?, :max-depth (1-256, default 32),
    :sample-rate (0.0-1.0, default 0.01).
 
-   Throws ex-info with `:nihilite/kind` ∈
-   #{:nihilite/missing-id :nihilite/missing-target
-     :nihilite/missing-method :nihilite/bad-arity :nihilite/bad-tag
-     :nihilite/bad-max-depth :nihilite/bad-sample-rate
-     :nihilite/missing-descriptor :nihilite/invalid-action
-     :nihilite/cancel-requires-entry
-     :nihilite/subscriber-requires-entry
-     :nihilite/invalid-action-on-throw
-     :nihilite/invalid-action-on-invoke}."
+    Throws ex-info with `:nihilite/kind` ∈
+    #{:nihilite/missing-id :nihilite/missing-target
+      :nihilite/missing-method :nihilite/bad-arity :nihilite/bad-tag
+      :nihilite/bad-max-depth :nihilite/bad-sample-rate
+      :nihilite/missing-descriptor :nihilite/invalid-action
+      :nihilite/invalid-action-on-redefine
+      :nihilite/cancel-requires-entry
+      :nihilite/subscriber-requires-entry
+      :nihilite/invalid-action-on-throw
+      :nihilite/invalid-action-on-invoke}.
+
+    The `:invalid-action-on-redefine` throw fires BEFORE
+    `cancel-requires-entry` so that
+    `{:position :redefine, :action :cancel}` produces the
+    redefine-specific message (not the generic cancel-requires-entry
+    message). Order matters for the error message a caller sees."
   [spec]
   (let [{:keys [id target-internal method-name position arity bridge note
                 descriptor action tag capture-stack? max-depth sample-rate]} spec
@@ -95,6 +102,14 @@
                       {:nihilite/kind :nihilite/invalid-action
                        :nihilite/id spec-id
                        :nihilite/action spec-action})))
+    (when (and (= spec-pos :redefine)
+               (#{:modify :cancel} spec-action))
+      (throw (ex-info (str ":action :modify|:cancel invalid on :position :redefine "
+                           "(id=" spec-id ")")
+                      {:nihilite/kind :nihilite/invalid-action-on-redefine
+                       :nihilite/id spec-id
+                       :nihilite/action spec-action
+                       :nihilite/position spec-pos})))
     (when (and (= spec-action :cancel) (not= spec-pos :entry))
       (throw (ex-info (str ":action :cancel requires :position :entry "
                            "(got " spec-pos ")")

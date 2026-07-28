@@ -49,6 +49,7 @@
    "nihilite.test.hook-invoke-test"
    "nihilite.test.observers-stack-test"
    "nihilite.test.dispatch-return-cancel-test"
+   "nihilite.test.install-redefine-reject-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref
