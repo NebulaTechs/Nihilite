@@ -59,7 +59,7 @@
 (def remove-stats         rstats/remove-stats)
 
 (defn spec
-  "Convenience constructor mirroring the Java HookSpec(...) shape.
+  "Convenience constructor mirroring the Java HookSpec record shape.
    Returns a HookSpec record. The trailing fields
    (method-key, source-class, source-descriptor, tag) are
    computed from the first seven plus optional `:descriptor`,
