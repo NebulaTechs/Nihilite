@@ -1,20 +1,5 @@
 (ns nihilite.boot
-  "Server bootstrap. start! binds ONE loopback server on the
-   canonical port (:port / :bind). The same socket accepts both
-   native nREPL bencode clients (editor IDE plugins, cider/calva,
-   lein, `clj -M:nrepl`, ...) and plain raw Clojure line clients
-   (socat, nc, curl-style hand-rolled probes). Connection-level
-   dispatch — bencode prefix sniff vs. plain UTF-8 lines — lives in
-   `nihilite.transport`; this namespace is just the lifecycle
-   wrapper.
-
-   - start!     binds the one canonical listener.
-   - stop!      closes that listener idempotently.
-   - load-init! loads a single file from -Dnihilite.init (passed by path).
-
-   Anything more complex belongs in the init file: (require ...),
-   (def ...), protocol extensions, hook wiring, etc. Nihilite itself
-   does NOT auto-discover files."
+  "Server bootstrap. start! binds ONE loopback server. Lifecycle wrapper around transport."
   (:require [clojure.java.io :as jio]
             [clojure.tools.logging :as log]
             [nihilite.version :as v]
@@ -22,6 +7,8 @@
   (:import (java.io File)
            (sun.misc Signal SignalHandler))
   (:gen-class))
+
+;; Anything more complex belongs in the init file: (require ...), (def ...), hook wiring.
 
 (defn- ignore-signal!
   "Install a no-op handler for the named POSIX signal so a `^C` typed
@@ -56,22 +43,7 @@
       (= host "")))
 
 (defn start!
-  "Start the canonical server. Returns a single documented handle:
-
-      {:server <stop-fn>}
-
-   where <stop-fn> is the (idempotent) no-arg closure returned by
-   `nihilite.transport/start!`. The shape is deliberately minimal —
-   one entry, one stop fn — and replaces the prior two-server map
-   (which routed nREPL through `nrepl.server/start-server` and an
-   optional raw listener through a parallel branch).
-
-   Options:
-     :port          - canonical port (default 7888)
-     :bind          - bind host (default \"127.0.0.1\")
-
-   The JVM blocks on the latch started by `ServerMain`; this
-   function itself does not block."
+  "Start canonical server. Returns {:server <stop-fn>}. Options: :port (7888), :bind."
   [& {:keys [port bind]
       :or {bind "127.0.0.1"
            port 7888}}]
@@ -86,14 +58,7 @@
     {:server stop-fn}))
 
 (defn stop!
-  "Stop a handle returned by `start!`. Accepts either:
-
-     - the documented `{:server stop-fn}` map (preferred), or
-     - a bare IFn (narrow back-compat for callers that already have
-       the stop fn in hand.
-
-   Stop is idempotent: calling twice is a no-op the second time
-   (the transport-level stop fn guards itself)."
+  "Stop a handle from start!. Accepts {:server stop-fn} or bare IFn. Idempotent."
   [server-or-handle]
   (let [stop-fn (cond
                   (map? server-or-handle)      (:server server-or-handle)
@@ -108,10 +73,7 @@
           (log/error t "stop failed"))))))
 
 (defn load-init!
-  "If -Dnihilite.init points at a readable file, load it via
-   clojure.core/load-file. Returns the path that was loaded (or nil
-   if no init was requested). Failures are logged and swallowed —
-   a broken init must not abort the server."
+  "If -Dnihilite.init points at readable file, load-file it. Returns path or nil. Failures swallowed."
   []
   (when-let [path (System/getProperty "nihilite.init")]
     (let [f (jio/file path)]

@@ -1,9 +1,5 @@
 (ns nihilite.reload.api
-  "Public surface for the reload primitive.
-   `discover-ordered` walks modules-dir and returns the topo-sorted
-   seq of ns symbols. `re-init!` reloads every module in topo order
-   and then runs the init file. Both are used by smoke tests and
-   by the operator at the REPL."
+  "Public surface for the reload primitive. `discover-ordered` + `re-init!`."
   (:require [clojure.tools.logging :as log]
             [nihilite.reload.header :as header]
             [nihilite.reload.discover :as discover]
@@ -11,37 +7,19 @@
             [nihilite.reload.init :as init]))
 
 (defn discover-ordered
-  "Walk modules-dir and return the ordered seq of ns symbols
-   (topo-sorted). Exposed for diagnostics."
-  ([] (discover-ordered "examples"))
+  "Walk modules-dir and return ordered seq of ns symbols (topo-sorted). Diagnostic."
+  ([] (discover-ordered "modules"))
   ([modules-dir]
    (->> (discover/discover-modules modules-dir)
         topo/topo-sort
         vec)))
 
 (defn re-init!
-  "Reload every module namespace in topological order, then run
-   the init file. Vars defined in the modules get their file-defined
-   root values back, overwriting any in-REPL alter-var-root overrides.
-
-   Options:
-     :modules-dir - directory to scan for .clj files (default
-                    \"examples\"). Relative paths resolve against
-                    the JVM's CWD.
-     :init-file   - path to the init file to run after reload
-                    (default: -Dnihilite.init if set, else nil —
-                    pure REPL when no init file is configured).
-
-   Returns a structured map. Empty-discoveries and absent init
-   return `{:re-init-done false :partial false :failed [] :reloadable 0}`
-   (no error — pure REPL short-circuit). Cycle-path failures
-   return the same shape with an additional `:cycle-path [sym...]`
-   key. The successful mapping is the same as `do-reload`'s
-   return shape."
+  "Reload every module ns in topo order, then run init file. Options: :modules-dir, :init-file."
   ([] (re-init! nil))
   ([opts]
    (let [{:keys [modules-dir init-file]
-          :or {modules-dir "examples"
+          :or {modules-dir "modules"
                init-file (System/getProperty "nihilite.init")}}
          opts
          modules (discover/discover-modules modules-dir)]
