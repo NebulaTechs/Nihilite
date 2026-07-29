@@ -86,9 +86,7 @@
       "runtime-error")))
 
 (defn- compiler-internal-key?
-  "True for Clojure compiler-internal ex-data keys (`:clojure.error/*`).
-   These carry NO_SOURCE_PATH placeholders + compiler phase noise and
-   must NOT surface in the friendly `:data` field."
+  "True for Clojure compiler-internal ex-data keys (carry NO_SOURCE_PATH noise)."
   [k]
   (and (keyword? k)
        (= "clojure.error" (namespace k))))

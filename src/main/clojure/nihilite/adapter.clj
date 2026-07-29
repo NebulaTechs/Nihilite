@@ -1,22 +1,5 @@
 (ns nihilite.adapter
-  "Runtime-binding protocols for nihilite internals.
-
-   This ns is closed-dispatched (defprotocol) because the methods
-   here are on the runtime-internal hot path: boot sentinel
-   polling, scheduler routing, event-registry strategy. Adding a
-   new runtime is still easy — implement the protocol via
-   `install-default!` from the runtime's init file.
-
-    The `:minecraft/vanilla` implementation lives in
-    `examples/minecraft/init.clj`. It uses
-    `(defrecord MinecraftVanillaAdapter [] nihilite.adapter/BootSentinel ...)`
-    and calls `(nihilite.adapter/install-default! :minecraft/vanilla recordInstance)`.
-
-   Workers in `nihilite.agent.Agent` query `default-adapter` at
-   boot and call its `wait-until-runtime-ready!` instead of doing
-   runtime-specific polling inline. This keeps Agent.js agnostic
-   to whether we're attached to vanilla MC, Spigot, Folia, Spring,
-   JOOQ, Kafka, generic JRE, etc."
+  "Runtime-binding protocols for nihilite internals. Closed-dispatched; new runtime = install-default!."
 
   (:require [clojure.tools.logging :as log]))
 
@@ -111,13 +94,7 @@
   adapter)
 
 (defn install-default!
-  "Idempotent: install `adapter` as the default if no default
-   exists, OR replace the existing one if `force?` is truthy.
-   Returns a structured result map
-     `{:previous <prev> :adapter <new> :forced? bool}`.
-   Concurrent installers race deterministically — exactly one
-   non-forced win; the loser observes the existing adapter via
-   the `:previous` field."
+  "Idempotent install adapter as default; replace if force?. Returns {:previous :adapter :forced?}."
   ([runtime-kw adapter] (install-default! runtime-kw adapter false))
   ([runtime-kw adapter force?]
    (let [result (cas-install! adapter force?)

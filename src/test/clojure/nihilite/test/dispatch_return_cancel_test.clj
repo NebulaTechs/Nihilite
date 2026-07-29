@@ -35,9 +35,7 @@
                    :bridge (fn [_ev] "MUT-C")})
     (let [rv (reg/dispatch-return-for-spec "rc-a" nil
                                           (object-array 0) "ORIG")]
-      ;; First modify returns "MUT-A". Then the :observe observer
-      ;; flips the cancel-cell. The :modify for "rc-c" is skipped
-      ;; because of the cancelled? check added by the backport.
+      ;; MUT-A wins; :observe flips cancel-cell; rc-c :modify skipped by cancelled? check.
       (is (= "MUT-A" rv)))))
 
 (deftest return-no-cancel-runs-all-bucket

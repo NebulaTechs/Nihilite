@@ -13,14 +13,7 @@
             [nihilite.registry.stats :as stats]))
 
 (defn dispatch-invoke-for-spec
-  "P2.2 (plan v2.1 §4.5) `:invoke-*` dispatch helper. Resolves
-   the spec, builds a HookEvent tagged with the appropriate
-   phase (`:invoke-before` / `:invoke-return` / `:invoke-throw`),
-   and fans out across the bucket.
-
-   `:invoke-throw` re-throws the original throwable after
-   dispatch returns (D2.4). All other actions are no-ops for
-   `:invoke-*` (`:modify`/`:cancel` rejected at install!)."
+  ":invoke-* dispatch helper. Resolves spec, builds event with phase, fans out across bucket."
   [spec-id position self args return-value throwable]
   (try
     (when-let [spec (d/lookup spec-id)]

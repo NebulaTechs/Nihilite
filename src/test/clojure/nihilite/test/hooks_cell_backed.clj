@@ -127,7 +127,5 @@
     (nihilite.hooks/install! :on-test-signal f)
     (let [r (nihilite.registry/dispatch "on-test-signal"
                                         nil (object-array 0))]
-      ;; User-hook throws are isolated: the
-      ;; Minecraft thread should not see them; the dispatcher
-      ;; returns nil and records nothing as :ok.
+      ;; User-hook throws isolated; MC thread doesn't see them; dispatcher returns nil.
       (is (nil? r) "throwing user-hook returns nil; no :ok / :fired marker"))))

@@ -18,10 +18,7 @@
     (is (= "runtime-error" (:kind result)))
     (is (= "boom" (:message result)))
     (is (= {:k 42} (:data result)))
-    ;; ex-info created in test-infra has no :file/:line in ex-data and
-    ;; no user-relevant frame (all clojure.* frames are dropped), so
-    ;; location resolves to the explicit sentinel. The intent of THIS
-    ;; test is :data preservation, not location format.
+    ;; ex-info has no :file/:line; intent is :data preservation, not location format.
     (is (string? (:location result)))
     (is (seq (:location result)))))
 

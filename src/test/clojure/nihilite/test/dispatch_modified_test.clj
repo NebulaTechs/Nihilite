@@ -45,9 +45,7 @@
         ":modify winning with non-nil return increments :modified")))
 
 (deftest dispatch-return-no-bump-on-nil-rv
-  ;; Per the bucket walk: when :modify returns nil, the cond
-  ;; branch `(and (= action :modify) (nil? rv)) → nil` fires;
-  ;; winner is NOT reset; :modified must stay 0.
+  ;; :modify nil-rv → cond branch nil; winner unchanged; :modified stays 0.
   (let [id "mod-nil-test"
         _  (install-modify id (fn [_] nil))]
     (reg/dispatch-return-for-spec id nil (object-array 0) "original")

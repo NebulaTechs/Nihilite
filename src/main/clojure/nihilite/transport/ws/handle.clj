@@ -1,10 +1,5 @@
 (ns nihilite.transport.ws.handle
-  "Connection-level entry: writes the 101 Switching Protocols
-   response, then runs the per-connection dispatch loop.
-
-   `handle-ws` is the public surface called by
-   `nihilite.transport.http` once the upgrade has been validated
-   by `nihilite.transport.ws.handshake/ws-validation-error`."
+  "WS per-conn entry: 101 Switching Protocols + dispatch loop."
   (:require [clojure.tools.logging :as log]
             [nihilite.transport.io :as io]
             [nihilite.transport.ws.handshake :as hs]
@@ -12,10 +7,7 @@
   (:import [java.io ByteArrayOutputStream]))
 
 (defn handle-ws
-  "RFC 6455 WebSocket branch. Caller (handle-http) has already
-   drained the request line + headers and validated the upgrade.
-   We write the 101 Switching Protocols response, then loop on
-   frames."
+  "RFC 6455 WS branch. Caller drained req+headers; we write 101 and loop frames."
   [sock buf-in headers]
   (.setSoTimeout sock hs/ws-idle-timeout-ms)
   (let [out (.getOutputStream sock)

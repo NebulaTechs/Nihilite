@@ -112,9 +112,7 @@
         "spec-B's :exceptions stays 0 despite spec-A's throw")))
 
 (deftest nil-bridge-does-not-bump
-  ;; nil ifn is handled before the try/catch → no exception path,
-  ;; no bump. This is the contract test for `dispatch-one!`'s
-  ;; nil-guard short-circuit.
+  ;; nil ifn short-circuits before try/catch; no bump.
   (let [id      "nil-bridge-test"
         _       (install-bridge id (fn [_] nil))
         ev     (rs/map->HookEvent {:spec-id      id

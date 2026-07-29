@@ -11,9 +11,7 @@
             [nihilite.registry.index :as ix]
             [nihilite.registry.install :as install]))
 
-;; Minimal spec fragments — only :id, :target-internal,
-;; :method-name, :descriptor, :position, :action, :bridge are
-;; exercised here; other optionals are default-defaulted.
+;; Spec fragments: only :id, :target-internal, :method-name, :descriptor, :position, :action, :bridge.
 (defn- redefine-modify-spec [id]
   {:id id
    :target-internal "java/lang/String"
@@ -67,10 +65,7 @@
          (install/install! spec)))))
 
 (deftest install-allows-redefine-observe
-  ;; The throw targets :modify|:cancel — :observe on :redefine
-  ;; continues to install without error (redefine's success
-  ;; semantics are owned by the byte-buddy side; install does
-  ;; not police observe-on-redefine).
+  ;; :observe on :redefine stays valid (byte-buddy side owns redefine semantics).
   (let [spec (assoc (valid-observe-spec "redefine-observe-test")
                     :position :redefine)]
     (is (true? (install/install! spec)))))

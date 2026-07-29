@@ -89,24 +89,7 @@
     mode))
 
 (defn handle-raw
-  "Interactive raw REPL branch. Single jline3 xterm readline drives every
-   raw client (no `:line` vs `:char` fork).
-
-   On connect the server sends `IAC WILL ECHO/SGA` (via
-   `negotiate-echo-mode!`, called for its side-effect only — the
-   :char/:line return is ignored) to nudge a real telnet client into
-   char-at-a-time mode. jline3 does NOT speak telnet IAC, so this
-   nudge is what makes telnet usable; nc/socat ignore the bytes.
-
-   Then a single `nihilite.readline/run-loop` drives the session:
-   char echo, 1000-entry shared history (Up/Down + C-r), TAB
-   completion, cursor motion, paren-balance continuation, C-c
-   eval-cancel, C-d exit-on-empty, friendly non-leaky errors. A
-   cooked-mode `nc` still connects and can eval whole lines; it just
-   lacks in-line editing (its own terminal owns the line discipline).
-
-   `(exit)` or C-d-on-empty returns from run-loop; we then write
-   `bye` and close the socket (never System/exit)."
+  "Interactive raw REPL. Single jline3 xterm readline drives every raw client."
   [^Socket sock ^BufferedInputStream buf-in]
   (.setSoTimeout sock 0)
   (let [raw-out (.getOutputStream sock)

@@ -30,16 +30,7 @@
        "C-l clears screen, TAB completes, history up/down.\r\n"))
 
 (defn read-balanced-form
-  "Read one balanced Clojure form via jline `readLine`. Accumulates
-   continuation lines until paren-balance ≤ 0. Returns:
-     {:form s}      balanced form ready to eval
-     {:eof true}    C-d on an empty buffer
-     {:intr true}   C-c during input (abort current form)
-     {:blank true}  lone blank first line (skip / reprompt)
-     {:overflow true} form exceeded max-form-bytes
-
-   jline gives us — for free, in-line — char echo, Backspace, arrows,
-   C-a/e/k/u/w, TAB completion, Up/Down + C-r history."
+  "Read one balanced form via jline readLine. Returns {:form|:eof|:intr|:blank|:overflow}."
   [^LineReader reader]
   (term/sync-history-into-reader! reader)
   (loop [buf (StringBuilder.)
@@ -69,12 +60,7 @@
                 (recur buf continuation-prompt)))))))))
 
 (defn eval-with-cancel
-  "Run `(eval-form form-str repl-state)` in a future. While it runs,
-   poll the terminal's NonBlockingReader for C-c (0x03). On C-c:
-   `future-cancel` (interrupts Thread/sleep / blocking IO; does NOT
-   stop a pure CPU busy loop) and return an `:interrupted` marker.
-   Worst-case latency between eval completion and prompt redraw is
-   one `cancel-poll-ms` window."
+  "Run eval-form in future; poll for C-c; future-cancel on interrupt."
   ^String [^Terminal terminal ^String form-str repl-state]
   (let [fut (future (eval/eval-form form-str repl-state))
         ^NonBlockingReader nbr (.reader terminal)]
@@ -89,21 +75,7 @@
             :else (recur)))))))
 
 (defn run-loop
-  "Interactive jline3 REPL over `terminal`. `repl-state` is a
-   per-connection atom {:ns Namespace :*1 :*2 :*3 :*e}. `write!` is a
-   1-arg fn that writes a CRLF-normalized string to the client.
-
-   Returns when the client hits C-d on an empty buffer or submits the
-   literal `(exit)` form — byebye + close, never System/exit. Each
-   submitted balanced form is pushed to the shared history, then
-   eval'd through the C-c-cancellable watcher.
-
-   Loop actions:
-     :form     → push history, eval (cancellable), write result
-     :blank    → reprompt (skip)
-     :intr     → C-c during input: abort form, reprompt
-     :overflow → ERROR + clear buffer + reprompt (64 KiB cap)
-     :eof/exit → return (caller writes bye + closes socket)"
+  "Interactive jline3 REPL. Returns on C-d or (exit). Actions: :form :blank :intr :overflow :eof."
   [^Terminal terminal repl-state write!]
   (let [reader (term/build-reader terminal repl-state)]
     (loop []

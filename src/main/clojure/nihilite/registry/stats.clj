@@ -34,8 +34,7 @@
   (.get stats-index (str spec-id)))
 
 (defn remove-stats
-  "Drop the StatsRecord for `spec-id`. Returns true if a record
-   was actually removed."
+  "Drop StatsRecord for spec-id. Returns true if removed."
   [spec-id]
   (some? (.remove stats-index (str spec-id))))
 

@@ -23,12 +23,9 @@
 
 (deftest entry-does-not-consume-rv
   (let [src @entry-clj-source]
-    ;; (1) No (case action ...) dispatch form in entry.clj — entry phase
-    ;;     routes via direct if/loop, not a case-on-action table.
+    ;; (1) No (case action ...) — entry routes via if/loop, not case-on-action.
     (is (nil? (re-find #"\(case\s+action" src))
         "entry.clj must not contain a `(case action ...)` dispatch form")
-    ;; (2) No `:return-value ev` consumption — entry phase does not read
-    ;;     return-value off the event. Return-value belongs to the
-    ;;     :modify/:cancel phase (dispatch-return-for-spec).
+    ;; (2) No :return-value — entry doesn't read return-value (belongs to return phase).
     (is (nil? (re-find #":return-value" src))
         "entry.clj must not read `:return-value ev` from the event")))

@@ -29,43 +29,13 @@
     ^clojure.lang.IFn (:bridge spec)))
 
 (defn call-cancel!
-  "Invoke the HookEvent's `:cancel!` field if present.
-
-   The field is a closure over `AtomicBoolean` (see
-   `nihilite.registry.event`); calling it with `true` flips the
-   per-event cancel cell so subsequent observers in the same
-   fan-out short-circuit.
-
-   History (HC5 fix):
-     - entry.clj:38 used `.-cancel!` reflection on a CLOSURE field,
-       which is illegal (closures are not Java fields). It compiled
-       only because `^HookEvent` type-hint resolved the field at
-       compile time without actually invoking reflective dispatch.
-     - return.clj:51 used `((:cancel! event))` — a 0-arg call to
-       a 1-arg fn, which throws `ArityException` on dispatch.
-     - throw.clj:40 and invoke.clj:43 used the correct
-       `(when-let [cb (:cancel! ev)] (cb true))` pattern.
-
-   This helper unifies the cancel! invocation across all four
-   phase dispatch files (D12). It is nil-safe — events without
-   `:cancel!` (e.g. synthetic test events) just no-op."
+  "Invoke HookEvent's :cancel! field if present. Nil-safe; no-op on synthetic events."
   [ev]
   (when-let [cb (:cancel! ev)]
     (cb true)))
 
 (defn run-hook
-  "Invoke a single observer bridge with the given event, with
-   per-observer try/catch isolation. Returns the IFn's return
-   value (or `::no-return` if the IFn threw or was absent).
-
-   The dispatcher wiring is `(du/run-hook f event)` which then
-   routes the actual IFn call. This indirection lets future
-   versions add cross-cutting concerns (e.g. metrics) without
-   editing every phase dispatch file.
-
-   The exception-bump behavior was previously in
-   `nihilite.registry.event/dispatch-one!`; this fn keeps the
-   same shape so the bump wiring stays effective."
+  "Invoke single observer bridge with event. Per-observer try/catch. Returns ::no-return on throw."
   [f ev]
   (if (nil? f)
     ::no-return

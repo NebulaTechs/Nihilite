@@ -25,9 +25,7 @@
         :else (recur)))))
 
 (defn read-bounded-line
-  "Read up to and including a line terminator into a byte buffer.
-   Returns the UTF-8 string (terminator stripped), or nil on EOF.
-   Throws `:nihilite/oversized-line` if line body exceeds `max-bytes`."
+  "Read line into byte buffer. Returns UTF-8 string or nil on EOF. Throws :oversized-line."
   ^String [^BufferedInputStream in ^long max-bytes]
   (let [buf (ByteArrayOutputStream. 256)]
     (loop []
@@ -56,11 +54,7 @@
             (recur)))))))
 
 (defn safe-eval-line
-  "Thin wrapper: delegates the eval+`*1`/`*2`/`*3`/`*e` state to
-   `nihilite.readline/eval-form-lf`, then sets the namespace on the
-   per-connection state atom. Callers use the LF-terminated variant
-   because the client does its own line discipline and CRLF would
-   interfere."
+  "Delegate eval to readline/eval-form-lf; set ns on per-conn state atom. LF-terminated."
   ^String [^String form-str ns repl-state]
   (swap! repl-state assoc :ns ns)
   (readline/eval-form-lf form-str repl-state))

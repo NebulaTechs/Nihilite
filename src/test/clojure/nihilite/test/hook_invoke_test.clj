@@ -74,11 +74,7 @@
     (reg/install! {:id "inv-t" :target-internal "x" :method-name "m"
                    :descriptor "()V" :position :invoke-throw :arity 0
                    :bridge (fn [_])})
-    ;; dispatch-invoke-for-spec itself does NOT throw; the
-    ;; host method body is responsible for re-throwing after
-    ;; the dispatch. The dispatch contract is: throwable is
-    ;; passed via the event for observers to inspect; the
-    ;; host decides whether to re-throw.
+    ;; dispatch-invoke-for-spec itself does NOT throw; host re-throws after dispatch.
     (is (nil? (reg/dispatch-invoke-for-spec "inv-t" ":invoke-throw"
                                            nil (object-array 0)
                                            nil

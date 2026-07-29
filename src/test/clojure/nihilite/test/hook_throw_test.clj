@@ -74,10 +74,8 @@
     (let [_ (reg/install! {:id "throw-mod-attempt" :target-internal "x"
                            :method-name "m" :descriptor "()V"
                            :position :throw :arity 0
-                           ;; install! rejects :modify on :throw, but
-                           ;; if a bridge manually returns a value
-                           ;; we still ignore it
-                           :bridge (fn [_] "ignored")})]
+;; install! rejects :modify on :throw, but bridge returns are ignored anyway.
+                            :bridge (fn [_] "ignored")})]
       (let [rv (reg/dispatch-throw-for-spec "throw-mod-attempt" nil
                                             (object-array 0)
                                             (ex-info "boom" {}))]

@@ -22,10 +22,6 @@
 (def RETURN  rs/RETURN)
 (def ACTIONS rs/ACTIONS)
 
-;; Defrecords: the actual class is nihilite.registry.spec.HookSpec;
-;; re-imported above so callers can `instance? HookSpec`,
-;; `map->HookSpec`, `map->HookContext`, `map->HookEvent`, etc.
-
 (def method-key           rs/method-key)
 (def install!             ri/install!)
 (def install-fresh!       ri/install-fresh!)
@@ -59,11 +55,7 @@
 (def remove-stats         rstats/remove-stats)
 
 (defn spec
-  "Convenience constructor mirroring the Java HookSpec record shape.
-   Returns a HookSpec record. The trailing fields
-   (method-key, source-class, source-descriptor, tag) are
-   computed from the first seven plus optional `:descriptor`,
-   `:action` (default :observe), and `:tag` (default nil)."
+  "Convenience constructor mirroring HookSpec record. Trailing fields computed from first 7 + opts."
   ([id target-internal method-name position arity bridge note]
    (spec id target-internal method-name position arity bridge note nil :observe nil))
   ([id target-internal method-name position arity bridge note descriptor]

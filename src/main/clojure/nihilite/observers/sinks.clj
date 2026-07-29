@@ -10,8 +10,7 @@
   (atom {}))
 
 (defn register-sink!
-  "Register (or replace) a sink under `name`. The sink is a 1-arg
-   IFn. Returns the registered IFn."
+  "Register (or replace) a sink under name. Sink is 1-arg IFn. Returns registered IFn."
   [name sink-fn]
   (swap! sinks assoc name sink-fn)
   sink-fn)
@@ -63,17 +62,7 @@
   (swap! ring-buffer-storage conj ev))
 
 (defn take-events
-  "DEPRECATED. Drain up to `n` events from `buf` (a ring-buffer atom).
-
-   Per Wave-1 T6, this function uses a loop + (reset! buf ...)
-   pattern that races against the
-   `(swap! ring-buffer-storage conj ev)` writer in
-   `ring-buffer-sink`. Concurrent drain+emit can lose events or
-   double-drain. The replacement is `drain-events` which uses
-   `swap-vals!` for atomic drain+replace.
-
-   This deprecated form is retained for backward compatibility
-   in existing tests; new code MUST use `drain-events`."
+  "DEPRECATED. Races with writer; use drain-events. Retained for backward compat in tests."
   [buf n]
   (loop [remaining n
          taken (transient [])]
@@ -90,25 +79,7 @@
             (recur (dec remaining) (conj! taken head))))))))
 
 (defn drain-events
-  "Atomically drain up to `n` events from the ring-buffer storage
-   and return them as a vector. Uses `swap-vals!` with a PURE swap-fn
-   so a concurrent `(swap! ring-buffer-storage conj ev)` writer
-   NEVER races with the reader.
-
-   Passing `n <= 0` returns an empty vector without touching state.
-   Passing a larger `n` than the queue size returns all available
-   events (the queue is fully drained in one shot).
-
-   Implementation: we use `swap!` with a pure swap-fn that BOTH
-   records the take-result AND returns the new (remaining) queue
-   to be stored as the atom's next value. The classic swap-vals!
-   pitfall where the swap-fn's return value becomes the atom's new
-   value is avoided by routing through `swap!` (which DOES write
-   the swap-fn's return as the new atom value) — but here the swap-fn
-   already returns the new remaining-queue, so the atom continues
-   to hold a valid PersistentQueue after every drain.
-
-   Wave-1 T6 fix (supersedes the racy `take-events` loop)."
+  "Atomically drain up to n events from ring-buffer. Uses swap! with pure swap-fn (no race)."
   ^java.util.List [^clojure.lang.IAtom buf ^long n]
   (if (<= n 0)
     []
@@ -155,9 +126,7 @@
   (register-sink! :fn-sink sink-fn))
 
 (defn dispatch!
-  "Route `event` to the named sink. Returns nil on success, throws
-   only on an unknown sink name (programmer error, NOT a runtime
-   event error). Per-sink try/catch is INSIDE each sink's fn."
+  "Route event to named sink. Returns nil on success; throws on unknown sink name."
   [sink-name event]
   (if-let [s (lookup sink-name)]
     (s event)

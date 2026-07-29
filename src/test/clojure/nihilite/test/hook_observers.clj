@@ -55,9 +55,7 @@
      :bridge          ifn
      :note            (str "legacy-path observer " id)}))
 
-;; ---------------------------------------------------------------------------
 ;; 1. two-entry-observer-fanout-order
-;; ---------------------------------------------------------------------------
 
 (deftest two-entry-observer-fanout-order
   (let [order (atom [])
@@ -69,9 +67,7 @@
     (is (= [:a :b] @order)
         "both observers fired in registration order on one dispatch")))
 
-;; ---------------------------------------------------------------------------
 ;; 2. observe-returns-nil-on-return-ignored
-;; ---------------------------------------------------------------------------
 
 (deftest observe-returns-nil-on-return-ignored
   (install-observer "obs-return"
@@ -85,9 +81,7 @@
          does NOT mutate the original return; the original 42 is
          returned to the host method")))
 
-;; ---------------------------------------------------------------------------
 ;; 3. modify-replaces-return
-;; ---------------------------------------------------------------------------
 
 (deftest modify-replaces-return
   (install-observer "mod-return"
@@ -99,9 +93,7 @@
     (is (= "MUTATED" r)
         ":modify handler returning non-nil replaces the original return")))
 
-;; ---------------------------------------------------------------------------
 ;; 4. first-modify-wins-subsequent-modify-ignored
-;; ---------------------------------------------------------------------------
 
 (deftest first-modify-wins-subsequent-modify-ignored
   (install-observer "mod-first"
@@ -118,9 +110,7 @@
         "the first :modify spec's return wins; subsequent :modify
          returns are ignored by the dispatcher")))
 
-;; ---------------------------------------------------------------------------
 ;; 5. cancel-sets-flag-and-skips-remaining-observers
-;; ---------------------------------------------------------------------------
 
 (deftest cancel-sets-flag-and-skips-remaining-observers
   (let [cancel-count (atom 0)
@@ -141,9 +131,7 @@
     (is (true? ((:cancelled? @captured-event)))
         "the event's :cancelled? flag is true after the cancel")))
 
-;; ---------------------------------------------------------------------------
 ;; 6. observe-after-cancel-skipped (inverse ordering)
-;; ---------------------------------------------------------------------------
 
 (deftest observe-after-cancel-skipped
   (let [cancel-count (atom 0)
@@ -162,9 +150,7 @@
         ":cancel registered AFTER :observe still fires and cancels
          further dispatches in this turn")))
 
-;; ---------------------------------------------------------------------------
 ;; 7. cancel-on-return-position-rejected
-;; ---------------------------------------------------------------------------
 
 (deftest cancel-on-return-position-rejected
   (let [thrown (atom nil)]
@@ -178,9 +164,7 @@
            (:nihilite/kind (ex-data @thrown)))
         "ex-info carries :nihilite/kind :nihilite/cancel-requires-entry")))
 
-;; ---------------------------------------------------------------------------
 ;; 8. unknown-action-rejected
-;; ---------------------------------------------------------------------------
 
 (deftest unknown-action-rejected
   (let [thrown (atom nil)]
@@ -194,9 +178,7 @@
            (:nihilite/kind (ex-data @thrown)))
         "ex-info carries :nihilite/kind :nihilite/invalid-action")))
 
-;; ---------------------------------------------------------------------------
 ;; 9. missing-descriptor-throws (commit 2 hardens the warn to throw)
-;; ---------------------------------------------------------------------------
 
 (deftest missing-descriptor-throws
   (let [thrown (atom nil)]

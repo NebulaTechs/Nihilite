@@ -11,9 +11,7 @@
   (:import (nihilite.registry.spec HookEvent)))
 
 (defn spec-bucket
-  "Return the relevant spec list for a given spec: the
-   `by-method` bucket if the spec has a method-key, otherwise
-   the `by-target` bucket (legacy fallback)."
+  "Return relevant spec list: by-method bucket if method-key, else by-target (legacy)."
   [spec]
   (if-let [mk (:method-key spec)]
     (some-> (.get (ix/get-by-method) mk) seq)
@@ -25,19 +23,7 @@
   (.get (ix/get-by-id) (str id)))
 
 (defn lookup-spec-for-call
-  "ByteBuddy Advice entry-point helper. Given a call site's
-   class-internal name, method name, parameter count, and (P0)
-   JLS field descriptor, return the first matching spec's `:id`
-   (string) or nil.
-
-   P0 matching rule (4-arg form): the method-key
-   `(class-internal/method-name#descriptor)` must match an entry
-   in `by-method` and the first spec in that bucket whose
-   `:arity` is nil or equal to `parameter-count` wins.
-
-   Legacy fallback (3-arg form): scans `by-target` by
-   `(method-name, parameter-count)` only; reserved for the
-   pre-P0 paths and the `by-method` miss case."
+  "ByteBuddy Advice helper. Returns first matching spec :id or nil. P0: by-method; legacy: by-target."
   ([class-internal method-name parameter-count descriptor]
    (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
               (rs/method-key class-internal method-name descriptor))
@@ -66,17 +52,7 @@
                  (recur (next bucket)))))))))))
 
 (defn dispatch-redefine
-  "ByteBuddy MethodDelegation helper. The original method body
-   has been REPLACED by a static call to
-   `GenericDispatcher.dispatch(hostInternal, methodName, args)`.
-   We resolve the spec by class+name+arity and invoke the
-   bridge fn.
-
-   Bridge contract (unchanged from commit 1): receives positional
-   args `[args method-name]`. Returns a value typed per the
-   original method's declared return type, OR throws. The
-   DynamicAssigner inserts the runtime CHECKCAST when the bridge
-   returns Object and the target expects a narrower type."
+  "ByteBuddy MethodDelegation helper. Resolve spec by class+name+arity, invoke bridge fn."
   [host-internal method-name args]
   (try
     (let [param-count (count args)
@@ -96,18 +72,7 @@
       (throw t))))
 
 (defn install-redefine-dispatcher!
-  "Called by AgentWorker after Clojure runtime is up. Wraps
-   `dispatch-redefine` in an IFn taking the MethodDelegation's
-   three-argument shape `(hostInternal, methodName, args)`.
-   Stores the resulting IFn in
-   `nihilite.hooks.Bridge/REDISPATCHER` so
-   `GenericDispatcher` can call it from rewritten bytecode.
-
-   This sub-namespace does not `:require nihilite.hooks` to
-   avoid a load-order cycle; the 0-arity form resolves the
-   `Bridge/installRedefineDispatcher` symbol at call time.
-   The 1-arity form accepts an explicit setter (for tests
-   and alternate runtimes)."
+  "Wrap dispatch-redefine in IFn, store in Bridge/REDISPATCHER. Avoids load-order cycle."
   ([] (install-redefine-dispatcher!
         (clojure.lang.RT/var "nihilite.hooks.Bridge"
                              "installRedefineDispatcher")))

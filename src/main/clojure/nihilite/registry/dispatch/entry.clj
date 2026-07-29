@@ -7,25 +7,7 @@
             [nihilite.registry.stats :as stats]))
 
 (defn dispatch-for-spec
-  "ByteBuddy Advice entry-point helper. Given a resolved spec-id,
-   look up the spec and any sibling specs sharing the same
-   `:method-key`, build a single HookEvent, and fan out across
-   the bucket in registration order. Per-observer try/catch
-   isolation; observer throwables never escape. Honours
-   `:cancelled?` — once any observer sets it, remaining
-   observers in the bucket are skipped. Returns nil.
-
-   P1 (D2.2): `:action :subscriber` specs short-circuit the
-   bucket after their bridge returns — the xform IS the
-   dispatch logic, not one observer in a multi-observer chain.
-
-   `(.-cancel! ^HookEvent event)` was a misleading reflection —
-   `:cancel!` is a closure over an `AtomicBoolean`, not a Java
-   field. The `^HookEvent` type hint just resolved the field at
-   compile time without actually invoking reflective dispatch,
-   so the bug shipped as functionally-correct only because no
-   one exercised this path on a non-cancelled event. Replaced
-   with `(du/call-cancel! event)`."
+  "ByteBuddy Advice entry. Fan out across bucket in registration order. Honours :cancelled?."
   [spec-id self args]
   (try
     (when-let [spec (d/lookup spec-id)]

@@ -13,10 +13,7 @@
 (def ^:const ACTIONS #{:observe :modify :cancel :subscriber})
 
 (defn method-key
-  "Canonical method-key: `<internal>` + `/` + `<method-name>` +
-   `#` + `<descriptor>`. The separator `#` is not legal in any
-   JVM-internal name, method name, or JLS descriptor, so the
-   concatenation is unambiguous."
+  "Canonical method-key: <internal>/<method-name>#<descriptor>. # is unambiguous separator."
   [class-internal method-name descriptor]
   (str class-internal "/" method-name "#" descriptor))
 
@@ -28,16 +25,13 @@
 (defrecord HookContext
   [hookId self args phase returnValue cancelled])
 
+;; Cancellation closes over per-event AtomicBoolean; see event.clj
 (defrecord HookEvent
-  ;; Cancellation: `:cancelled?` and `:cancel!` are closures over a per-event
-  ;; `AtomicBoolean`; `(:cancelled? ev)` reads it and `((:cancel! ev) true)`
-  ;; flips it. #_see event.clj:5
   [spec-id source phase self args return-value throwable
    cancelled? cancel! thread-name timestamp-ns sequence note stack])
 
 (defn normalize-position
-  "Coerce a position value (keyword, string, or nil) to one of
-   the canonical phase keywords. Unknown values default to :entry."
+  "Coerce a position (kw/string/nil) to a canonical phase kw; default :entry."
   [p]
   (cond
     (keyword? p) p
@@ -54,9 +48,7 @@
     :else        :entry))
 
 (defn normalize-action
-  "Coerce an action value to a keyword in #{:observe :modify :cancel :subscriber}.
-   nil / missing → :observe. Unknown → returned as-is; install!
-   then validates against `ACTIONS`."
+  "Coerce action to #{:observe :modify :cancel :subscriber}; nil→:observe."
   [a]
   (cond
     (nil? a)         :observe

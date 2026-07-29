@@ -15,10 +15,7 @@
   []
   (h/history-reset!))
 
-;; `use-fixtures` is a clojure.test multimethod; each fixture is a
-;; `(fn [test-fn] ... (test-fn) ...)` wrapper. A bare `(fn [] ...)`
-;; fixture won't work — the wrapper must invoke `test-fn` to actually
-;; run the test under it.
+;; use-fixtures wraps each test; fixture must invoke test-fn to actually run.
 (use-fixtures :each
   (fn [run-tests]
     (reset-history!)
@@ -46,10 +43,7 @@
       "consecutive dedup: second add of same entry → single element"))
 
 (deftest non-consecutive-duplicate-is-kept
-  ;; Sanity check: dedup is strictly CONSECUTIVE, not global. Insert
-  ;; foo, bar, foo — the two foo's are separated by bar, so both
-  ;; survive. Guards against a buggy implementation that drops all
-  ;; duplicates.
+  ;; Dedup is strictly CONSECUTIVE; foo/bar/foo keeps both foo's.
   (h/history-add! "foo")
   (h/history-add! "bar")
   (h/history-add! "foo")
@@ -69,8 +63,7 @@
           "oldest (entry-0) was dropped")
       (is (some #(= "entry-1000" %) es)
           "newest (entry-1000) is present")
-      ;; Oldest-first ordering check: first entry must be entry-1
-      ;; (the second one we added), last must be entry-1000.
+      ;; Oldest-first: first=entry-1 (second added), last=entry-1000.
       (is (= "entry-1" (first es)))
       (is (= "entry-1000" (last es))))))
 
@@ -88,38 +81,22 @@
   ;; case-sensitive — uppercase prefix does NOT match lowercase entries.
   (is (= [] (h/history-find-prefix "FO"))
       "case-sensitive: uppercase 'FO' matches nothing")
-  ;; prefix-match (substring-from-zero), not exact-match: 'foo'
-  ;; matches BOTH 'foo' and 'foobar'. Guards against a buggy
-  ;; impl that does exact-match only.
+  ;; prefix-match (substring-from-0): 'foo' also matches 'foobar'.
   (is (= ["foo" "foobar"] (h/history-find-prefix "foo"))
       "prefix-match (substring-from-0): 'foo' also matches 'foobar'"))
 
 ;; concurrency
 
 (deftest concurrent-add-stays-within-cap-and-loses-no-fresh-entries
-  ;; 10 threads × 100 entries = 1000 attempted adds. Each thread
-  ;; adds its own unique slice ["t0-e0" .. "t0-e99"] etc., so
-  ;; consecutive-dedup never fires within a thread (each entry is
-  ;; unique within its thread). Across threads, identical entries
-  ;; are possible but the cap and dedup rules apply.
-  ;;
-  ;; Asserts:
-  ;;   1. final count ≤ 1000 (cap respected under contention)
-  ;;   2. exactly 1000 distinct entries attempted; since the cap is
-  ;;      exactly 1000 and no entries are dedup'd (all 1000 are
-  ;;      unique across threads), the surviving set must contain
-  ;;      all 1000 distinct strings.
+  ;; 10 threads × 100 entries = 1000 adds; each thread's slice is unique.
+  ;; Asserts: (1) count ≤ 1000 (cap respected), (2) all 1000 distinct strings survive.
   (let [n-threads 10
         per-thread 100
         total (* n-threads per-thread)
-        ;; compute expected entries: thread t adds entries
-        ;; "tN-eM" for M in [0,99]. Each is globally unique so no
-        ;; dedup fires.
         expected (set (for [t (range n-threads)
                             m (range per-thread)]
                         (str "t" t "-e" m)))
-        ;; Latches so all threads start hammering the atom at the
-        ;; same instant — maximizes contention.
+        ;; Latches so all threads start hammering the atom at the same instant.
         start-gate (java.util.concurrent.CountDownLatch. 1)
         done-gate  (java.util.concurrent.CountDownLatch. n-threads)
         futures    (doall
@@ -162,9 +139,7 @@
 ;; string-type discipline
 
 (deftest non-string-entry-is-coerced-via-str
-  ;; The fn is typed ^String in the arglist, but Clojure is
-  ;; dynamic — verify the internal `(str entry)` coercion path
-  ;; surfaces non-string values without crashing.
+  ;; ^String is a hint only; verify `(str entry)` coerces non-strings.
   (h/history-add! 42)
   (h/history-add! :keyword)
   (is (= ["42" ":keyword"] (h/history-entries))

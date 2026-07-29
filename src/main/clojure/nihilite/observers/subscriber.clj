@@ -76,15 +76,7 @@
   (swap! (:fired sub) inc))
 
 (defn subscribe!
-  "Install a subscriber. Returns a Subscriber defrecord.
-
-   For each spec currently matching `:selector`, replaces its
-   bridge IFn with our subscriber bridge and sets `:action
-   :subscriber`. By default, only specs at `:position :entry`
-   are replaced; pass `:positions` to opt into other phases.
-   Selector matching is snapshotted at subscribe time (D2.4).
-   `:take N` / `:ttl-ms` flip the cancel-cell after the cap;
-   subsequent calls return early."
+  "Install subscriber. Returns Subscriber defrecord. Selector snapshotted at subscribe time."
   [handler {:keys [selector sink name take ttl-ms xform positions
                    silence-match-all-warning]
             :or {selector {} sink :println xform (map identity)}}]
@@ -121,17 +113,13 @@
                                (and expire-ns
                                     (>= (System/nanoTime) expire-ns)))
                          (do
-                           (.set cancel-cell true)
-                           ;; Synchronous auto-unsubscribe — a (future
-                           ;; …) here races with subsequent dispatch
-                           ;; calls and lets `subscribed?` observe a
-                           ;; stale `:active? true` after cap-hit.
-                           ;; unsubscribe! does not re-enter dispatch.
-                           (when (:active? sub)
-                             (try (unsubscribe! sub-id)
-                                  (catch Throwable t
-                                    (log/warn t "auto-unsubscribe failed"))))
-                           nil)
+(.set cancel-cell true)
+                            ;; Sync unsubscribe; (future) would race and leak stale :active?.
+                            (when (:active? sub)
+                              (try (unsubscribe! sub-id)
+                                   (catch Throwable t
+                                     (log/warn t "auto-unsubscribe failed"))))
+                            nil)
                          (dispatch-one! sub handler xform sink ev sub-id)))]
     (doseq [spec (sel/select-targets selector)
             :when (or (nil? positions)
@@ -150,10 +138,7 @@
                       :source-class      (:source-class spec)
                       :source-descriptor (:source-descriptor spec)
                       :note              (:note spec)}]
-        ;; Subscriber paths choose REPLACE (install!) for
-        ;; already-existing specs and FRESH (install-fresh!) only
-        ;; when the id is new. This avoids the prior plan's
-        ;; putIfAbsent throwing on every bulk install.
+        ;; REPLACE for existing ids, FRESH for new; avoids putIfAbsent bulk throw.
         (if (nil? (reg/lookup spec-id))
           (reg/install-fresh! spec-map)
           (reg/install! spec-map))))

@@ -42,13 +42,7 @@
       (when f (f ctx)))))
 
 (defn install!
-  "Install a Clojure IFn as a hook for a known keyword. Returns
-   nil. Throws `:nihilite/unknown-hook` for an unknown kw.
-
-   Forwards `:descriptor` from the registered target spec into
-   `reg/install!`; callers of `register-target!` MUST include
-   `:descriptor` (JLS field descriptor) so the descriptor-keyed
-   registry lookup resolves correctly."
+  "Install IFn as hook for known kw. Throws :nihilite/unknown-hook if unknown."
   [kw ifn]
   (let [m (clojure.core/get @targets kw)]
     (when-not m
@@ -78,17 +72,13 @@
       nil)))
 
 (defn hot-swap!
-  "Atomically replace the IFn associated with kw. Returns
-   `new-ifn`. Only resets the cell — the spec remains
-   registered with the same bridge object on the JVM side."
+  "Atomically replace IFn for kw. Returns new-ifn; spec stays registered."
   [kw new-ifn]
   (reset! (cell-for kw) new-ifn)
   new-ifn)
 
 (defn uninstall!
-  "Remove a hook by keyword. Returns true if a spec was
-   removed, false otherwise. Clears the cell, drops the
-   cached bridge, removes the spec from the registry."
+  "Remove hook by kw. Returns true if removed. Clears cell, drops bridge."
   [kw]
   (let [id           (name kw)
         cell         (clojure.core/get @cells kw)

@@ -21,14 +21,7 @@
   (atom PersistentQueue/EMPTY))
 
 (defn history-add!
-  "Append `entry` to the shared history. No-op (returns the previous
-   deque unchanged) when `entry` equals the most-recent entry.
-
-   When `count` reaches `history-cap`, every further insert becomes
-   `pop ∘ conj` (each O(1) for `PersistentQueue`), so the cap-exceeded
-   path never rebuilds the queue. The dedup check + cap check + drop
-   all happen inside `swap!` so concurrent adders cannot race past
-   the cap."
+  "Append entry to shared history. No-op if equals most-recent. Cap-exceeded: pop ∘ conj."
   [^String entry]
   (let [e (str entry)]
     (swap! history

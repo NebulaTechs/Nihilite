@@ -10,36 +10,7 @@
   (:import [nihilite.registry.spec HookSpec]))
 
 (defn install!
-  "Add or replace a spec keyed by `:id`. Returns true on install,
-   false on replace.
-
-   REPLACE semantics: a subsequent `install!` for an existing
-   `:id` overwrites the prior spec without throwing. This is the
-   historic contract; callers who need strict-no-overwrite must
-   use `install-fresh!` (alias `install-new!`) below.
-
-   Required keys: :id, :target-internal, :method-name,
-   :descriptor (JLS field descriptor), :position, :arity,
-   :bridge, :note. Optional: :action (default :observe),
-   :tag, :capture-stack?, :max-depth (1-256, default 32),
-   :sample-rate (0.0-1.0, default 0.01).
-
-   Throws ex-info with `:nihilite/kind` ∈
-   #{:nihilite/missing-id :nihilite/missing-target
-     :nihilite/missing-method :nihilite/bad-arity :nihilite/bad-tag
-     :nihilite/bad-max-depth :nihilite/bad-sample-rate
-     :nihilite/missing-descriptor :nihilite/invalid-action
-     :nihilite/invalid-action-on-redefine
-     :nihilite/cancel-requires-entry
-     :nihilite/subscriber-requires-entry
-     :nihilite/invalid-action-on-throw
-     :nihilite/invalid-action-on-invoke}.
-
-   The `:invalid-action-on-redefine` throw fires BEFORE
-   `cancel-requires-entry` so that
-   `{:position :redefine, :action :cancel}` produces the
-   redefine-specific message (not the generic cancel-requires-entry
-   message). Order matters for the error message a caller sees."
+  "Add or replace spec by :id. Returns true on install, false on replace. Use install-fresh! for strict."
   [spec]
   (let [{:keys [id target-internal method-name position arity bridge note
                 descriptor action tag capture-stack? max-depth sample-rate]} spec
@@ -171,8 +142,7 @@
       (.add (ix/bucket (:target-internal norm-spec)) norm-spec)
       (when-let [mk (:method-key norm-spec)]
         (.add (ix/method-bucket mk) norm-spec))
-      ;; On replace, the existing StatsRecord is preserved so
-      ;; cumulative counters survive.
+      ;; On replace, StatsRecord is preserved so cumulative counters survive.
       (when-not replaced?
         (stats/ensure-stats spec-id))
       (if replaced?
@@ -211,17 +181,7 @@
         true))))
 
 (defn install-fresh!
-  "Strict variant of `install!`: throws `:nihilite/duplicate-spec-id`
-   if a spec with the same `:id` is already installed. Returns true
-   on first install, false would mean replace but this fn rejects
-   that case via throw.
-
-   This is the variant `subscriber!` (and other strict callers)
-   should use when they do not want to silently overwrite an
-   existing spec. `install!` itself keeps the historic REPLACE
-   semantics for backward compat.
-
-   Alias: `install-new!` (same fn)."
+  "Strict install!: throws :duplicate-spec-id if :id exists. Alias: install-new!."
   [spec]
   (let [{:keys [id] :as m} spec
         spec-id (str id)]
@@ -241,9 +201,7 @@
   (ix/clear-all!))
 
 (defn matching
-  "Return the live list of specs targeting `target-internal`. The
-   returned list is a stable snapshot at call time; concurrent
-   installs after this call are invisible to that snapshot."
+  "Return live list of specs targeting target-internal. Stable snapshot at call time."
   ^java.util.List [target-internal]
   (let [b (.get (ix/get-by-target) target-internal)]
     (if b (vec b) [])))

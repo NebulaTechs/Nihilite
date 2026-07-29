@@ -88,10 +88,7 @@
     (.flush out)))
 
 (defn write-ws-close
-  "Send a CLOSE frame per RFC 6455 §5.5.2 / §7.4.1. Status code is
-   the 2-byte big-endian reason code followed by an optional
-   UTF-8 reason text. Close code 1000 = normal closure; 1002 =
-   protocol error; 1009 = message too big; 1011 = server error."
+  "Send CLOSE frame per RFC 6455 §5.5.2/§7.4.1. 2-byte BE code + optional UTF-8 reason."
   [^OutputStream out ^long code ^String reason]
   (let [code-bytes (byte-array 2)
         reason-bytes (if reason (.getBytes ^String reason "UTF-8") (byte-array 0))]

@@ -20,11 +20,7 @@
       (str/trim (subs trimmed (count prefix))))))
 
 (defn parse-module-header
-  "Read first N lines of a .clj file. Returns
-   {:module m :requires [r...]} if a ;; nihilite-module header is found,
-   else nil. A module value of `-` (or empty/whitespace) is treated as
-   'not a module' and returns nil — those files are excluded from the
-   reload walker (single-shot init files, opt-in examples, test fixtures)."
+  "Read first N lines of .clj file. Returns {:module m :requires [r...]} or nil."
   [f]
   (with-open [r (jio/reader f)]
     (let [lines (take header-scan-lines (line-seq r))

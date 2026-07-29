@@ -35,9 +35,7 @@
         nil)))
 
 (defn do-reload
-  "Reload all modules in topo order, then run init. Per-module
-   failures are accumulated into :failed. Returns the closed
-   contract map documented in the ns docstring."
+  "Reload all modules in topo order, then run init. Failures → :failed. Returns contract map."
   [ordered init-file]
   (log/info "discovered" (count ordered) "module(s):"
             (pr-str (mapv str ordered)))

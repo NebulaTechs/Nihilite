@@ -1,7 +1,5 @@
 (ns nihilite.transport.http
-  "HTTP/1.1 branch. Each connection closes after one round-trip; the WS
-   upgrade is the only handoff (`nihilite.transport.ws.handle/handle-ws`
-   owns the socket from there)."
+  "HTTP/1.1: one round-trip per conn; WS upgrade handoff to handle/handle-ws."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
             [nihilite.transport.io :as io]
@@ -44,13 +42,7 @@
               hs)))))))
 
 (defn handle-http
-  "Endpoints:
-     GET  /healthz   — 200 ok\\n  (text/plain; sanity probe)
-     POST /v1/eval   — body is a Clojure form evaluated in the user
-                       namespace; 200 returns pr-str result, 500 returns
-                       ERROR: <msg>\\n on Throwable
-     GET  /ws        — RFC 6455 WebSocket upgrade (sniffed from headers)
-     anything else   — 404 Not Found\\n"
+  "Endpoints: GET /healthz, POST /v1/eval, GET /ws (upgrade), else 404."
   [^Socket sock ^BufferedInputStream buf-in]
   (let [^OutputStream out (.getOutputStream sock)
         ;; sniff left soTimeout=2s; clear it so body reads can block.

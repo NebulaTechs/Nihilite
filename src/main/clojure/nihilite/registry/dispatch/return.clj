@@ -12,29 +12,7 @@
             [nihilite.registry.stats :as stats]))
 
 (defn dispatch-return-for-spec
-  "ByteBuddy Advice OnMethodExit helper. Builds a HookEvent
-   tagged :return with `current-return` already populated, then
-   fans out across the bucket. Returns the value the host
-   method should produce (typed per the host method's declared
-   return type; mismatches throw ClassCastException at JVM level
-   via the DynamicAssigner + verifier, NOT inside the advice).
-
-     P1 (D2.2): `:subscriber` short-circuits the bucket after
-     the bridge returns. `stats/bump-fired!` is recorded for
-     every spec whose bridge runs.
-
-     `stats/bump-modified!` is recorded for each `:modify` spec
-     whose non-nil return value is accepted as the new winner.
-     Counts here match the actual observable modify-wins rate.
-     A `:modify` whose bridge returns nil (no-op) is NOT counted,
-     per the `(and (= action :modify) (nil? rv)) nil` cond branch.
-
-     `((:cancel! event))` was a 0-arg call to a 1-arg fn —
-     ArityException at runtime. Replaced with
-     `(du/call-cancel! event)`.
-
-    Honours `(:cancelled? event)` between observers in the bucket
-    — once any observer flips it, remaining observers are skipped."
+  "ByteBuddy OnMethodExit. Fan out across bucket. Returns host method's return value."
   [spec-id self args current-return]
   (try
     (if-let [spec (d/lookup spec-id)]

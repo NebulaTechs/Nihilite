@@ -17,10 +17,7 @@
 (def ^:private FRAME-SKIP 3)
 
 (defn capture-stack!
-  "Capture a stack trace (P2.4 plan §5.3). Returns nil when
-   the sample-rate gate fails; otherwise returns a vector of
-   `[class-name method-name line-number]` triples, capped at
-   `max-depth` frames. Skips the first FRAME-SKIP frames."
+  "Capture stack trace. Returns nil if sample-rate gate fails; else [class method line] triples."
   ^java.util.List [^long max-depth ^double sample-rate]
   (when (< (Math/random) (double sample-rate))
     (when-let [frames (.getStackTrace (Thread/currentThread))]
@@ -31,17 +28,7 @@
                [(.getClassName f) (.getMethodName f) (.getLineNumber f)]))))))
 
 (defn ->hook-event
-  "Construct a HookEvent from a spec, self, args, and the host
-   method's pending return value (or nil at :entry). Phase is
-   derived from the spec's :position. The event's `:cancelled?`
-   field is a zero-arg closure that reads the cancellation
-   cell; `:cancel!` is a single-arg closure that writes it.
-   Both are wired to the same per-event AtomicBoolean.
-
-   P2.4: when spec's `:capture-stack?` is true AND `:position`
-   is `:entry`, the event's `:stack` field is populated via
-   `capture-stack!` honoring `:max-depth` and `:sample-rate`.
-   `:return` and `:throw` events always carry `:stack = nil`."
+  "Construct HookEvent from spec, self, args, return-value. Phase from :position. :cancelled?/:cancel! closures."
   [spec self args return-value]
   (let [pos (:position spec)
         cell (java.util.concurrent.atomic.AtomicBoolean.)
@@ -73,16 +60,7 @@
        :stack        stack})))
 
 (defn dispatch-one!
-  "Invoke a single observer IFn with the given event. Per-observer
-   try/catch isolation. Returns the IFn's return value (or
-   `::no-return` if the IFn threw or was absent). Never
-   propagates a throwable to the caller.
-
-   On observer throw the per-spec `:exceptions` counter is bumped
-   via `nihilite.registry.stats/bump-exception!` so the metric is
-   observable end-to-end; the per-spec isolation is preserved
-   because the bump is keyed on `(:spec-id ev)`, not on the
-   throwable itself."
+  "Invoke single observer IFn with event. Per-observer try/catch. Bumps :exceptions on throw."
   [ifn ev]
   (if (nil? ifn)
     ::no-return

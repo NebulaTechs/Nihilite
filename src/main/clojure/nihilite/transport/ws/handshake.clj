@@ -19,8 +19,7 @@
 (def ^:const ws-magic-guid "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 
 (defn ws-accept-key
-  "Compute Sec-WebSocket-Accept from the client-supplied Key per
-   RFC 6455 §4.2.2. SHA-1(Key + GUID), then base64-encode."
+  "Compute Sec-WebSocket-Accept per RFC 6455 §4.2.2: SHA-1(Key+GUID), base64."
   ^String [^String client-key]
   (let [combined (str client-key ws-magic-guid)
         md (MessageDigest/getInstance "SHA-1")
@@ -42,18 +41,7 @@
         :else nil))))
 
 (defn ws-validation-error
-  "Pre-check for an HTTP request that should be a WS upgrade.
-   Returns nil if all required headers are RFC 6455-compliant; else
-   {:status n :reason str}.
-
-   Required (§4.1):
-     - method=GET
-     - path=/ws
-     - Upgrade=websocket (case-insensitive)
-     - Connection token contains 'upgrade' (case-insensitive)
-     - Sec-WebSocket-Key base64 → exactly 16 bytes after decode
-     - Sec-WebSocket-Version=13
-     - Host header present"
+  "Pre-check for WS upgrade. Returns nil if RFC 6455-compliant; else {:status n :reason str}."
   [method path headers]
   (cond
     (not= method "GET")

@@ -11,14 +11,7 @@
   (:import [org.jline.reader Completer]))
 
 (defn completer-for
-  "Return a jline3 `org.jline.reader.Completer` instance that, on
-   TAB, sources candidates from `ns`. The completer mutates the
-   passed-in `java.util.List` in-place (jline3's SAM contract);
-   it is NOT pure, but it is stateless across calls.
-
-   The `extra-ns-names` opt is passed through to
-   `completions-source` so the readline driver can track bare
-   `(require 'foo)` calls (no `:as`) and surface their publics."
+  "Return jline3 Completer sourcing candidates from ns. Mutates list in-place (SAM contract)."
   (^Completer [^clojure.lang.Namespace ns]
    (completer-for ns nil))
   (^Completer [^clojure.lang.Namespace ns extra-ns-names]

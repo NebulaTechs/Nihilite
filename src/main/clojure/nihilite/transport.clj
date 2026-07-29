@@ -58,14 +58,7 @@
       (try (.close sock) (catch Throwable _)))))
 
 (defn start!
-  "Start the single-port dispatcher. Returns a `(fn stop! [])` that
-   closes the listener, all active connections, and the worker pool.
-   Stop is idempotent.
-
-   Options:
-     :port    - int, default 7888
-     :bind    - str, default 127.0.0.1
-     :threads - int, default 16"
+  "Start single-port dispatcher. Returns (fn stop! []). Options: :port :bind :threads."
   ([] (start! {}))
   ([{:keys [port bind threads]
      :or   {port    7888

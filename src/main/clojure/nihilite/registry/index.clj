@@ -14,10 +14,7 @@
                                  CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicLong]))
 
-;; The actual map objects live here. Other sub-namespaces
-;; require this ns and access the maps through the accessors
-;; defined below; that way every reference goes through one
-;; symbol, and any future swap (e.g. Caffeine) is local.
+;; Maps live here; accessors below for swap locality (Caffeine-ready).
 
 (defonce ^:private by-id
   (ConcurrentHashMap.))
@@ -31,13 +28,10 @@
 (defonce ^:private ^AtomicLong sequence-counter
   (AtomicLong.))
 
-;; ---------------------------------------------------------------------------
 ;; Public index accessors (used by install / dispatch)
-;; ---------------------------------------------------------------------------
 
 (defn get-by-id
-  "The id → spec ConcurrentHashMap. Zero-arg accessor; the map
-   itself is the return value."
+  "The id → spec ConcurrentHashMap. Zero-arg accessor."
   ^ConcurrentHashMap [] by-id)
 
 (defn get-by-target
@@ -48,9 +42,7 @@
   "The method-key → spec-list ConcurrentHashMap."
   ^ConcurrentHashMap [] by-method)
 
-;; ---------------------------------------------------------------------------
 ;; Bucket helpers
-;; ---------------------------------------------------------------------------
 
 (defn bucket
   "Get-or-create the CopyOnWrite list for `target-internal`."
@@ -62,8 +54,7 @@
           (.get by-target t)))))
 
 (defn method-bucket
-  "Get-or-create the CopyOnWrite list for the canonical
-   method-key string."
+  "Get-or-create the CopyOnWrite list for the canonical method-key string."
   ^java.util.List [mk]
   (or (.get by-method mk)
       (let [fresh (CopyOnWriteArrayList.)]

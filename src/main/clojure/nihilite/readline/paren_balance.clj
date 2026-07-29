@@ -49,9 +49,7 @@
         (recur end bal len))
 
       (and (= (.charAt s i) \\) (< (inc i) len))
-      ;; char literal: skip backslash + 1 char. Multi-char forms like
-      ;; \newline, \space, \u00FF then read as plain characters (none
-      ;; of which are brackets), so balance stays correct.
+      ;; char literal: skip backslash + 1 char; multi-char forms have no brackets.
       (let [next (min (+ i 2) len)]
         (recur next bal len))
 

@@ -7,20 +7,7 @@
             [nihilite.registry.stats :as stats]))
 
 (defn dispatch-throw-for-spec
-  "ByteBuddy Advice OnMethodExit-onThrowable helper. Resolves
-   the spec, builds a HookEvent tagged :throw with `throwable`
-   populated, and fans out across the bucket. Per-observer
-   try/catch isolation. Honours `:cancelled?` — once any
-   observer sets it, remaining observers in the bucket are
-   skipped. The host method body's catch arm re-throws the
-   original throwable after this returns (D2.4); this fn does
-   not modify or cancel.
-
-   P2.1 (plan v2.1):
-     - `:action :subscriber` specs short-circuit the bucket.
-     - `:action :modify`/`:cancel` are rejected at install! time
-       on `:throw`; this fn still no-ops on those for safety.
-     - Stats bump per spec per fire."
+  "ByteBuddy OnMethodExit-onThrowable. Fan out across bucket. Honours :cancelled?."
   [spec-id self args throwable]
   (try
     (when-let [spec (d/lookup spec-id)]

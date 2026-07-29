@@ -48,12 +48,8 @@
          existed (find-ns ns-sym)
          _ (when existed (remove-ns ns-sym))
          ns-obj (create-ns ns-sym)]
-     ;; `aliases` is a seq of `[alias-name target-ns-name]` pairs.
-     ;; For each pair, add the alias to the fixture ns directly
-     ;; (using `clojure.core/alias` would write to `*ns*`, which
-     ;; is the test ns at this point — `binding` hasn't taken
-     ;; effect yet). Silently skip if target ns doesn't resolve.
-     (doseq [[alias-name target-ns-name] (or aliases [])
+;; aliases is seq of [alias-name target-ns-name]; add directly (binding not yet active).
+      (doseq [[alias-name target-ns-name] (or aliases [])
              :let [target-ns (find-ns (symbol target-ns-name))]]
        (when target-ns
          (.addAlias ns-obj (symbol alias-name) target-ns)))
@@ -73,16 +69,7 @@
 ;; Completions include core symbols
 
 (deftest completions-include-clojure-core-map-symbols
-  ;; The first-100 cap can drop some clojure.core symbols in
-  ;; lexicographic order. The spec contract is that ALL `clojure.core`
-  ;; public symbols must be reachable via TAB completion — i.e.
-  ;; the completer's full underlying candidate set must include
-  ;; them. We verify that by checking the candidate set is COMPLETE
-  ;; with respect to clojure.core, not by checking the 100-cap
-  ;; output. The completer produces Candidates for any prefix;
-  ;; `(completions-for ns)` is the full pool (capped at 100 in
-  ;; the unsorted-then-capped interpretation; the readline driver
-  ;; applies prefix-filter and the '... N more' marker).
+  ;; Spec: ALL clojure.core publics reachable via TAB; check candidate set, not 100-cap output.
   (let [core-publics (ns-publics (find-ns 'clojure.core))
         map-syms     (->> (keys core-publics)
                           (filter #(str/starts-with? (str %) "map"))
@@ -91,11 +78,7 @@
       (is (>= (count map-syms) 5)
           "clojure.core must have at least 5 'map*' public symbols"))
     (testing "every 'map*' clojure.core symbol is reachable via prefix filter"
-      ;; Simulates what the readline driver does on TAB: filter the
-      ;; underlying clojure.core source by the short-name prefix
-      ;; (the production `prefix-matches` does short-name matching
-      ;; when the prefix has no `/`). Verifies the symbol candidates
-      ;; the completer CAN produce, not what fits in the first-100 cap.
+      ;; Filter clojure.core by short-name prefix; check candidates, not 100-cap output.
       (let [core-names (->> (ns-publics (find-ns 'clojure.core))
                             (map (fn [[k _v]]
                                    (str "clojure.core/" (name k))))
@@ -115,9 +98,7 @@
     nil  ; no aliases
     nil  ; no extra-ns-names
     (fn [ns-obj _extra]
-      ;; `def` is special-cased and resolves `*ns*` at compile time,
-      ;; so it interns in the test ns, NOT the fixture ns. Use
-      ;; `intern` (a runtime fn) to put `foo` in the fixture ns.
+      ;; def resolves *ns* at compile time → interns in test ns; use intern (runtime).
       (intern ns-obj 'foo "I am a test var interned in this ns")
       (let [all (completion/completions-for ns-obj)
             current-pool (set (map (fn [v] (str (.sym v)))
@@ -165,28 +146,15 @@
 ;; Required ns handling — no :as
 
 (deftest completions-include-unaliased-required-ns
-  ;; Stock Clojure does NOT persist `:require` libspecs to ns
-  ;; metadata (the `ns` macro expands them into `(require ...)`
-  ;; calls at compile time). Therefore `(:require *ns*)` returns
-  ;; nil and the production code cannot discover bare
-  ;; `(require 'foo)` from the ns alone. The readline driver
-  ;; (Unit 4) maintains a per-session atom of required nses and
-  ;; passes them via the `:extra-ns-names` opt to
-  ;; `completions-for`. Here we exercise that opt directly.
-  ;;
-  ;; With clojure.core's 1358 publics dominating the first 100
-  ;; positions, `clojure.string/blank?` gets truncated. We
-  ;; verify the underlying extras path WORKS by checking the
-  ;; source pool directly.
+  ;; Stock Clojure doesn't persist :require to ns metadata; driver tracks per-session.
+  ;; clojure.core's 1358 publics dominate first 100; verify extras path via source pool.
   (in-fresh-ns
     "nihilite.test.completion-fixture-no-as"
     nil                                  ; no :as aliases
     #{"clojure.string"}                  ; extras (simulates driver tracking)
     (fn [_ns extra]
       (let [all (completion/completions-for *ns* extra)
-            ;; Walk the underlying sources to confirm clojure.string
-            ;; IS being searched (even if cap truncates it from the
-            ;; visible 100).
+            ;; Walk sources to confirm clojure.string IS searched (cap may truncate).
             source-pool (set (mapcat (fn [ns-name]
                                        (map (fn [v] (str ns-name "/" (str (.sym ^clojure.lang.Var v))))
                                             (vals (ns-publics (find-ns (symbol ns-name))))))

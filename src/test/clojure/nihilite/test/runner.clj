@@ -1,30 +1,5 @@
 (ns nihilite.test.runner
-  "No-new-dependency Clojure contract test runner.
-
-   Wired into Gradle as the `clojureContractTest` JavaExec task:
-     mainClass   = clojure.main
-     args        = -m nihilite.test.runner
-     classpath   = sourceSets.test.runtimeClasspath
-
-   The runner loads every namespace in TEST_NAMESPACES and calls
-   `clojure.test/test-ns` on each. test-ns locally binds
-   `clojure.test/*report-counters*` to a ref of a sorted-map and
-   exercises every `(deftest …)` form via `test-all-vars`.
-
-   We retrieve the post-run counter ref via the return value of
-   `test-ns`, then deref it to read pass/fail/error counts. We
-   DO NOT deref `clojure.test/*report-counters*` directly from
-   outside a binding form — its root value is `nil` and a
-   bare `@clojure.test/*report-counters*` routes through
-   `clojure.core/deref` → `deref-future` under clojure 1.12's
-   protocol dispatch, which throws a `Future.get() fut is null`
-   NPE.
-
-   On completion the runner calls `System/exit` based on the
-   accumulated (fail + error) count.
-
-   No JUnit, Surefire, third-party plugin, or `assert` keyword.
-   Pure `clojure.test`."
+  "Contract runner: pure clojure.test, exit status from accumulated counters."
   (:require [clojure.test]))
 
 (def ^:const TEST_NAMESPACES

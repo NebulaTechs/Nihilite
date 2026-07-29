@@ -103,17 +103,7 @@
           (log/warn t "trace exit-bridge threw"))))))
 
 (defn trace!
-  "Create a lightweight call trace. Returns the trace descriptor.
-
-   Options:
-     :selector  - selector DSL map (default `{}` = match-all)
-     :sink      - named sink (default `:println`)
-     :handler   - function called with each trace-node map
-                  (default `identity`)
-     :max-nodes - hard cap (default 1000; max 10000)
-
-   Pass the returned `:id` to `nihilite.observers.subscriber/unsubscribe!`
-   to stop the trace."
+  "Create lightweight call trace. Options: :selector :sink :handler :max-nodes (1000, max 10000)."
   [{:keys [selector sink handler max-nodes]
     :or {selector {} sink :println handler identity max-nodes 1000}}]
   (when (> max-nodes 10000)

@@ -13,8 +13,7 @@
   (:require [nihilite.reload.discover :as discover]))
 
 (defn topo-sort
-  "Topological sort over `modules` — a vector of [ns-symbol header-map file]
-   triples from `nihilite.reload.discover/discover-modules`."
+  "Topological sort over modules — vector of [ns-symbol header-map file] triples."
   [modules]
   (let [by-name (into {} (map (fn [[n h _]] [n h]) modules))
         sorted-names (vec (sort (keys by-name)))

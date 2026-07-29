@@ -10,17 +10,7 @@
   (:require [nihilite.errors :as errors]))
 
 (defn render-error
-  "Render the canonical `nihilite.errors/format` map to a friendly,
-   non-leaky multi-line string (CRLF-terminated per line). Shape:
-
-      ERROR [<kind>] <message>
-        at <location>
-        cause: <cause-message> at <cause-location>
-        data: <edn>
-
-   Only non-nil fields are emitted. The `:causes` vector's first entry
-   is the top error itself (already shown on the ERROR line), so only
-   causes[1..] are rendered as `cause:` lines."
+  "Render nihilite.errors/format map to friendly multi-line string. Only non-nil fields emitted."
   ^String [error-map]
   (let [{:keys [kind message location causes data]} error-map
         sb (StringBuilder.)]
@@ -60,9 +50,6 @@
   (eval-form-line form-str repl-state "\r\n"))
 
 (defn eval-form-lf
-  "Same evaluation contract and result shape as `eval-form`, but
-   terminates the line with a bare LF instead of CRLF. Used by the
-   raw branch in `nihilite.transport` where the client (nc / socat)
-   does its own line discipline and CRLF would interfere."
+  "Same as eval-form but LF-terminated. Used by raw branch (nc/socat do own line discipline)."
   ^String [^String form-str repl-state]
   (eval-form-line form-str repl-state "\n"))
