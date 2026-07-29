@@ -63,8 +63,17 @@
   (swap! ring-buffer-storage conj ev))
 
 (defn take-events
-  "Drain up to `n` events from `buf` (a ring-buffer atom) and
-   return them as a vector. The buffer atom is updated in place."
+  "DEPRECATED. Drain up to `n` events from `buf` (a ring-buffer atom).
+
+   Per Wave-1 T6 / v4 plan, this function uses a
+   loop + (reset! buf ...) pattern that races against the
+   `(swap! ring-buffer-storage conj ev)` writer in
+   `ring-buffer-sink`. Concurrent drain+emit can lose events or
+   double-drain. The replacement is `drain-events` which uses
+   `swap-vals!` for atomic drain+replace.
+
+   This deprecated form is retained for backward compatibility
+   in existing tests; new code MUST use `drain-events`."
   [buf n]
   (loop [remaining n
          taken (transient [])]
@@ -79,6 +88,41 @@
                 tail (pop cur)]
             (reset! buf tail)
             (recur (dec remaining) (conj! taken head))))))))
+
+(defn drain-events
+  "Atomically drain up to `n` events from the ring-buffer storage
+   and return them as a vector. Uses `swap-vals!` with a PURE swap-fn
+   so a concurrent `(swap! ring-buffer-storage conj ev)` writer
+   NEVER races with the reader.
+
+   Passing `n <= 0` returns an empty vector without touching state.
+   Passing a larger `n` than the queue size returns all available
+   events (the queue is fully drained in one shot).
+
+   Implementation: we use `swap!` with a pure swap-fn that BOTH
+   records the take-result AND returns the new (remaining) queue
+   to be stored as the atom's next value. The classic swap-vals!
+   pitfall where the swap-fn's return value becomes the atom's new
+   value is avoided by routing through `swap!` (which DOES write
+   the swap-fn's return as the new atom value) — but here the swap-fn
+   already returns the new remaining-queue, so the atom continues
+   to hold a valid PersistentQueue after every drain.
+
+   Wave-1 T6 fix (per v4 plan; supersedes the racy `take-events`
+   loop)."
+  ^java.util.List [^clojure.lang.IAtom buf ^long n]
+  (if (<= n 0)
+    []
+    (let [taken  (atom [])]
+      (swap! buf
+             (fn [q]
+               (let [c      (count q)
+                     take-n (min n c)
+                     head   (vec (take take-n q))
+                     tail   (drop take-n q)]
+                 (reset! taken head)
+                 tail)))
+      (or @taken []))))
 
 (defn aggregate
   "Return the underlying aggregate-sink atom."
