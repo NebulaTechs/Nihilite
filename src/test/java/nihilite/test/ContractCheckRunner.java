@@ -206,7 +206,11 @@ public final class ContractCheckRunner {
             baseline("src/main/clojure/nihilite/hooks.clj", "Todo 3",
                     "install!/hot-swap!/uninstall! isolation; narrows in Todo 3"),
             baseline("src/main/clojure/nihilite/version.clj", "Todo 8",
-                    "build/version-string isolation; narrows in Todo 8")
+                    "build/version-string isolation; narrows in Todo 8"),
+            baseline("src/main/clojure/nihilite/registry/dispatch/util.clj", "Todo P3",
+                    "run-hook log-fallback best-effort; log line itself is isolated against throw"),
+            baseline("src/main/clojure/nihilite/registry/event.clj", "Todo P3",
+                    "dispatch-one! log-fallback best-effort; log line itself is isolated against throw")
     );
 
     private static EocAllow baseline(String file, String owner, String reason) {
