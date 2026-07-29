@@ -2,13 +2,25 @@
   "Subscriber surface for P1. subscribe! replaces each matched
    spec's bridge IFn with our bridge and sets `:action :subscriber`.
    Per-observer try/catch inside the bridge isolates user code
-   from the dispatcher (B1 fix)."
+   from the dispatcher (B1 fix).
+
+   Subscription record (P3.S2): 16-field defrecord capturing identity,
+   selector, handler, sink, lifecycle state, counters, cancel-cell,
+   and xform runtime. Counters are individual atoms (not a nested
+   `:counters` map) so subscriber-status reads them with `(:fired
+   sub)` directly. The record's `pr-str` is intentionally kept
+   map-literal-compatible — downstream log/eval consumers that
+   pattern-match on a plain map continue to work (D9)."
   (:require [clojure.tools.logging :as log]
             [nihilite.registry :as reg]
             [nihilite.observers.selector :as sel]
             [nihilite.observers.sinks :as sinks])
   (:import [java.util UUID]
            [java.util.concurrent.atomic AtomicBoolean]))
+
+(defrecord Subscriber [id selector handler sink name active? created-ns
+                       expire-ns fire-target fired exception sink-errors
+                       cancelled cancel-cell xform-state xform-out-count])
 
 (defonce ^:private subscriptions (atom {}))
 
@@ -63,7 +75,7 @@
   (swap! (:fired sub) inc))
 
 (defn subscribe!
-  "Install a subscriber. Returns a plain-map Subscription.
+  "Install a subscriber. Returns a Subscriber defrecord.
 
    For each spec currently matching `:selector`, replaces its
    bridge IFn with our subscriber bridge and sets `:action
@@ -82,25 +94,26 @@
         cancel-cell  (AtomicBoolean.)
         fire-target  (when take (long take))
         expire-ns    (when ttl-ms
-                        (+ (System/nanoTime)
-                           (* (long ttl-ms) (long 1e6))))
-        sub          {:id             sub-id
-                      :selector       selector
-                      :handler        handler
-                      :sink           sink
-                      :name           (or name sub-id)
-                      :active?        true
-                      :created-ns     (System/nanoTime)
-                      :expire-ns      expire-ns
-                      :fire-target    fire-target
-                      :fired          (atom 0)
-                      :exception      (atom 0)
-                      :sink-errors    (atom 0)
-                      :cancelled      (atom 0)
-                      :cancel-cell    cancel-cell
-                      :xform-state    (atom [])
-                      :xform-out-count (atom 0)}
-bridge-fn    (fn [ev]
+                      (+ (System/nanoTime)
+                         (* (long ttl-ms) (long 1e6))))
+        sub          (->Subscriber
+                       sub-id
+                       selector
+                       handler
+                       sink
+                       (or name sub-id)
+                       true
+                       (System/nanoTime)
+                       expire-ns
+                       fire-target
+                       (atom 0)        ; fired
+                       (atom 0)        ; exception
+                       (atom 0)        ; sink-errors
+                       (atom 0)        ; cancelled
+                       cancel-cell
+                       (atom [])       ; xform-state
+                       (atom 0))       ; xform-out-count
+        bridge-fn    (fn [ev]
                        (if (or (.get cancel-cell)
                                (and fire-target
                                     (>= @(:fired sub) fire-target))
@@ -131,6 +144,7 @@ bridge-fn    (fn [ev]
                      :action            :subscriber
                      :bridge            bridge-fn
                      :tag               (str "subscriber:" sub-id)
+                     :capture-stack?    (boolean (:capture-stack? spec))
                      :source-class      (:source-class spec)
                      :source-descriptor (:source-descriptor spec)
                      :note              (:note spec)}))

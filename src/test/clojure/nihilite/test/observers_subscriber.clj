@@ -1,13 +1,16 @@
 (ns nihilite.test.observers-subscriber
-  "Subscriber tests. Per D2.1-D2.5 + D3.1-D3.4:
+  "Subscriber tests. Per D2.1-D2.5 + D3.1-D3.4 + P3.S2:
    - :action :subscriber is a NEW closed keyword
    - Subscriber bridges short-circuit the bucket
-   - Subscription is a plain map (no defrecord on install path)
+   - Subscription is a 16-field defrecord (P3.S2 wave-1)
    - :take auto-unsubscribes
    - selector defaults to match-all (with log warning)
-   - unsubscribe! returns true/false (matches reg/uninstall! contract)"
+   - unsubscribe! returns true/false (matches reg/uninstall! contract)
+   - Subscriber's pr-str preserves map-literal shape (D9)
+   - capture-stack? propagates from original spec (R12)"
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [nihilite.registry :as reg]
+            [nihilite.registry.spec :as rs]
             [nihilite.observers.subscriber :as sub]
             [nihilite.observers.sinks :as sinks]))
 
@@ -19,16 +22,42 @@
   (fn [t] (setup t)))
 
 (deftest subscribe-creates-spec-and-subscription
-  (testing "subscribe! returns a plain-map subscription with :id"
+  (testing "subscribe! returns a Subscriber defrecord"
     (reg/install! {:id "src-a" :target-internal "x" :method-name "m"
                    :descriptor "()V" :position :entry :arity 0
                    :bridge (fn [_]) :tag "fast"})
     (let [s (sub/subscribe! (fn [_ev])
                             {:selector {:tag "fast"}
                              :sink :println})]
-      (is (map? s))
+      (is (instance? nihilite.observers.subscriber.Subscriber s))
       (is (string? (:id s)))
       (is (= :println (:sink s))))))
+
+(deftest subscriber-record-has-16-fields
+  (testing "Subscriber defrecord has 16 fields (per v4 plan P3.S2)"
+    (is (= 16 (count (keys (sub/->Subscriber
+                             "id" {} nil :println "n" true 0 nil 0
+                             (atom 0) (atom 0) (atom 0) (atom 0)
+                             (java.util.concurrent.atomic.AtomicBoolean.)
+                             (atom []) (atom 0))))))))
+
+(deftest subscriber-pr-str-is-map-literal
+  (testing "sub/->Subscriber pr-str yields a map-literal shape (D9:
+            downstream log/eval consumers that pattern-match on a
+            plain map continue to work after the defrecord switch)"
+    (let [cb  (java.util.concurrent.atomic.AtomicBoolean.)
+          xs  (atom [])
+          c   (atom 0)
+          e   (atom 0)
+          se  (atom 0)
+          cn  (atom 0)
+          ft  10
+          s   (sub/->Subscriber
+                 "test-id" {} (constantly nil) :println "name" true 0 nil ft
+                 c e se cn cb xs (atom 0))
+          ps  (pr-str s)]
+      (is (re-find #"\{.*:id" ps)
+          "pr-str shape must contain \"{:id\" (map-literal signature)"))))
 
 (deftest unsubscribe-returns-true-or-false
   (testing "unsubscribe! returns true when removed, false when already gone"
@@ -94,3 +123,23 @@
       (reg/dispatch "src-f" nil (object-array 0))
       ;; ring-buffer is a global atom in sinks; subscription fires the sink.
       (is (= 2 @(:fired s))))))
+
+(deftest subscribe-bulk-with-capture-stack
+  (testing "R12: capture-stack? true on the original spec propagates
+            to the subscriber-installed spec; reg/lookup on the
+            subscriber tag returns the spec with :capture-stack? = true."
+    (reg/install! {:id "src-g" :target-internal "g" :method-name "m"
+                   :descriptor "()V" :position :entry :arity 0
+                   :bridge (fn [_])
+                   :capture-stack? true})
+    (let [s (sub/subscribe! (fn [_])
+                            {:sink :println})]
+      (let [sub-tag  (str "subscriber:" (:id s))
+            all-specs (vals (reg/snapshot))
+            tags     (filter #(= sub-tag (:tag %)) all-specs)]
+        (is (pos? (count tags))
+            "subscriber installs at least one tagged spec")
+        (let [first-spec (first tags)]
+          (is (true? (:capture-stack? first-spec))
+              ":capture-stack? propagates from the source spec")
+          (is (= :subscriber (:action first-spec))))))))
