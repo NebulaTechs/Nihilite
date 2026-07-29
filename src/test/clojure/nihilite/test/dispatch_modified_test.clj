@@ -3,7 +3,8 @@
    per-spec `:modified` counter when a `:modify` action returns a
    non-nil value that wins the bucket.
 
-   Wave-1 T2b (P1.S2a part 2)."
+   Part 2 of the Wire-up Stats series; mirror of the
+   `:exceptions` regression in dispatch-exception-test."
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.dispatch :as d]

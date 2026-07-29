@@ -53,7 +53,7 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (sinks/dispatch! :throwing-sink {:id "y"})))))
 
-;; --- Wave-1 T6 (P2.S2a): drain-events API + concurrency test ---
+;; --- drain-events API + concurrency test ---
 
 (deftest drain-events-empty-when-empty
   (testing "drain-events on an empty buffer returns []"

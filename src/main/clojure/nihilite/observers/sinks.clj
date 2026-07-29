@@ -1,9 +1,9 @@
 (ns nihilite.observers.sinks
-  "Named sinks for the P1 subscriber surface.
+  "Named sinks for the subscriber surface.
 
    A sink is a 1-arg IFn `(fn [event] …)`. Sink errors are
-   caught INSIDE the subscriber bridge (B1 fix) — never propagate
-   to the dispatcher."
+   caught INSIDE the subscriber bridge — never propagate to the
+   dispatcher."
   (:require [clojure.tools.logging :as log]))
 
 (defonce ^:private sinks
@@ -65,8 +65,8 @@
 (defn take-events
   "DEPRECATED. Drain up to `n` events from `buf` (a ring-buffer atom).
 
-   Per Wave-1 T6 / v4 plan, this function uses a
-   loop + (reset! buf ...) pattern that races against the
+   Per Wave-1 T6, this function uses a loop + (reset! buf ...)
+   pattern that races against the
    `(swap! ring-buffer-storage conj ev)` writer in
    `ring-buffer-sink`. Concurrent drain+emit can lose events or
    double-drain. The replacement is `drain-events` which uses
@@ -108,8 +108,7 @@
    already returns the new remaining-queue, so the atom continues
    to hold a valid PersistentQueue after every drain.
 
-   Wave-1 T6 fix (per v4 plan; supersedes the racy `take-events`
-   loop)."
+   Wave-1 T6 fix (supersedes the racy `take-events` loop)."
   ^java.util.List [^clojure.lang.IAtom buf ^long n]
   (if (<= n 0)
     []

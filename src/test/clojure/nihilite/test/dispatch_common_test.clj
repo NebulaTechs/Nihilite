@@ -1,13 +1,11 @@
 (ns nihilite.test.dispatch-common-test
-  "Regression for `nihilite.registry.dispatch.util` helpers
-   added in Wave-1 T7 (P3.S1' + D12 + HC15):
+  "   Regression for `nihilite.registry.dispatch.util` helpers:
    - `call-cancel!` — invokes :cancel! if present, no-op else.
    - `run-hook`     — invokes observer with per-observer try/catch
      isolation + stats/bump-exception! on throw.
 
-   Wave-1 T7 contract: nil-safe :cancel!, type-hint-free.
-   Synthetic events without `:cancel!` (constructed in the test
-   for HC15 verification) must not throw."
+   Contract: nil-safe :cancel!, type-hint-free. Synthetic events
+   without `:cancel!` must not throw."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.dispatch.util :as du]

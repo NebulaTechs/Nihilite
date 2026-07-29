@@ -3,9 +3,9 @@
    bumping the per-spec `:exceptions` counter when an observer
    IFn throws.
 
-   Wave-1 T2a (P1.S2a part 1). Mirrors HC2: previously `stats.exceptions`
-   was permanently 0 because `bump-exception!` had no callers;
-   the wiring here makes the counter observable."
+   Previously `stats.exceptions` was permanently 0 because
+   `bump-exception!` had no callers; the wiring here makes the
+   counter observable."
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.event :as ev]

@@ -1,16 +1,17 @@
 (ns nihilite.observers.subscriber
-  "Subscriber surface for P1. subscribe! replaces each matched
-   spec's bridge IFn with our bridge and sets `:action :subscriber`.
+  "Subscriber surface. subscribe! replaces each matched spec's
+   bridge IFn with our bridge and sets `:action :subscriber`.
    Per-observer try/catch inside the bridge isolates user code
-   from the dispatcher (B1 fix).
+   from the dispatcher.
 
-   Subscription record (P3.S2): 16-field defrecord capturing identity,
-   selector, handler, sink, lifecycle state, counters, cancel-cell,
-   and xform runtime. Counters are individual atoms (not a nested
-   `:counters` map) so subscriber-status reads them with `(:fired
-   sub)` directly. The record's `pr-str` is intentionally kept
-   map-literal-compatible — downstream log/eval consumers that
-   pattern-match on a plain map continue to work (D9)."
+   The 16-field defrecord captures identity, selector, handler,
+   sink, lifecycle state, counters, cancel-cell, and xform
+   runtime. Counters are individual atoms (not a nested
+   `:counters` map) so subscriber-status reads them with
+   `(:fired sub)` directly. The record's `pr-str` is
+   intentionally kept map-literal-compatible — downstream
+   log/eval consumers that pattern-match on a plain map
+   continue to work."
   (:require [clojure.tools.logging :as log]
             [nihilite.registry :as reg]
             [nihilite.observers.selector :as sel]
@@ -149,11 +150,10 @@
                       :source-class      (:source-class spec)
                       :source-descriptor (:source-descriptor spec)
                       :note              (:note spec)}]
-        ;; Wave-1 T3 (P1.S3a + S5 sync): subscriber paths choose
-        ;; REPLACE (install!) for already-existing specs and
-        ;; FRESH (install-fresh!) only when the id is new. This
-        ;; avoids HC3 — the prior plan's putIfAbsent would have
-        ;; thrown on every bulk install.
+        ;; Subscriber paths choose REPLACE (install!) for
+        ;; already-existing specs and FRESH (install-fresh!) only
+        ;; when the id is new. This avoids the prior plan's
+        ;; putIfAbsent throwing on every bulk install.
         (if (nil? (reg/lookup spec-id))
           (reg/install-fresh! spec-map)
           (reg/install! spec-map))))

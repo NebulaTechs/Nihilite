@@ -1,7 +1,7 @@
 (ns nihilite.test.dispatch-entry-test
-  "Regression guard for HC8 (per adversarial review of v4 plan T10).
+  "Entry-phase audit regression.
 
-   The v4 plan invented a `:modify-with-rv` case branch in
+   The plan invented a `:modify-with-rv` case branch in
    `nihilite.registry.dispatch.entry/dispatch-for-spec` and proposed
    removing it. After audit: the branch NEVER existed in the source.
    `entry.clj` does not consume `:return-value ev` and does not contain

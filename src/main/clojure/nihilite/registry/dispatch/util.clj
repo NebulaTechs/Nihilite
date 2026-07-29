@@ -6,9 +6,9 @@
    otherwise form when each phase requires the dispatch facade
    for these helpers.
 
-   Wave-1 T7 added `call-cancel!` (D12) and `run-hook` (P3.S1')
-   so all four phase dispatch files share a single helper for
-   the cancel! invocation + the per-observer try/catch isolation."
+   `call-cancel!` and `run-hook` are shared across all four
+   phase dispatch files, providing a single helper for the
+   cancel! invocation + the per-observer try/catch isolation."
   (:require [clojure.tools.logging :as log]
             [nihilite.registry.stats :as stats])
   (:import (nihilite.registry.spec HookEvent)))
@@ -64,8 +64,8 @@
    editing every phase dispatch file.
 
    The exception-bump behavior was previously in
-   `nihilite.registry.event/dispatch-one!` (see Wave-1 T2a); this
-   fn keeps the same shape so the bump wiring stays effective."
+   `nihilite.registry.event/dispatch-one!`; this fn keeps the
+   same shape so the bump wiring stays effective."
   [f ev]
   (if (nil? f)
     ::no-return

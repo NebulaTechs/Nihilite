@@ -19,14 +19,13 @@
    bucket after their bridge returns — the xform IS the
    dispatch logic, not one observer in a multi-observer chain.
 
-   Wave-1 T7 (HC14 / HC15): `(.-cancel! ^HookEvent event)` was
-   a misleading reflection — `:cancel!` is a closure over an
-   `AtomicBoolean`, not a Java field. The `^HookEvent` type hint
-   just resolved the field at compile time without actually
-   invoking reflective dispatch, so the bug shipped as
-   functionally-correct only because no one exercised this path
-   on a non-cancelled event. Replaced with `(du/call-cancel!
-   event)` (D12 helper)."
+   `(.-cancel! ^HookEvent event)` was a misleading reflection —
+   `:cancel!` is a closure over an `AtomicBoolean`, not a Java
+   field. The `^HookEvent` type hint just resolved the field at
+   compile time without actually invoking reflective dispatch,
+   so the bug shipped as functionally-correct only because no
+   one exercised this path on a non-cancelled event. Replaced
+   with `(du/call-cancel! event)`."
   [spec-id self args]
   (try
     (when-let [spec (d/lookup spec-id)]

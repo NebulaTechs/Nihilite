@@ -1,8 +1,7 @@
 (ns nihilite.test.position-accessor-test
-  "Regression for `nihilite.registry.accessors/position` - the
-   dual-mode accessor (Wave-1 T11, P5.S1) that accepts both
-   :position (keyword) and \"position\" (string) at the call
-   site. Per v4 plan D10 / OQ2 = (A), this dual-mode is the
+  "Regression for `nihilite.registry.accessors/position` — the
+   dual-mode accessor that accepts both :position (keyword) and
+   \"position\" (string) at the call site. This dual-mode is the
    30-day default if no operator signoff arrives."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [nihilite.registry :as reg]
@@ -27,10 +26,10 @@
 
 (deftest position-both-keys-present
   (testing "if BOTH :position and \"position\" are present,
-            the string form takes precedence (Wave-1 T11 design
-            choice; the string-keyed form is checked first because
-            downstream tooling that mixes access keys frequently
-            uses the string form for stringified access). Adjust
+            the string form takes precedence (the string-keyed form
+            is checked first because downstream tooling that mixes
+            access keys frequently uses the string form for
+            stringified access). Adjust
             to keyword-first if the operator signoff goes the
             other way."
     (is (= :str (ra/position {:position :kw "position" :str})))

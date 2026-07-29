@@ -1,13 +1,13 @@
 (ns nihilite.test.observers-subscriber
-  "Subscriber tests. Per D2.1-D2.5 + D3.1-D3.4 + P3.S2:
+  "Subscriber tests.
    - :action :subscriber is a NEW closed keyword
    - Subscriber bridges short-circuit the bucket
-   - Subscription is a 16-field defrecord (P3.S2 wave-1)
+   - Subscription is a 16-field defrecord
    - :take auto-unsubscribes
    - selector defaults to match-all (with log warning)
    - unsubscribe! returns true/false (matches reg/uninstall! contract)
-   - Subscriber's pr-str preserves map-literal shape (D9)
-   - capture-stack? propagates from original spec (R12)"
+   - Subscriber's pr-str preserves map-literal shape
+   - capture-stack? propagates from original spec"
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.spec :as rs]
@@ -34,7 +34,7 @@
       (is (= :println (:sink s))))))
 
 (deftest subscriber-record-has-16-fields
-  (testing "Subscriber defrecord has 16 fields (per v4 plan P3.S2)"
+  (testing "Subscriber defrecord has 16 fields"
     (is (= 16 (count (keys (sub/->Subscriber
                              "id" {} nil :println "n" true 0 nil 0
                              (atom 0) (atom 0) (atom 0) (atom 0)

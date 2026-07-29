@@ -5,7 +5,7 @@
    cancel-requires-entry branch so the most-specific error wins.
 
    Plus regression tests for install-fresh! / install-new! (the
-   Wave-1 T3 strict variant). Wave-1 T1 + T3 (P1.S1 + P1.S3a+S5 sync)."
+   strict variant)."
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.index :as ix]
@@ -86,7 +86,7 @@
 
 (deftest install-fresh-throws-on-duplicate-id
   (testing "install-fresh! throws :nihilite/duplicate-spec-id when
-            the spec is already installed (HC3 fix per v4 plan T3)"
+            the spec is already installed"
     (install/install! (valid-observe-spec "fresh-dup-test"))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo

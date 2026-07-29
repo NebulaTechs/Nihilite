@@ -19,24 +19,22 @@
    return type; mismatches throw ClassCastException at JVM level
    via the DynamicAssigner + verifier, NOT inside the advice).
 
-    P1 (D2.2): `:subscriber` short-circuits the bucket after
-    the bridge returns. `stats/bump-fired!` is recorded for
-    every spec whose bridge runs.
+     P1 (D2.2): `:subscriber` short-circuits the bucket after
+     the bridge returns. `stats/bump-fired!` is recorded for
+     every spec whose bridge runs.
 
-    Wave-1 T2b (P1.S2a.2): `stats/bump-modified!` is recorded for
-    each `:modify` spec whose non-nil return value is accepted
-    as the new winner. Counts here match the actual observable
-    modify-wins rate. A `:modify` whose bridge returns nil
-    (no-op) is NOT counted, per the
-    `(and (= action :modify) (nil? rv)) nil` cond branch.
+     `stats/bump-modified!` is recorded for each `:modify` spec
+     whose non-nil return value is accepted as the new winner.
+     Counts here match the actual observable modify-wins rate.
+     A `:modify` whose bridge returns nil (no-op) is NOT counted,
+     per the `(and (= action :modify) (nil? rv)) nil` cond branch.
 
-    Wave-1 T7 (HC5 fix): `((:cancel! event))` was a 0-arg call to
-    a 1-arg fn — ArityException at runtime. Replaced with
-    `(du/call-cancel! event)` (D12 helper).
+     `((:cancel! event))` was a 0-arg call to a 1-arg fn —
+     ArityException at runtime. Replaced with
+     `(du/call-cancel! event)`.
 
-   P2.4 (plan v2.1 §6): honours `(:cancelled? event)` between
-   observers in the bucket — once any observer flips it,
-   remaining observers are skipped."
+    Honours `(:cancelled? event)` between observers in the bucket
+    — once any observer flips it, remaining observers are skipped."
   [spec-id self args current-return]
   (try
     (if-let [spec (d/lookup spec-id)]

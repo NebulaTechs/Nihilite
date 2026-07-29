@@ -1,5 +1,5 @@
 (ns nihilite.test.transport-timeout-test
-  "Verifies Wave-1 T5: the idle SO_TIMEOUT is applied to the *accepted*
+  "Verifies the idle SO_TIMEOUT is applied to the *accepted*
    socket only, not the ServerSocket listener.
 
    The listener keeps its short `accept-timeout-ms` (200) so `stop!` can
