@@ -53,6 +53,7 @@
    "nihilite.test.dispatch-exception-test"
    "nihilite.test.dispatch-modified-test"
    "nihilite.test.dispatch-entry-test"
+   "nihilite.test.dispatch-common-test"
    "nihilite.test.transport-timeout-test"
    "nihilite.errors-test"])
 

@@ -4,8 +4,7 @@
             [nihilite.registry.dispatch :as d]
             [nihilite.registry.dispatch.util :as du]
             [nihilite.registry.event :as ev]
-            [nihilite.registry.stats :as stats])
-  (:import (nihilite.registry.spec HookEvent)))
+            [nihilite.registry.stats :as stats]))
 
 (defn dispatch-for-spec
   "ByteBuddy Advice entry-point helper. Given a resolved spec-id,
@@ -18,7 +17,16 @@
 
    P1 (D2.2): `:action :subscriber` specs short-circuit the
    bucket after their bridge returns — the xform IS the
-   dispatch logic, not one observer in a multi-observer chain."
+   dispatch logic, not one observer in a multi-observer chain.
+
+   Wave-1 T7 (HC14 / HC15): `(.-cancel! ^HookEvent event)` was
+   a misleading reflection — `:cancel!` is a closure over an
+   `AtomicBoolean`, not a Java field. The `^HookEvent` type hint
+   just resolved the field at compile time without actually
+   invoking reflective dispatch, so the bug shipped as
+   functionally-correct only because no one exercised this path
+   on a non-cancelled event. Replaced with `(du/call-cancel!
+   event)` (D12 helper)."
   [spec-id self args]
   (try
     (when-let [spec (d/lookup spec-id)]
@@ -35,8 +43,7 @@
                 (ev/dispatch-one! f event)
                 (stats/bump-fired! (:id s))
                 (when (= action :subscriber)
-                  (when-let [cb (.-cancel! ^HookEvent event)]
-                    (cb true))))
+                  (du/call-cancel! event)))
               (recur (next remaining)))))))
     (catch Throwable t
       (try (log/error t "registry dispatch-for-spec failed (id=" spec-id ")")

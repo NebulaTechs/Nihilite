@@ -30,6 +30,10 @@
     (no-op) is NOT counted, per the
     `(and (= action :modify) (nil? rv)) nil` cond branch.
 
+    Wave-1 T7 (HC5 fix): `((:cancel! event))` was a 0-arg call to
+    a 1-arg fn — ArityException at runtime. Replaced with
+    `(du/call-cancel! event)` (D12 helper).
+
    P2.4 (plan v2.1 §6): honours `(:cancelled? event)` between
    observers in the bucket — once any observer flips it,
    remaining observers are skipped."
@@ -54,9 +58,8 @@
                     (or @decided? (= action :observe) (= action :cancel))
                     nil
 
-                    (= action :subscriber)
-                    (when-let [cb ((:cancel! event))]
-                      (cb true))
+(= action :subscriber)
+                     (du/call-cancel! event)
 
                     (and (= action :modify) (nil? rv))
                     nil
