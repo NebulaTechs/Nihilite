@@ -135,19 +135,28 @@
     (doseq [spec (sel/select-targets selector)
             :when (or (nil? positions)
                       (contains? positions (:position spec)))]
-      (reg/install! {:id                (:id spec)
-                     :target-internal   (:target-internal spec)
-                     :method-name       (:method-name spec)
-                     :descriptor        (:source-descriptor spec)
-                     :position          (:position spec)
-                     :arity             (:arity spec)
-                     :action            :subscriber
-                     :bridge            bridge-fn
-                     :tag               (str "subscriber:" sub-id)
-                     :capture-stack?    (boolean (:capture-stack? spec))
-                     :source-class      (:source-class spec)
-                     :source-descriptor (:source-descriptor spec)
-                     :note              (:note spec)}))
+      (let [spec-id (:id spec)
+            spec-map {:id                spec-id
+                      :target-internal   (:target-internal spec)
+                      :method-name       (:method-name spec)
+                      :descriptor        (:source-descriptor spec)
+                      :position          (:position spec)
+                      :arity             (:arity spec)
+                      :action            :subscriber
+                      :bridge            bridge-fn
+                      :tag               (str "subscriber:" sub-id)
+                      :capture-stack?    (boolean (:capture-stack? spec))
+                      :source-class      (:source-class spec)
+                      :source-descriptor (:source-descriptor spec)
+                      :note              (:note spec)}]
+        ;; Wave-1 T3 (P1.S3a + S5 sync): subscriber paths choose
+        ;; REPLACE (install!) for already-existing specs and
+        ;; FRESH (install-fresh!) only when the id is new. This
+        ;; avoids HC3 — the prior plan's putIfAbsent would have
+        ;; thrown on every bulk install.
+        (if (nil? (reg/lookup spec-id))
+          (reg/install-fresh! spec-map)
+          (reg/install! spec-map))))
     (swap! subscriptions assoc sub-id sub)
     sub))
 

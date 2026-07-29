@@ -28,6 +28,8 @@
 
 (def method-key           rs/method-key)
 (def install!             ri/install!)
+(def install-fresh!       ri/install-fresh!)
+(def install-new!        ri/install-new!)
 (def uninstall!           ri/uninstall!)
 (def clear!               ri/clear!)
 (def matching             ri/matching)
