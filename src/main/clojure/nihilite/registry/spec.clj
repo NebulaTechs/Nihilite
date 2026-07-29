@@ -26,7 +26,7 @@
    capture-stack? max-depth sample-rate])
 
 (defrecord HookContext
-  [hookId self args phase returnValue ^:volatile-mutable cancelled])
+  [hookId self args phase returnValue cancelled])
 
 (defrecord HookEvent
   ;; Cancellation: `:cancelled?` and `:cancel!` are closures over a per-event
