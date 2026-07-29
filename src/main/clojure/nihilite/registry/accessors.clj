@@ -91,3 +91,26 @@
     (let [c (.-cancelled? ^HookEvent x)]
       (if (fn? c) (boolean (c)) (boolean c)))
     :else false))
+
+(defn position
+  "Resolve the `:position` value of a HookSpec / Subscriber /
+   HookContext / HookEvent, accepting both keyword and string
+   access keys at the call site.
+
+   Caller code is sometimes written as (sm :position) and
+   sometimes as (sm \"position\"). This accessor abstracts
+   that.
+
+   Wave-1 T11 (P5.S1): per v4 plan D10 / OQ2 = (A), this dual-mode
+   accessor is shipped as the 30-day default if no operator
+   signoff arrives - backward-compat with mixed-access callers
+   without forcing a uniform choice.
+
+   Returns the position keyword (one of :entry, :return, :throw,
+   :subscriber, :invoke-before, etc.), or nil if no :position
+   field is present."
+  [m]
+  (or (and (instance? HookEvent m) (.-phase ^HookEvent m))
+      (and (map? m)
+           (or (get m "position") (:position m)))
+      nil))

@@ -55,6 +55,7 @@
    "nihilite.test.dispatch-entry-test"
    "nihilite.test.dispatch-common-test"
    "nihilite.test.transport-timeout-test"
+   "nihilite.test.position-accessor-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref

@@ -51,6 +51,7 @@
 (def ctx-phase            ra/ctx-phase)
 (def ctx-cancel!          ra/ctx-cancel!)
 (def ctx-cancelled?       ra/ctx-cancelled?)
+(def position             ra/position)
 
 ;; Stats (parallel StatsIndex, not on HookSpec — B3 fix)
 (def ensure-stats         rstats/ensure-stats)
