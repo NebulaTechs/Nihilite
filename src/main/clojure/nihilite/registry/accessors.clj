@@ -98,7 +98,7 @@
    access keys at the call site.
 
    Caller code is sometimes written as (sm :position) and
-   sometimes as (sm "position"). This accessor abstracts
+   sometimes as (sm 'position'). This accessor abstracts
    that.
 
    This dual-mode accessor is shipped as the 30-day default if no
