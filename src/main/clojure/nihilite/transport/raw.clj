@@ -74,9 +74,12 @@
 
 (defn handle-raw
   "Interactive raw REPL. Single jline3 readline drives every raw client.
-   Terminal type is selected from the echo-mode probe: real telnet
-   (:char) keeps xterm + multi-column list; nc/socat (:line) drops to
-   dumb + LIST_PACKED so jline3's renderer does not staircase."
+   Terminal type is `dumb` for ALL raw clients: real telnet (macOS
+   Terminal, iTerm, Windows Terminal) is `:char` echo but mostly does
+   NOT process ANSI escape sequences that jline3's Display emits
+   (\\e[K, \\e[H, \\e[J, cursor_address). Without ANSI processing the
+   column diff on the second TAB staircases across rows. nc/socat
+   stay on dumb too (they also ignore ANSI)."
   [^Socket sock ^BufferedInputStream buf-in]
   (.setSoTimeout sock 0)
   (let [raw-out (.getOutputStream sock)
@@ -84,15 +87,14 @@
         repl-state (atom {:ns user-ns :*1 nil :*2 nil :*3 nil :*e nil})
         write! (fn [^String s] (raw-write! raw-out s))]
     (try
-      (let [echo-mode (negotiate-echo-mode! sock buf-in raw-out)
-            term-type (if (= echo-mode :char) :xterm :dumb)]
-        (raw-write! raw-out readline/banner)
-        (raw-write! raw-out (str "Connect time: " (java.time.LocalTime/now) "\n"))
-        (let [terminal (readline/build-terminal buf-in raw-out "nihilite-raw" term-type)]
-          (try
-            (readline/run-loop terminal repl-state write!)
-            (raw-write! raw-out "bye\n")
-            (finally (.close terminal)))))
+      (negotiate-echo-mode! sock buf-in raw-out)
+      (raw-write! raw-out readline/banner)
+      (raw-write! raw-out (str "Connect time: " (java.time.LocalTime/now) "\n"))
+      (let [terminal (readline/build-terminal buf-in raw-out "nihilite-raw" :dumb)]
+        (try
+          (readline/run-loop terminal repl-state write!)
+          (raw-write! raw-out "bye\n")
+          (finally (.close terminal))))
       (catch Throwable t
         (log/error t "raw connection error"))
       (finally
