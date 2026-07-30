@@ -33,6 +33,7 @@
    "nihilite.test.position-accessor-test"
    "nihilite.test.attach-test"
    "nihilite.test.transport-bencode-done-test"
+   "nihilite.test.readline-term-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref
