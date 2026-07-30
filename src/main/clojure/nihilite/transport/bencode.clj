@@ -1,7 +1,7 @@
 (ns nihilite.transport.bencode
   "Native nREPL bencode branch. Bridges the sniffed connection into
-   `nrepl.server/handle` with the nrepl 1.7.0 byte-array UTF-8 decoding
-   / keywordize-keys contract."
+   `nrepl.server/handle`. Unreads the sniffed bytes onto a
+   PushbackInputStream so nrepl sees the leading `d`."
   (:require [clojure.tools.logging :as log]
             [clojure.walk :as walk]
             [nrepl.bencode :as bencode]
@@ -9,8 +9,6 @@
             [nrepl.transport :as nrtransport])
   (:import [java.net Socket]
            [java.io BufferedInputStream OutputStream PushbackInputStream]))
-
-(def ^:const bencode-pushback-buf 1024)
 
 (defn- decode-message
   "Walk a parsed nrepl message: keys keywordized; byte-array values
@@ -32,11 +30,15 @@
              (when (seq unencoded)
                (select-keys msg unencoded))))))
 
-(defn handle-bencode [^Socket sock ^BufferedInputStream buf-in]
+(defn handle-bencode
+  "Wrap buf-in in PushbackInputStream, unread the sniffed prefix,
+   then hand the stream to nrepl.server/handle."
+  [^Socket sock ^BufferedInputStream buf-in ^bytes sniffed-prefix]
   (.setSoTimeout sock 0)
-  (let [pb-in (PushbackInputStream. buf-in bencode-pushback-buf)
+  (let [pb-in (PushbackInputStream. buf-in (alength sniffed-prefix))
         ^OutputStream out (.getOutputStream sock)]
     (try
+      (.unread pb-in sniffed-prefix 0 (alength sniffed-prefix))
       (let [transport (nrtransport/fn-transport
                         (fn [] (decode-message (bencode/read-nrepl-message pb-in)))
                         (fn [resp]

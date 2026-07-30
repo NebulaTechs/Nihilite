@@ -1,8 +1,7 @@
 (ns nihilite.transport.sniff
-  "Connection-level protocol detection. Mark+reset the first bytes of a
-   fresh connection and classify it as :bencode, :http, or :raw without
-   consuming the prefix."
-  (:require [nihilite.transport.io :as io])
+  "Peek first bytes; classify as :bencode/:http/:raw. Returns :raw on
+   timeout, or [kind prefix-bytes] so the bencode branch can unread
+   onto a PushbackInputStream (nrepl.bencode hard-requires it)."
   (:import [java.net Socket SocketTimeoutException]
            [java.io BufferedInputStream]
            [java.util Arrays]))
@@ -58,18 +57,18 @@
              (= (aget prefix 3) (byte 0x20))))))
 
 (defn sniff
-  "Mark+reset the first up to `sniff-bytes` bytes of `in` and classify
-   the prefix. Returns :bencode, :http, or :raw."
+  "Read up to sniff-bytes; classify. bencode/http branches return
+   the bytes read so the caller can unread them onto the downstream
+   PushbackInputStream. :raw resets the BufferedInputStream."
   [^Socket sock ^BufferedInputStream in]
   (.setSoTimeout sock (int sniff-timeout-ms))
-  (.mark in (int sniff-bytes))
   (let [buf (byte-array sniff-bytes)
         n (try (.read in buf 0 (int sniff-bytes))
                (catch SocketTimeoutException _ -1)
                (catch Throwable _ -1))]
-    (io/safe-reset! in)
     (cond
       (neg? (int n)) :raw
-      (bencode-prefix? buf (long n)) :bencode
-      (http-method-prefix? buf (long n)) :http
-      :else :raw)))
+      (bencode-prefix? buf (long n)) [:bencode (java.util.Arrays/copyOf buf (int n))]
+      (http-method-prefix? buf (long n))
+      (do (.reset in) [:http (java.util.Arrays/copyOf buf (int n))])
+      :else (do (.reset in) :raw))))

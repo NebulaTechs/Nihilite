@@ -32,6 +32,7 @@
    "nihilite.test.transport-timeout-test"
    "nihilite.test.position-accessor-test"
    "nihilite.test.attach-test"
+   "nihilite.test.transport-bencode-done-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref

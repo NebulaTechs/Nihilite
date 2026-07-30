@@ -46,9 +46,9 @@
   (try
     (swap! active conj sock)
     (let [buf-in (BufferedInputStream. (.getInputStream sock) 4096)
-          kind (sniff/sniff sock buf-in)]
-      (case kind
-        :bencode (bencode/handle-bencode sock buf-in)
+          sniff-result (sniff/sniff sock buf-in)]
+      (case (if (vector? sniff-result) (first sniff-result) sniff-result)
+        :bencode (bencode/handle-bencode sock buf-in (second sniff-result))
         :http    (http/handle-http sock buf-in)
         :raw     (raw/handle-raw sock buf-in)))
     (catch Throwable t
