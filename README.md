@@ -33,9 +33,21 @@ telnet 127.0.0.1 7888
 bye
 ```
 
-`telnet` gives you server-side editing (history, TAB completion, C-a/e/k/u/w,
-ESC-b/f, C-c cancel, C-d exit). `nc`/`socat` work too but use your local
-terminal's editing — no history, no completion.
+#### Client support matrix
+
+| Client | History | TAB completion | C-a/e/k/u/w | C-c cancel | C-d exit | Notes |
+|--------|---------|----------------|-------------|------------|----------|-------|
+| `telnet` | yes (server) | yes (server) | yes | yes | yes | Full support; recommended. |
+| `nc`     | no       | no             | no          | no         | no       | Falls back to your local terminal's editing. The server's IAC probe (WILL ECHO / WILL SGA) is sent on connect, but `nc` ignores it — no readline, no completion, no history. |
+| `socat`  | no       | no             | no          | no         | no       | Same as `nc`. `socat -,rawer` or `socat -,cfmakeraw` does not help; the IAC bytes are still emitted and ignored by socat, not by the kernel terminal. |
+| `lein repl :connect`, `cider-connect`, `cider-jack-in`, `Calva`, `Cursive` | n/a (uses bencode branch) | yes (client-side) | n/a | yes | n/a | Speaks nREPL/bencode over the same port; the server sniffs `d<digits>:` and routes there. |
+
+**Only `telnet` gives you the full server-side editing experience.** `nc`
+and `socat` connect fine but you get a plain line editor with no
+features — the server cannot deliver features that the client refuses
+to negotiate for. jline3's terminal model assumes a real ANSI/ECMA-48
+terminal; the dumb-terminal fallback (used for nc/socat) drops the
+multi-column list renderer but still gives you typed-input readline.
 
 For a real editor:
 
