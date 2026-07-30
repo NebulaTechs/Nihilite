@@ -30,7 +30,10 @@
        "C-l clears screen, TAB completes, history up/down.\r\n"))
 
 (defn read-balanced-form
-  "Read one balanced form via jline readLine. Returns {:form|:eof|:intr|:blank|:overflow}."
+  "Read one balanced form via jline readLine. Returns
+   {:form|:eof|:intr|:blank|:overflow}. On IOException (socket
+   closed by peer mid-readline) returns :eof so run-loop exits
+   cleanly without bubbling to raw's error log."
   [^LineReader reader]
   (term/sync-history-into-reader! reader)
   (loop [buf (StringBuilder.)
@@ -38,7 +41,8 @@
     (let [line (try
                  (.readLine reader prompt)
                  (catch UserInterruptException _ ::intr)
-                 (catch EndOfFileException _ ::eof))]
+                 (catch EndOfFileException _ ::eof)
+                 (catch java.io.IOException _ ::eof))]
       (cond
         (= line ::eof)  {:eof true}
         (= line ::intr) {:intr true}
@@ -60,15 +64,21 @@
                 (recur buf continuation-prompt)))))))))
 
 (defn eval-with-cancel
-  "Run eval-form in future; poll for C-c; future-cancel on interrupt."
+  "Run eval-form in future; poll for C-c; future-cancel on interrupt.
+   On IOException (client closed socket mid-eval) returns the :eof
+   sentinel so run-loop exits without bubbling an error to the raw
+   branch's catch-and-log."
   ^String [^Terminal terminal ^String form-str repl-state]
   (let [fut (future (eval/eval-form form-str repl-state))
         ^NonBlockingReader nbr (.reader terminal)]
     (loop []
       (if (future-done? fut)
         @fut
-        (let [c (try (.read nbr cancel-poll-ms) (catch Throwable _ -1))]
+        (let [c (try (.read nbr cancel-poll-ms)
+                     (catch java.io.IOException _ ::closed)
+                     (catch Throwable _ -1))]
           (cond
+            (= c ::closed) "\r\n;; disconnected\r\n"
             (= c 3) ; Ctrl-C
             (do (future-cancel fut)
                 "\r\n;; interrupted\r\n")

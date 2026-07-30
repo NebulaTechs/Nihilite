@@ -34,6 +34,7 @@
    "nihilite.test.attach-test"
    "nihilite.test.transport-bencode-done-test"
    "nihilite.test.readline-term-test"
+   "nihilite.test.readline-loop-eof-test"
    "nihilite.errors-test"])
 
 (defn- safe-deref
