@@ -318,4 +318,15 @@ def retransformDriver = tasks.register('retransformDriver', JavaExec) {
     }
 }
 
+task printAttachClasspath {
+    description = 'Print colon-separated runtime classpath for the attach REPL'
+    group = 'verification'
+    doLast {
+        println configurations.runtimeClasspath
+            .findAll { it.name.endsWith('jar') }
+            .collect { it.absolutePath }
+            .join(':')
+    }
+}
+
 
