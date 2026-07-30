@@ -28,6 +28,9 @@ public final class Agent {
     private static final String PREMAIN_REGISTERED_MSG =
             "[Nihilite-agent] premain armed HookInstaller (ByteBuddy AgentBuilder)";
 
+    private static final String AGENTMAIN_REGISTERED_MSG =
+            "[Nihilite-agent] agentmain armed HookInstaller (dynamic attach)";
+
     private static final String WORKER_BOUND_MSG =
             "[Nihilite-agent] worker bound port ";
 
@@ -63,9 +66,25 @@ public final class Agent {
                  + " ms; worker=" + worker.getName());
     }
 
-    /** Dynamic-attach entry point (Attach API). Mirrors {@link #premain}. */
+    /** Dynamic-attach entry point (Attach API). Mirrors premain but
+     *  emits an `agentmain`-tagged log; re-running is a no-op (the
+     *  `REGISTERED_ON` cell is already set). */
     public static void agentmain(String args, Instrumentation inst) {
-        premain(args, inst);
+        long t0 = System.nanoTime();
+        if (inst != null && REGISTERED_ON.compareAndSet(null, inst)) {
+            HookInstaller.install(inst);
+            LOG.info(AGENTMAIN_REGISTERED_MSG);
+        } else if (inst != null) {
+            LOG.info("[Nihilite-agent] agentmain no-op (HookInstaller already "
+                     + "registered for " + REGISTERED_ON.get() + ")");
+        }
+        Thread worker = new Thread(new AgentWorker(), "nihilite-agent-worker");
+        worker.setDaemon(false);
+        worker.setContextClassLoader(ClassLoader.getSystemClassLoader());
+        worker.start();
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+        LOG.info("[Nihilite-agent] agentmain returned in " + elapsedMs
+                 + " ms; worker=" + worker.getName());
     }
 
     private static final class AgentWorker implements Runnable {
