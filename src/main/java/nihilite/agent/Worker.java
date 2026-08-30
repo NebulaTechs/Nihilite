@@ -34,8 +34,6 @@ public final class Worker implements Runnable {
     }
 
     private static void initClojure() {
-        // Clojure.var interns but doesn't load the namespace — always
-        // (require ...) first so each var actually resolves at runtime.
         IFn require = Clojure.var("clojure.core", "require");
         require.invoke(Symbol.intern("clojure.core"));
         require.invoke(Symbol.intern("nihilite.transport"));

@@ -31,12 +31,6 @@
   (is (not (contains? (reg/stats-snapshot) "stats-test"))))
 
 (deftest fabric-retransform-persistence-after-classforName
-  ;; R4 verification: HookInstaller.uninstall walks getAllLoadedClasses,
-  ;; retransforms matching ones. With system classloader loaded class
-  ;; (deterministic fallback when MC classpath is absent), the
-  ;; retransformClasses call must NOT throw, AND post-call
-  ;; (Class/forName ... getSystemClassLoader) must return the
-  ;; retransformed definition.
   (let [target "java/lang/String"
         inst   (nihilite.agent.Agent/currentInstrumentation)
         before (Class/forName "java.lang.String" false (ClassLoader/getSystemClassLoader))
@@ -46,9 +40,6 @@
         "system-CL loadClass returns the same Class<?> instance after retransform")))
 
 (deftest is-modifiable-class-false-for-final-class
-  ;; A1 byteman borrow: pre-check `inst.isModifiableClass` (byteman
-  ;; Retransformer.java:295). Requires -javaagent (Instrumentation
-  ;; registered); skipped in bare clojureContractTest.
   (when-let [inst (nihilite.agent.Agent/currentInstrumentation)]
     (is (false? (.isModifiableClass inst (Class/forName "java.lang.Math")))
         "java.lang.Math must be unmodifiable in a stock JVM")))

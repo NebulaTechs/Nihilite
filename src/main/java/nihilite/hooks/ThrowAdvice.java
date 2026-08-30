@@ -34,10 +34,7 @@ public final class ThrowAdvice {
             if (specId == null) return;
             CLJ_DISPATCH_THROW.invoke((String) specId, self, args, thrown);
         } catch (Throwable t) {
-            try {
-                LOG.log(Level.FINE, "throw advice dispatch failed", t);
-            } catch (Throwable ignored) {
-            }
+            AdviceSupport.safeLogSevere(LOG, "throw advice dispatch failed", t);
         }
     }
 }

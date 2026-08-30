@@ -3,6 +3,9 @@ package nihilite.hooks;
 import clojure.java.api.Clojure;
 import clojure.lang.IFn;
 
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 /** Shared Clojure var resolutions and helpers for ByteBuddy Advice classes. */
 final class AdviceSupport {
 
@@ -18,5 +21,12 @@ final class AdviceSupport {
     static Object lookupSpec(String hostInternal, String methodName, int argCount,
                              String descriptor, String phase) {
         return LOOKUP_SPEC.invoke(hostInternal, methodName, argCount, descriptor, phase);
+    }
+
+    static void safeLogSevere(Logger log, String message, Throwable t) {
+        try {
+            log.log(Level.SEVERE, message, t);
+        } catch (Throwable ignored) {
+        }
     }
 }

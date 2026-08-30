@@ -38,11 +38,8 @@ public final class ReturnAdvice {
             return CLJ_DISPATCH_RETURN.invoke(specId, self, args, original);
         } catch (Throwable t) {
             String hostName = (hostClass == null) ? "?" : hostClass.getName();
-            try {
-                LOG.log(Level.SEVERE,
-                        "advice onExit failed on " + hostName + "." + methodName, t);
-            } catch (Throwable ignored) {
-            }
+            AdviceSupport.safeLogSevere(LOG,
+                    "advice onExit failed on " + hostName + "." + methodName, t);
             return original;
         }
     }

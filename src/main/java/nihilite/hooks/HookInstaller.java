@@ -57,29 +57,11 @@ public final class HookInstaller {
 
     public static void install(Instrumentation inst) {
         try {
-            new AgentBuilder.Default()
-                .disableClassFormatChanges()
-                .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
-                .with(AgentBuilder.RedefinitionStrategy.DiscoveryStrategy.Reiterating.INSTANCE)
-                .ignore(ElementMatchers.nameStartsWith("java.")
-                        .or(ElementMatchers.nameStartsWith("javax."))
-                        .or(ElementMatchers.nameStartsWith("jdk."))
-                        .or(ElementMatchers.nameStartsWith("sun."))
-                        .or(ElementMatchers.nameStartsWith("com.sun."))
-                        .or(ElementMatchers.isSynthetic()))
+            baseBuilder()
                 .type(HookTypeMatcher.INSTANCE)
                 .transform(HookInstaller::applyAdviceTransformer)
                 .installOn(inst);
-            new AgentBuilder.Default()
-                .disableClassFormatChanges()
-                .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
-                .with(AgentBuilder.RedefinitionStrategy.DiscoveryStrategy.Reiterating.INSTANCE)
-                .ignore(ElementMatchers.nameStartsWith("java.")
-                        .or(ElementMatchers.nameStartsWith("javax."))
-                        .or(ElementMatchers.nameStartsWith("jdk."))
-                        .or(ElementMatchers.nameStartsWith("sun."))
-                        .or(ElementMatchers.nameStartsWith("com.sun."))
-                        .or(ElementMatchers.isSynthetic()))
+            baseBuilder()
                 .type(HookTypeMatcher.INSTANCE)
                 .transform(HookInstaller::applyRedefineTransformer)
                 .installOn(inst);
@@ -89,21 +71,21 @@ public final class HookInstaller {
         }
     }
 
-    /** (name, descriptor) pair, descriptor may be null. */
-    private static final class MethodKey {
-        final String name;
-        final String descriptor;
-        MethodKey(String n, String d) { this.name = n; this.descriptor = d; }
-        @Override public boolean equals(Object o) {
-            if (!(o instanceof MethodKey)) return false;
-            MethodKey m = (MethodKey) o;
-            return java.util.Objects.equals(name, m.name)
-                && java.util.Objects.equals(descriptor, m.descriptor);
-        }
-        @Override public int hashCode() {
-            return java.util.Objects.hash(name, descriptor);
-        }
+    private static AgentBuilder baseBuilder() {
+        return new AgentBuilder.Default()
+            .disableClassFormatChanges()
+            .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+            .with(AgentBuilder.RedefinitionStrategy.DiscoveryStrategy.Reiterating.INSTANCE)
+            .ignore(ElementMatchers.nameStartsWith("java.")
+                    .or(ElementMatchers.nameStartsWith("javax."))
+                    .or(ElementMatchers.nameStartsWith("jdk."))
+                    .or(ElementMatchers.nameStartsWith("sun."))
+                    .or(ElementMatchers.nameStartsWith("com.sun."))
+                    .or(ElementMatchers.isSynthetic()));
     }
+
+    /** (name, descriptor) pair, descriptor may be null. */
+    private record MethodKey(String name, String descriptor) {}
 
     private static ElementMatcher.Junction<MethodDescription> matcherFor(Set<MethodKey> keys) {
         ElementMatcher.Junction<MethodDescription> m = ElementMatchers.none();

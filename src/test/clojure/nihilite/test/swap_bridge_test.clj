@@ -35,12 +35,6 @@
     (is (= :entry (:position s)))))
 
 (deftest c2-c4-bridge-reach-on-system-classloader
-  ;; R5 cross-test: install + swap-bridge! + uninstall cycle
-  ;; reaches through the (Class/forName ... getSystemClassloader)
-  ;; path used by Fabric/Knot modded hosts. After swap-bridge!, the
-  ;; new bridge must be the one returned by lookup. After uninstall,
-  ;; lookup must return nil and the spec is removed from
-  ;; stats-snapshot.
   (api/install! (entry-spec "reach-test"))
   (let [replacement (fn [_] :swapped)]
     (api/swap-bridge! "reach-test" replacement)

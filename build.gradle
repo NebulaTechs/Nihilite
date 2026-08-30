@@ -1,20 +1,6 @@
-// Nihilite build. ONE artifact in production form:
-//
-//   - build/libs/nihilite.jar                 (the fat jar; both `java -jar`
-//                                              and `java -javaagent:nihilite.jar`
-//                                              resolve off this single file)
-//
-// The fat jar bundles Clojure 1.12.0 + spec.alpha + core.specs.alpha + nrepl
-// 1.7.0 + the existing single-port dispatcher (nihilite.transport) + the
-// hooks package (nihilite.hooks.*) + nihilite.server.ServerMain (Main-Class)
-// + nihilite.agent.Agent (Premain-Class + Agent-Class). One binary, two
-// entry points:
-//
-//   standalone: `java -jar nihilite.jar`         -> Main-Class  -> ServerMain
-//   attached :  `java -javaagent:nihilite.jar -jar <minecraft.jar>`
-//                                            -> Premain-Class -> Agent
-//
-// All dependencies are declared here, not hardcoded in build.sh.
+// One fat jar: build/libs/nihilite.jar; serves both `java -jar` and `-javaagent:nihilite.jar`.
+// Bundles Clojure 1.12.0 + spec.alpha + core.specs.alpha + nrepl 1.7.0 + nihilite.hooks.* +
+// nihilite.server.ServerMain (Main-Class) + nihilite.agent.Agent (Premain-Class + Agent-Class).
 
 plugins {
     id 'java'
@@ -22,16 +8,11 @@ plugins {
 }
 
 group = 'nihilite'
-// Per-build timestamp version. Evaluated once when the build script
-// runs, so every `./gradlew` invocation stamps the jar manifest with
-// a fresh `dev-YYYYMMDD-HHMMSS` label that reflects when this build
-// was produced, not when source files were last modified.
+// Per-build timestamp stamp on jar manifest, see ServerConstants / nihilite.version.
 version = 'dev-' + new java.text.SimpleDateFormat('yyyyMMdd-HHmmss').format(new Date())
 
 java {
-    // Minecraft 26.1 requires Java 25. We compile to class file v69.
-    // sourceCompatibility/targetCompatibility VERSION_25 was added in
-    // Gradle 9.1+; before that, the enum value was unrecognized.
+    // Minecraft 26.1 requires Java 25; class file v69.
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
 }
@@ -42,25 +23,14 @@ repositories {
 }
 
 dependencies {
-    // Clojure language runtime
     implementation 'org.clojure:clojure:1.12.0'
-    // Clojure spec (separate artifact since 1.9)
     implementation 'org.clojure:spec.alpha:0.5.238'
     implementation 'org.clojure:core.specs.alpha:0.4.74'
-    // nREPL server (Clojars-only) — provides the only transport.
-    // Clojure-side raw / HTTP / WebSocket transports were retired;
-    // every connection routes through nrepl.server/handle now.
+    // nREPL server (Clojars-only); the only transport.
     implementation 'nrepl:nrepl:1.7.0'
-
-    // clojure.tools.logging — Clojure-side facade over java.util.logging
-    // (no SLF4J/log4j on the classpath so the auto-detect chain lands on
-    // java.util.logging, which keeps the log channel unified with the
-    // Java side). Provides log/info, log/warn, log/error, log/debug.
+    // tools.logging: Clojure-side facade over java.util.logging; unified with Java side.
     implementation 'org.clojure:tools.logging:1.3.1'
-
-    // ByteBuddy 1.18.11 — HookInstaller weaves entry/return/throw.
-    // install! does not retransform already-loaded classes (README Limits).
-    // byte-buddy-agent is only for retransformDriver self-attach.
+    // ByteBuddy 1.18.11; byte-buddy-agent is for retransformDriver self-attach only.
     implementation 'net.bytebuddy:byte-buddy:1.18.11'
     implementation 'net.bytebuddy:byte-buddy-agent:1.18.11'
 }
@@ -69,43 +39,17 @@ application {
     mainClass = 'nihilite.server.ServerMain'
 }
 
-// Source layout (Maven/Gradle conventional):
-//   src/main/java/        → compiled to .class
-//   src/main/clojure/     → packaged as resources so clojure.core/require
-//                           can find them on the classpath
-//   examples/             → external operator-side init files; NEVER packaged.
-//                           They stay on disk and are discovered at runtime.
-//   scripts/              → smoke + repl-loop utilities (not packaged)
 sourceSets {
     main {
-        // src/main/java is the Gradle default; explicit declaration here
-        // is documentation only. The Clojure ns files live under
-        // src/main/clojure and are emitted into the fat jar as
-        // resources/nihilite/{boot,version,transport,registry,attach}.clj so that
-        // clojure.core/require resolves them at runtime.
-        // examples/ is intentionally absent — it is operator-side
-        // filesystem content, not a build resource.
         resources {
             srcDirs += ['src/main/clojure', 'src/main/resources']
         }
     }
 }
 
-// Local timestamp formatter for build-time logging only. Deliberately
-// not used to drive any task input or artifact content — see the note
-// on `version` above.
 def buildTimestamp = {
-    def fmt = new java.text.SimpleDateFormat('yyyyMMdd-HHmmss')
-    fmt.setTimeZone(java.util.TimeZone.getDefault())
-    fmt.format(new Date())
+    new java.text.SimpleDateFormat('yyyyMMdd-HHmmss').format(new Date())
 }
-
-// Fat-jar assembly. Single artifact at build/libs/nihilite.jar with
-// dual-manifest (Main-Class + Premain-Class + Agent-Class) so both
-// `java -jar` and `-javaagent` resolve off the same file. No
-// Boot-Class-Path (Java 9+ package split would corrupt
-// clojure.* / spec.alpha.* / nrepl.* resolution). Fat-jar +
-// system classloader is sufficient for the agent path.
 
 jar {
     archiveFileName = 'nihilite.jar'
@@ -113,21 +57,13 @@ jar {
         attributes(
             'Implementation-Title': 'Nihilite',
             'Implementation-Version': project.version,
-            // Standalone entry point: `java -jar nihilite.jar` -> ServerMain
             'Main-Class': application.mainClass.get(),
-            // java -javaagent:nihilite.jar -> Agent.premain / agentmain.
             'Premain-Class': 'nihilite.agent.Agent',
             'Agent-Class':   'nihilite.agent.Agent',
-            // Flags stay true so Instrumentation may retransform.
-            // Product install! does not trigger it (README Limits).
+            // Required so Package.getImplementationVersion() resolves for nihilite.server
+            // inside a fat jar (otherwise the JVM silently ignores our Implementation-Version).
             'Can-Redefine-Classes': 'true',
             'Can-Retransform-Classes': 'true',
-            // No Boot-Class-Path. Java 9+ package split would corrupt
-            // Clojure's clojure.* / spec.alpha.* / nrepl.* resolution.
-            // Fat-jar + system classloader is sufficient.
-            // Required so Package.getImplementationVersion() resolves
-            // for the nihilite.server package inside a fat jar (otherwise
-            // the JVM silently ignores our Implementation-Version).
             'Name': 'nihilite/server/'
         )
     }
@@ -137,8 +73,6 @@ jar {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
 
-    // Build-time size log (development only — not driven from any task
-    // input or artifact content; see the note on `version` above).
     doLast {
         def f = archiveFile.get().asFile
         if (f.exists()) {
@@ -159,13 +93,8 @@ tasks.named('assemble') {
     dependsOn sourcesJar
 }
 
-// JAR content gate. The agent/runtime fat jar must NEVER bundle
-// operator-side filesystem content under examples/, nor any
-// top-level init.clj / minecraft/init.clj / fabric/init.clj. Examples
-// stay external — they are discovered at runtime, never packaged.
-//
-// verifyJarContents runs after :jar and fails the build if any forbidden
-// entry slips in (e.g. via a future copy{} / shadow-merge mistake).
+// JAR content gate: examples/ must NEVER be bundled. verifyJarContents runs after :jar
+// and fails the build if any forbidden entry slips in.
 tasks.register('verifyJarContents') {
     dependsOn jar
     description = 'Fail the build if the produced jar bundles any examples/* or other forbidden entry.'
@@ -205,24 +134,11 @@ tasks.register('verifyJarContents') {
     }
 }
 
-// Dependency-free contract-test / verification harness.
-//
-// The java plugin already creates a `test` task (type Test) which scans
-// for JUnit tests. We must NOT register/delete/overwrite that task; we
-// only disable it (it has no JUnit tests today, so `enabled = false` is
-// correct). The contract-test runners below are JavaExec and run fully
-// self-contained test sources; they have provider-safe wiring into the
-// existing `check` lifecycle so `./gradlew --no-daemon check` invokes
-// them in addition to the (disabled) java-plugin test.
+// Disable the empty java-plugin test task; we run our own Clojure/runner-based gates.
 tasks.named('test') { enabled = false }
 
 sourceSets {
     test {
-        // The Clojure test runner discovers `src/test/clojure/...`
-        // resources via the test runtime classpath. Adding the Clojure
-        // source root as a test-resources directory means the file
-        // walking code in `nihilite.test.runner` and any future
-        // Clojure contract tests are resolvable via `require`.
         resources {
             srcDirs = ['src/test/clojure']
         }
@@ -239,18 +155,10 @@ def clojureContractTest = tasks.register('clojureContractTest', JavaExec) {
     systemProperty 'nrepl.disable.tools', 'true'
 }
 
-// Wire the standard `check` lifecycle to the three gates that matter:
-// Clojure contract tests, jar-content forbid-list, and the in-process
-// retransform driver that proves HookInstaller can retransform an
-// already-loaded class (the actual hot-rewrite surface).
 tasks.named('check') {
     dependsOn clojureContractTest, verifyJarContents, retransformDriver
 }
 
-// Pure-JVM in-process driver for nihilite.hooks.HookInstaller.
-// Self-attaches via ByteBuddyAgent.install() (requires
-// -Djdk.attach.allowAttachSelf=true on JDK 9+). Exits 0 with
-// "DRIVER_PASS retransform-already-loaded proven" on success.
 def retransformDriver = tasks.register('retransformDriver', JavaExec) {
     description = 'In-process driver proving HookInstaller + retransform works'
     group = 'verification'
@@ -273,5 +181,3 @@ task printAttachClasspath {
             .join(':')
     }
 }
-
-

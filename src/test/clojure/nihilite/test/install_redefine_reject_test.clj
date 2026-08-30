@@ -73,11 +73,6 @@
   (is (true? (reg/install-fresh!
               (valid-observe-spec "fresh-new-test")))))
 
-(deftest install-new-is-alias-for-install-fresh
-  (reg/install! (valid-observe-spec "alias-test"))
-  (is (thrown? clojure.lang.ExceptionInfo
-               (reg/install-new! (valid-observe-spec "alias-test")))))
-
 (deftest install-rejects-invoke-position
   (let [spec (assoc (valid-observe-spec "invoke-reject-test")
                     :position :invoke-before)]

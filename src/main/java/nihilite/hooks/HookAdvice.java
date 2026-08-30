@@ -4,7 +4,6 @@ import clojure.java.api.Clojure;
 import clojure.lang.IFn;
 import net.bytebuddy.asm.Advice;
 
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /** :entry-phase Advice: dispatch via Clojure spec. */
@@ -33,11 +32,8 @@ public final class HookAdvice {
             CLJ_DISPATCH_ENTRY.invoke(specId, self, args);
         } catch (Throwable t) {
             String hostName = (hostClass == null) ? "?" : hostClass.getName();
-            try {
-                LOG.log(Level.SEVERE,
-                        "advice onEntry failed on " + hostName + "." + methodName, t);
-            } catch (Throwable ignored) {
-            }
+            AdviceSupport.safeLogSevere(LOG,
+                    "advice onEntry failed on " + hostName + "." + methodName, t);
         }
     }
 }

@@ -6,8 +6,6 @@
            [net.minecraft.network.chat Component]))
 
 (defn get-server-instance
-  ;; Mojang 26.1 stores the singleton in a subclass static field (e.g. DedicatedServer),
-  ;; not on MinecraftServer itself, and the field name varies across versions.
   []
   (let [mc-c (Class/forName "net.minecraft.server.MinecraftServer")
         find-on-class (fn find-on-class [c]
@@ -26,7 +24,6 @@
     (walk mc-c)))
 
 (defn send-system-message!
-  ;; nil server => :server-not-ready (no NPE); real throw => :errored with stack.
   [^MinecraftServer server ^String msg]
   (if (nil? server)
     {:scheduled false

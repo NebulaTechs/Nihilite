@@ -7,8 +7,6 @@
            [java.util.concurrent.atomic AtomicBoolean AtomicLong]
            [nihilite.hooks Bridge]))
 
-;; ─── data shapes ────────────────────────────────────────────────────────────
-
 (def ^:const ACTIONS #{:observe :modify :cancel :subscriber})
 
 (defrecord HookSpec
@@ -78,8 +76,6 @@
                      :source-descriptor desc
                      :tag               tag}))))
 
-;; ─── index ──────────────────────────────────────────────────────────────────
-
 (defonce ^:private by-id
   (ConcurrentHashMap.))
 (defonce ^:private by-target
@@ -93,19 +89,15 @@
 (defn- get-by-target ^ConcurrentHashMap [] by-target)
 (defn- get-by-method ^ConcurrentHashMap [] by-method)
 
-(defn- bucket ^java.util.List [t]
-  (or (.get by-target t)
+(defn- get-or-create-bucket ^java.util.List [^ConcurrentHashMap m k]
+  (or (.get m k)
       (let [fresh (CopyOnWriteArrayList.)]
-        (if (nil? (.putIfAbsent by-target t fresh))
+        (if (nil? (.putIfAbsent m k fresh))
           fresh
-          (.get by-target t)))))
+          (.get m k)))))
 
-(defn- method-bucket ^java.util.List [mk]
-  (or (.get by-method mk)
-      (let [fresh (CopyOnWriteArrayList.)]
-        (if (nil? (.putIfAbsent by-method mk fresh))
-          fresh
-          (.get by-method mk)))))
+(defn- bucket        ^java.util.List [t]  (get-or-create-bucket by-target t))
+(defn- method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
 
 (defn- next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
 
@@ -114,8 +106,6 @@
   (.clear by-target)
   (.clear by-method)
   nil)
-
-;; ─── stats ──────────────────────────────────────────────────────────────────
 
 (defrecord StatsRecord
   [fired modified cancelled exceptions last-ns max-ns])
@@ -153,8 +143,6 @@
 
 (defn- bump-fired!      [spec-id] (when-let [r (get-stats spec-id)] (swap! (:fired r) inc)))
 (defn- bump-exception!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:exceptions r) inc)))
-
-;; ─── event ──────────────────────────────────────────────────────────────────
 
 (defn- ->hook-event
   "Construct HookEvent. :cancelled?/:cancel! are closures over AtomicBoolean."
@@ -208,8 +196,6 @@
 (defn- call-cancel! [ev]
   (when-let [cb (:cancel! ev)] (cb true)))
 
-;; ─── accessors ──────────────────────────────────────────────────────────────
-
 (defn- ->ctx [x]
   (cond
     (instance? HookContext x) x
@@ -223,16 +209,16 @@
        :cancelled   ((.-cancelled? ^HookEvent x))})
     :else nil))
 
-(defn ctx-self        [x]          (when-let [c (->ctx x)] (:self c)))
-(defn ctx-arg         [x n]        (when-let [c (->ctx x)]
+(defn ctx-self        [x]          (when-some [c (->ctx x)] (:self c)))
+(defn ctx-arg         [x n]        (when-some [c (->ctx x)]
                                      (let [args (.-args ^HookContext c)]
                                        (when (and args (>= n 0) (< n (alength args)))
                                          (aget args (int n))))))
-(defn ctx-argc        [x]          (when-let [c (->ctx x)]
+(defn ctx-argc        [x]          (when-some [c (->ctx x)]
                                      (let [args (.-args ^HookContext c)]
                                          (if args (alength args) 0))))
-(defn ctx-return      [x]          (when-let [c (->ctx x)] (.-returnValue ^HookContext c)))
-(defn ctx-phase       [x]          (when-let [c (->ctx x)] (.-phase ^HookContext c)))
+(defn ctx-return      [x]          (when-some [c (->ctx x)] (.-returnValue ^HookContext c)))
+(defn ctx-phase       [x]          (when-some [c (->ctx x)] (.-phase ^HookContext c)))
 (defn ctx-cancel!     [x value]    (cond
                                      (instance? HookContext x)
                                      (set! (.-cancelled ^HookContext x) (boolean value))
@@ -253,8 +239,6 @@
       (and (map? m)
            (or (get m "position") (:position m)))
       nil))
-
-;; ─── install / uninstall ────────────────────────────────────────────────────
 
 (defn install!
   "Add or replace spec by :id. Returns true on fresh install, false on replace."
@@ -416,8 +400,6 @@
                        :nihilite/spec spec})))
     (install! m)))
 
-(defn install-new! [spec] (install-fresh! spec))
-
 (defn clear!
   "Drop every spec. Test/diagnostic only."
   []
@@ -430,8 +412,7 @@
   (let [b (.get (get-by-target) target-internal)]
     (if b (vec b) [])))
 
-(defn snapshot
-  "Defensive copy of all (id → spec) pairs. Diagnostic."
+(defn- snapshot
   []
   (let [m (java.util.HashMap.)]
     (.putAll m (get-by-id))
@@ -441,8 +422,6 @@
   "Sorted seq of registered spec ids."
   []
   (sort (vec (.keySet (get-by-id)))))
-
-;; ─── lookup / dispatch ──────────────────────────────────────────────────────
 
 (defn lookup
   "Spec by id, or nil."
@@ -467,14 +446,13 @@
      (cond
        mb
        (let [pcnt (int parameter-count)]
-         (loop [bucket (vec mb)]
-           (when-let [s (first bucket)]
-             (let [ar (:arity s)
-                   sp (:position s)]
-               (if (and (or (nil? ar) (= ar pcnt))
-                        (or (nil? pos-kw) (= sp pos-kw)))
-                 (:id s)
-                 (recur (next bucket)))))))
+         (some (fn [s]
+                 (let [ar (:arity s)
+                       sp (:position s)]
+                   (when (and (or (nil? ar) (= ar pcnt))
+                              (or (nil? pos-kw) (= sp pos-kw)))
+                     (:id s))))
+               mb))
        :else
        (lookup-spec-for-call class-internal method-name parameter-count))))
   ([class-internal method-name parameter-count _descriptor]
@@ -484,14 +462,13 @@
      (when b
        (let [iname (str method-name)
              pcnt  (int parameter-count)]
-         (loop [bucket (vec b)]
-           (when-let [s (first bucket)]
-             (let [mn (:method-name s)
-                   ar (:arity s)]
-               (if (and (= mn iname)
-                        (or (nil? ar) (= ar pcnt)))
-                 (:id s)
-                 (recur (next bucket)))))))))))
+         (some (fn [s]
+                 (let [mn (:method-name s)
+                       ar (:arity s)]
+                   (when (and (= mn iname)
+                              (or (nil? ar) (= ar pcnt)))
+                     (:id s))))
+               b))))))
 
 (defn- walk-bucket
   "Walk bucket, dispatching each spec's bridge. Honours :cancelled?."
