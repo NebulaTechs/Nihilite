@@ -4,7 +4,6 @@ import clojure.java.api.Clojure;
 import clojure.lang.IFn;
 import net.bytebuddy.asm.Advice;
 
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /** :throw-phase Advice: dispatch throws via Clojure spec; original throwable re-thrown after dispatch. */
