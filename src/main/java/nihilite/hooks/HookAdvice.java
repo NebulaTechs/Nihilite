@@ -32,8 +32,9 @@ public final class HookAdvice {
             int paramCount = args == null ? 0 : args.length;
             specId = AdviceSupport.lookupSpec(
                     hostInternal, methodName, paramCount, descriptor, "entry");
-        } catch (Throwable ignored) {
-            return null;
+        } catch (Throwable t) {
+            AdviceSupport.safeLogSevere(LOG, "entry advice lookup failed", t);
+            throw new NihiliteAdviceException(null, t);
         }
         if (specId == null) return null;
 
@@ -41,10 +42,8 @@ public final class HookAdvice {
         try {
             dispatchResult = CLJ_DISPATCH_ENTRY.invoke(specId, self, args);
         } catch (Throwable t) {
-            String hostName = (hostClass == null) ? "?" : hostClass.getName();
-            AdviceSupport.safeLogSevere(LOG,
-                    "advice onEntry dispatch failed on " + hostName + "." + methodName, t);
-            return null;
+            AdviceSupport.safeLogSevere(LOG, "entry advice dispatch failed", t);
+            throw new NihiliteAdviceException((String) specId, t);
         }
 
         if (SHORT_CIRCUIT == dispatchResult) {

@@ -25,15 +25,17 @@ public final class ThrowAdvice {
             @Advice.AllArguments Object[] args,
             @Advice.Thrown Throwable thrown) {
         if (thrown == null) return;
+        Object specId = null;
         try {
             String hostInternal = AdviceSupport.hostInternal(hostClass);
             int paramCount = args == null ? 0 : args.length;
-            Object specId = AdviceSupport.lookupSpec(
+            specId = AdviceSupport.lookupSpec(
                     hostInternal, methodName, paramCount, descriptor, "throw");
             if (specId == null) return;
             CLJ_DISPATCH_THROW.invoke((String) specId, self, args, thrown);
         } catch (Throwable t) {
             AdviceSupport.safeLogSevere(LOG, "throw advice dispatch failed", t);
+            throw new NihiliteAdviceException(specId == null ? null : (String) specId, t);
         }
     }
 }

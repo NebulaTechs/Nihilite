@@ -25,11 +25,12 @@
    "nihilite.test.position-accessor-test"
    "nihilite.test.attach-test"
    "nihilite.test.agent-worker-once-test"
-    "nihilite.test.transport-bencode-roundtrip-test"
-    "nihilite.test.version-resolution-test"
-    "nihilite.test.uninstall-retransform-test"
-    "nihilite.test.api-facade-test"
-    "nihilite.test.swap-bridge-test"])
+   "nihilite.test.transport-bencode-roundtrip-test"
+   "nihilite.test.version-resolution-test"
+   "nihilite.test.uninstall-retransform-test"
+   "nihilite.test.api-facade-test"
+   "nihilite.test.swap-bridge-test"
+   "nihilite.test.registry-atomic-install-test"])
 
 (defn- safe-deref
   [r]

@@ -25,10 +25,11 @@ public final class ReturnAdvice {
             @Advice.This(optional = true) Object self,
             @Advice.AllArguments Object[] args,
             @Advice.Return(typing = net.bytebuddy.implementation.bytecode.assign.Assigner.Typing.DYNAMIC) Object original) {
+        Object specId = null;
         try {
             String hostInternal = AdviceSupport.hostInternal(hostClass);
             int paramCount = args == null ? 0 : args.length;
-            final Object specId = AdviceSupport.lookupSpec(
+            specId = AdviceSupport.lookupSpec(
                     hostInternal, methodName, paramCount, descriptor, "return");
             if (specId == null) {
                 LOG.log(Level.FINE, "ReturnAdvice: no spec for " + hostInternal + "." + methodName + " " + descriptor);
@@ -36,10 +37,8 @@ public final class ReturnAdvice {
             }
             return CLJ_DISPATCH_RETURN.invoke(specId, self, args, original);
         } catch (Throwable t) {
-            String hostName = (hostClass == null) ? "?" : hostClass.getName();
-            AdviceSupport.safeLogSevere(LOG,
-                    "advice onExit failed on " + hostName + "." + methodName, t);
-            return original;
+            AdviceSupport.safeLogSevere(LOG, "return advice dispatch failed", t);
+            throw new NihiliteAdviceException(specId == null ? null : (String) specId, t);
         }
     }
 }
