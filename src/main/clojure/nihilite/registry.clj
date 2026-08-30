@@ -406,6 +406,19 @@
   [id]
   (.get (get-by-id) (str id)))
 
+(defn replace-bridge!
+  [id new-bridge]
+  (let [by-id ^java.util.concurrent.ConcurrentHashMap (get-by-id)
+        k (str id)]
+    (loop []
+      (let [cur ^clojure.lang.IPersistentMap (.get by-id k)]
+        (if (nil? cur)
+          false
+          (let [updated (assoc cur :bridge new-bridge)]
+            (if (.replace by-id k cur updated)
+              (do (log/info "hook bridge swapped:" k) true)
+              (recur))))))))
+
 (defn- spec-bucket
   [spec]
   (if-let [mk (:method-key spec)]
@@ -448,14 +461,25 @@
 
 (defn- walk-bucket
   [bucket event _spec-id]
-  (doseq [s bucket
-          :while (not (ctx-cancelled? event))]
-    (let [action (or (:action s) :observe)
-          f      (safe-bridge s)]
-      (dispatch-one! f event (:id s))
-      (bump-fired! (:id s))
-      (when (= action :subscriber)
-        (call-cancel! event)))))
+  (reduce (fn [acc s]
+            (if acc
+              (reduced acc)
+              (let [action (or (:action s) :observe)
+                    f      (safe-bridge s)]
+                (dispatch-one! f event (:id s))
+                (bump-fired! (:id s))
+                (cond
+                  (= action :cancel)
+                  (do (call-cancel! event)
+                      ::short-circuit)
+
+                  (= action :subscriber)
+                  (do (call-cancel! event)
+                      nil)
+
+                  :else nil))))
+          nil
+          bucket))
 
 (defn dispatch-for-spec
   [spec-id self args]

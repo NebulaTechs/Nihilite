@@ -16,6 +16,4 @@
 
 (defn swap-bridge!
   [id new-impl]
-  (when-let [old (reg/lookup id)]
-    (reg/uninstall! id)
-    (reg/install! (assoc old :bridge new-impl))))
+  (reg/replace-bridge! id new-impl))

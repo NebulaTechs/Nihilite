@@ -20,6 +20,7 @@
    "nihilite.test.dispatch-exception-test"
    "nihilite.test.dispatch-modified-test"
    "nihilite.test.dispatch-common-test"
+   "nihilite.test.dispatch-entry-cancel-test"
    "nihilite.test.transport-timeout-test"
    "nihilite.test.position-accessor-test"
    "nihilite.test.attach-test"
