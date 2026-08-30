@@ -1,0 +1,620 @@
+(ns nihilite.registry
+  "Generic, loader-agnostic registry of hook specs + dispatch helpers.
+   allow: SIZE_OK — single freeze-point façade; Java Clojure.var names live here."
+  (:refer-clojure :exclude [snapshot])
+  (:require [clojure.tools.logging :as log])
+  (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
+           [java.util.concurrent.atomic AtomicBoolean AtomicLong]
+           [nihilite.hooks Bridge]))
+
+;; ─── data shapes ────────────────────────────────────────────────────────────
+
+(def ^:const ACTIONS #{:observe :modify :cancel :subscriber})
+
+(defrecord HookSpec
+  [id target-internal method-name position arity bridge note
+   action method-key source-class source-descriptor tag])
+
+(defrecord HookContext
+  [hookId self args phase returnValue cancelled])
+
+(defrecord HookEvent
+  [spec-id source phase self args return-value throwable
+   cancelled? cancel! thread-name timestamp-ns sequence note stack])
+
+(defn method-key
+  "Canonical method-key: <internal>/<method-name>#<descriptor>."
+  [class-internal method-name descriptor]
+  (str class-internal "/" method-name "#" descriptor))
+
+(defn normalize-position
+  "Coerce position (kw/string/nil) to canonical phase kw. :invoke-* rejected."
+  [p]
+  (cond
+    (keyword? p) p
+    (string? p)  (case (.toUpperCase ^String p)
+                   "ENTRY"    :entry
+                   "RETURN"   :return
+                   "THROW"    :throw
+                   "REDEFINE" :redefine
+                   :entry)
+    :else        :entry))
+
+(defn normalize-action
+  "Coerce action to #{:observe :modify :cancel :subscriber}; nil→:observe."
+  [a]
+  (cond
+    (nil? a)     :observe
+    (keyword? a) a
+    (string? a)  (keyword (.toLowerCase ^String a))
+    :else        a))
+
+(defn spec
+  ([id target-internal method-name position arity bridge note]
+   (spec id target-internal method-name position arity bridge note nil :observe nil))
+  ([id target-internal method-name position arity bridge note descriptor]
+   (spec id target-internal method-name position arity bridge note descriptor :observe nil))
+  ([id target-internal method-name position arity bridge note descriptor action]
+   (spec id target-internal method-name position arity bridge note descriptor action nil))
+  ([id target-internal method-name position arity bridge note descriptor action tag]
+   (let [tid  (str target-internal)
+         mn   (str method-name)
+         desc (when descriptor (str descriptor))
+         mk   (when (and desc (not (empty? desc)))
+                (method-key tid mn desc))
+         sc   (when mk (.replace ^String tid "/" "."))
+         pos  (normalize-position position)
+         act  (normalize-action action)]
+     (map->HookSpec {:id                (str id)
+                     :target-internal   tid
+                     :method-name       mn
+                     :position          pos
+                     :arity             (when arity (int arity))
+                     :bridge            bridge
+                     :note              (str note)
+                     :action            act
+                     :method-key        mk
+                     :source-class      sc
+                     :source-descriptor desc
+                     :tag               tag}))))
+
+;; ─── index ──────────────────────────────────────────────────────────────────
+
+(defonce ^:private by-id
+  (ConcurrentHashMap.))
+(defonce ^:private by-target
+  (ConcurrentHashMap.))
+(defonce ^:private by-method
+  (ConcurrentHashMap.))
+(defonce ^:private ^AtomicLong sequence-counter
+  (AtomicLong.))
+
+(defn- get-by-id     ^ConcurrentHashMap [] by-id)
+(defn- get-by-target ^ConcurrentHashMap [] by-target)
+(defn- get-by-method ^ConcurrentHashMap [] by-method)
+
+(defn- bucket ^java.util.List [t]
+  (or (.get by-target t)
+      (let [fresh (CopyOnWriteArrayList.)]
+        (if (nil? (.putIfAbsent by-target t fresh))
+          fresh
+          (.get by-target t)))))
+
+(defn- method-bucket ^java.util.List [mk]
+  (or (.get by-method mk)
+      (let [fresh (CopyOnWriteArrayList.)]
+        (if (nil? (.putIfAbsent by-method mk fresh))
+          fresh
+          (.get by-method mk)))))
+
+(defn- next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
+
+(defn- clear-all! []
+  (.clear by-id)
+  (.clear by-target)
+  (.clear by-method)
+  nil)
+
+;; ─── stats ──────────────────────────────────────────────────────────────────
+
+(defrecord StatsRecord
+  [fired modified cancelled exceptions last-ns max-ns])
+
+(defonce ^:private ^ConcurrentHashMap stats-index
+  (ConcurrentHashMap.))
+
+(defn- fresh-record ^StatsRecord []
+  (->StatsRecord (atom 0) (atom 0) (atom 0) (atom 0) (atom 0) (atom 0)))
+
+(defn ensure-stats ^StatsRecord [spec-id]
+  (let [id (str spec-id)
+        existing ^StatsRecord (.get stats-index id)]
+    (if (nil? existing)
+      (let [created (fresh-record)]
+        (if (nil? (.putIfAbsent stats-index id created))
+          created
+          ^StatsRecord (.get stats-index id)))
+      existing)))
+
+(defn get-stats ^StatsRecord [spec-id]
+  (.get stats-index (str spec-id)))
+
+(defn remove-stats [spec-id]
+  (some? (.remove stats-index (str spec-id))))
+
+(defn stats-snapshot []
+  (let [m (java.util.HashMap.)]
+    (.putAll m stats-index)
+    m))
+
+(defn- stats-clear! []
+  (.clear stats-index)
+  nil)
+
+(defn- bump-fired!      [spec-id] (when-let [r (get-stats spec-id)] (swap! (:fired r) inc)))
+(defn- bump-exception!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:exceptions r) inc)))
+
+;; ─── event ──────────────────────────────────────────────────────────────────
+
+(defn- ->hook-event
+  "Construct HookEvent. :cancelled?/:cancel! are closures over AtomicBoolean."
+  [spec self args return-value]
+  (let [pos (:position spec)
+        cell (AtomicBoolean.)
+        cancel-fn    (fn [v] (.set cell (boolean v)))
+        cancelled-fn (fn [] (.get cell))]
+    (map->HookEvent
+      {:spec-id      (:id spec)
+       :source       {:class         (or (:source-class spec)
+                                          (:target-internal spec))
+                      :internal      (:target-internal spec)
+                      :method        (:method-name spec)
+                      :descriptor    (:source-descriptor spec)
+                      :action        (:action spec)
+                      :method-key    (:method-key spec)}
+       :phase        pos
+       :self         self
+       :args         (or args (object-array 0))
+       :return-value return-value
+       :throwable    nil
+       :cancelled?   cancelled-fn
+       :cancel!      cancel-fn
+       :thread-name  (.getName (Thread/currentThread))
+       :timestamp-ns (System/nanoTime)
+       :sequence     (next-sequence)
+       :note         (:note spec)})))
+
+(defn- dispatch-one!
+  "Invoke single observer IFn with event. Per-observer try/catch.
+   Throws are attributed to the per-bucket spec id (when provided), not the dispatching one."
+  ([ifn ev] (dispatch-one! ifn ev nil))
+  ([ifn ev per-spec-id]
+   (if (nil? ifn)
+     ::no-return
+     (try
+       (ifn ev)
+       (catch Throwable t
+         (try (log/error t "observer threw (id=" (or per-spec-id (:spec-id ev)) ")")
+              (catch Throwable _))
+         (bump-exception! (or per-spec-id (:spec-id ev)))
+         ::no-return)))))
+
+(defn- safe-bridge
+  "Return the spec's bridge IFn if it is a real IFn, else nil."
+  [spec]
+  (when (instance? clojure.lang.IFn (:bridge spec))
+    ^clojure.lang.IFn (:bridge spec)))
+
+(defn- call-cancel! [ev]
+  (when-let [cb (:cancel! ev)] (cb true)))
+
+;; ─── accessors ──────────────────────────────────────────────────────────────
+
+(defn- ->ctx [x]
+  (cond
+    (instance? HookContext x) x
+    (instance? HookEvent x)
+    (map->HookContext
+      {:hookId      (.-spec-id ^HookEvent x)
+       :self        (.-self ^HookEvent x)
+       :args        (.-args ^HookEvent x)
+       :phase       (.-phase ^HookEvent x)
+       :returnValue (.-return-value ^HookEvent x)
+       :cancelled   ((.-cancelled? ^HookEvent x))})
+    :else nil))
+
+(defn ctx-self        [x]          (when-let [c (->ctx x)] (:self c)))
+(defn ctx-arg         [x n]        (when-let [c (->ctx x)]
+                                     (let [args (.-args ^HookContext c)]
+                                       (when (and args (>= n 0) (< n (alength args)))
+                                         (aget args (int n))))))
+(defn ctx-argc        [x]          (when-let [c (->ctx x)]
+                                     (let [args (.-args ^HookContext c)]
+                                         (if args (alength args) 0))))
+(defn ctx-return      [x]          (when-let [c (->ctx x)] (.-returnValue ^HookContext c)))
+(defn ctx-phase       [x]          (when-let [c (->ctx x)] (.-phase ^HookContext c)))
+(defn ctx-cancel!     [x value]    (cond
+                                     (instance? HookContext x)
+                                     (set! (.-cancelled ^HookContext x) (boolean value))
+                                     (instance? HookEvent x)
+                                     (let [ev ^HookEvent x]
+                                       (when-let [c (.-cancel! ev)] (c (boolean value))))))
+(defn ctx-cancelled?  [x]          (cond
+                                     (instance? HookContext x) (.-cancelled ^HookContext x)
+                                     (instance? HookEvent x)
+                                     (let [c (.-cancelled? ^HookEvent x)]
+                                       (if (fn? c) (boolean (c)) (boolean c)))
+                                     :else false))
+
+(defn position
+  "Resolve :position from HookSpec/HookContext/HookEvent. Accepts kw or string keys."
+  [m]
+  (or (and (instance? HookEvent m) (.-phase ^HookEvent m))
+      (and (map? m)
+           (or (get m "position") (:position m)))
+      nil))
+
+;; ─── install / uninstall ────────────────────────────────────────────────────
+
+(defn install!
+  "Add or replace spec by :id. Returns true on fresh install, false on replace."
+  [spec]
+  (let [{:keys [id target-internal method-name position arity
+                descriptor action tag]} spec
+        spec-id    (some-> id str)
+        spec-target (some-> target-internal str)
+        spec-method (some-> method-name str)
+        spec-pos    (normalize-position position)
+        spec-arity  (when arity (int arity))
+        spec-desc   (some-> descriptor str)
+        spec-action (if (contains? spec :action) (normalize-action action) :observe)
+        spec-tag    (some-> tag str)
+        desc-missing? (or (nil? spec-desc) (empty? spec-desc))
+        spec-method-key (when-not desc-missing?
+                          (method-key spec-target spec-method spec-desc))
+        spec-source-class (when-not desc-missing?
+                            (.replace ^String spec-target "/" "."))]
+    (when (empty? spec-id)
+      (throw (ex-info ":id required for HookSpec"
+                      {:nihilite/kind :nihilite/missing-id
+                       :nihilite/spec spec})))
+    (when (empty? spec-target)
+      (throw (ex-info ":target-internal required for HookSpec"
+                      {:nihilite/kind :nihilite/missing-target
+                       :nihilite/spec spec})))
+    (when (empty? spec-method)
+      (throw (ex-info ":method-name required for HookSpec"
+                      {:nihilite/kind :nihilite/missing-method
+                       :nihilite/spec spec})))
+    (when (and (some? arity) (or (not (integer? arity)) (neg? arity)))
+      (throw (ex-info ":arity must be a non-negative integer or nil"
+                      {:nihilite/kind :nihilite/bad-arity
+                       :nihilite/spec spec})))
+    (when (and (some? tag) (empty? spec-tag))
+      (throw (ex-info ":tag must be a non-empty string when present"
+                      {:nihilite/kind :nihilite/bad-tag
+                       :nihilite/id spec-id})))
+    (when desc-missing?
+      (throw (ex-info (str ":descriptor required for HookSpec id=" spec-id)
+                      {:nihilite/kind :nihilite/missing-descriptor
+                       :nihilite/id spec-id
+                       :nihilite/target spec-target
+                       :nihilite/method spec-method})))
+    (when (and (some? spec-action) (not (contains? ACTIONS spec-action)))
+      (throw (ex-info (str ":action must be one of " (vec ACTIONS))
+                      {:nihilite/kind :nihilite/invalid-action
+                       :nihilite/id spec-id
+                       :nihilite/action spec-action})))
+    (when (and (= spec-pos :redefine)
+               (#{:modify :cancel} spec-action))
+      (throw (ex-info (str ":action :modify|:cancel invalid on :position :redefine "
+                            "(id=" spec-id ")")
+                      {:nihilite/kind :nihilite/invalid-action-on-redefine
+                       :nihilite/id spec-id
+                       :nihilite/action spec-action
+                       :nihilite/position spec-pos})))
+    (when (and (= spec-action :cancel) (not= spec-pos :entry))
+      (throw (ex-info (str ":action :cancel requires :position :entry "
+                            "(got " spec-pos ")")
+                      {:nihilite/kind :nihilite/cancel-requires-entry
+                       :nihilite/id spec-id
+                       :nihilite/action spec-action
+                       :nihilite/position spec-pos})))
+    (when (and (= spec-action :subscriber)
+               (not (#{:entry :return :throw} spec-pos)))
+      (throw (ex-info (str ":action :subscriber only valid at :position :entry/:return/:throw "
+                            "(got " spec-pos ")")
+                      {:nihilite/kind :nihilite/subscriber-requires-entry
+                       :nihilite/id spec-id
+                       :nihilite/action spec-action
+                       :nihilite/position spec-pos})))
+    (when (and (= spec-pos :throw)
+               (#{:modify :cancel} spec-action))
+      (throw (ex-info (str ":action :modify/:cancel invalid on :position :throw "
+                            "(id=" spec-id ")")
+                      {:nihilite/kind :nihilite/invalid-action-on-throw
+                       :nihilite/id spec-id
+                       :nihilite/action spec-action
+                       :nihilite/position spec-pos})))
+    (when (#{:invoke-before :invoke-return :invoke-throw} spec-pos)
+      (throw (ex-info (str ":position " spec-pos " is reserved/removed; "
+                            "use :entry/:return/:throw/:redefine")
+                      {:nihilite/kind :nihilite/invalid-position
+                       :nihilite/id spec-id
+                       :nihilite/position spec-pos})))
+    (let [norm-spec (assoc spec
+                           :id spec-id
+                           :target-internal spec-target
+                           :method-name spec-method
+                           :position spec-pos
+                           :arity spec-arity
+                           :action spec-action
+                           :tag spec-tag
+                           :method-key spec-method-key
+                           :source-class spec-source-class
+                           :source-descriptor spec-desc)
+          prev (.put (get-by-id) (:id norm-spec) norm-spec)
+          replaced? (some? prev)]
+      (when replaced?
+        (let [prev-bucket (.get (get-by-target) (:target-internal prev))]
+          (when prev-bucket (.remove prev-bucket prev)))
+        (when-let [pmk (:method-key prev)]
+          (let [pmb (.get (get-by-method) pmk)]
+            (when pmb (.remove pmb prev)))))
+      (.add (bucket (:target-internal norm-spec)) norm-spec)
+      (when-let [mk (:method-key norm-spec)]
+        (.add (method-bucket mk) norm-spec))
+      (when-not replaced?
+        (ensure-stats spec-id))
+      (if replaced?
+        (do (log/info "hook replaced:" (:id norm-spec)
+                      "target=" (:target-internal norm-spec)
+                      "method=" (:method-name norm-spec))
+            false)
+        (do (log/info "hook registered:" (:id norm-spec)
+                      "target=" (:target-internal norm-spec)
+                      "method=" (:method-name norm-spec)
+                      "@" (:position norm-spec)
+                      "action=" (:action norm-spec)
+                      (when-let [t (:tag norm-spec)] (str " tag=" t))
+                      (when-let [n (:note norm-spec)] (str "// " n)))
+            true)))))
+
+(defn uninstall!
+  "Remove a spec by id. Returns true if removed, false if missing."
+  [id]
+  (let [by-id     (get-by-id)
+        by-target (get-by-target)
+        by-method (get-by-method)]
+    (when-let [removed (.remove by-id (str id))]
+      (let [b (.get by-target (:target-internal removed))]
+        (when b (.remove b removed))
+        (when (and b (.isEmpty b))
+          (.remove by-target (:target-internal removed) b))
+        (when-let [mk (:method-key removed)]
+          (let [mb (.get by-method mk)]
+            (when mb (.remove mb removed))
+            (when (and mb (.isEmpty mb))
+              (.remove by-method mk mb))))
+        (remove-stats (:id removed))
+        (try
+          (Bridge/uninstallSpec (str id))
+          (catch Throwable _t nil))
+        (log/info "hook removed:" (:id removed))
+        true))))
+
+(defn install-fresh!
+  "Strict install!: throws :duplicate-spec-id if :id exists."
+  [spec]
+  (let [{:keys [id] :as m} spec
+        spec-id (str id)]
+    (when (.get (get-by-id) spec-id)
+      (throw (ex-info (str ":id " spec-id " already installed; "
+                            "use install! (replace) or uninstall! first")
+                      {:nihilite/kind :nihilite/duplicate-spec-id
+                       :nihilite/id   spec-id
+                       :nihilite/spec spec})))
+    (install! m)))
+
+(defn install-new! [spec] (install-fresh! spec))
+
+(defn clear!
+  "Drop every spec. Test/diagnostic only."
+  []
+  (clear-all!)
+  (stats-clear!))
+
+(defn matching
+  "Return live list of specs targeting target-internal. Stable snapshot at call time."
+  ^java.util.List [target-internal]
+  (let [b (.get (get-by-target) target-internal)]
+    (if b (vec b) [])))
+
+(defn snapshot
+  "Defensive copy of all (id → spec) pairs. Diagnostic."
+  []
+  (let [m (java.util.HashMap.)]
+    (.putAll m (get-by-id))
+    m))
+
+(defn list-ids
+  "Sorted seq of registered spec ids."
+  []
+  (sort (vec (.keySet (get-by-id)))))
+
+;; ─── lookup / dispatch ──────────────────────────────────────────────────────
+
+(defn lookup
+  "Spec by id, or nil."
+  [id]
+  (.get (get-by-id) (str id)))
+
+(defn- spec-bucket
+  "Return relevant spec list: by-method bucket if method-key, else by-target."
+  [spec]
+  (if-let [mk (:method-key spec)]
+    (some-> (.get (get-by-method) mk) seq)
+    (some-> (.get (get-by-target) (:target-internal spec)) seq)))
+
+(defn lookup-spec-for-call
+  "ByteBuddy Advice helper. Returns first matching spec :id or nil.
+   Filters by arity and (when provided) :position."
+  ([class-internal method-name parameter-count descriptor position]
+   (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
+              (method-key class-internal method-name descriptor))
+         mb (when mk (.get (get-by-method) mk))
+         pos-kw (when position (normalize-position position))]
+     (cond
+       mb
+       (let [pcnt (int parameter-count)]
+         (loop [bucket (vec mb)]
+           (when-let [s (first bucket)]
+             (let [ar (:arity s)
+                   sp (:position s)]
+               (if (and (or (nil? ar) (= ar pcnt))
+                        (or (nil? pos-kw) (= sp pos-kw)))
+                 (:id s)
+                 (recur (next bucket)))))))
+       :else
+       (lookup-spec-for-call class-internal method-name parameter-count))))
+  ([class-internal method-name parameter-count _descriptor]
+   (lookup-spec-for-call class-internal method-name parameter-count))
+  ([class-internal method-name parameter-count]
+   (let [b (.get (get-by-target) class-internal)]
+     (when b
+       (let [iname (str method-name)
+             pcnt  (int parameter-count)]
+         (loop [bucket (vec b)]
+           (when-let [s (first bucket)]
+             (let [mn (:method-name s)
+                   ar (:arity s)]
+               (if (and (= mn iname)
+                        (or (nil? ar) (= ar pcnt)))
+                 (:id s)
+                 (recur (next bucket)))))))))))
+
+(defn- walk-bucket
+  "Walk bucket, dispatching each spec's bridge. Honours :cancelled?."
+  [bucket event _spec-id]
+  (when bucket
+    (loop [remaining bucket]
+      (when (and (seq remaining)
+                 (not (ctx-cancelled? event)))
+        (let [s      (first remaining)
+              action (or (:action s) :observe)
+              f      (safe-bridge s)]
+          (dispatch-one! f event (:id s))
+          (bump-fired! (:id s))
+          (when (= action :subscriber)
+            (call-cancel! event)))
+        (recur (next remaining))))))
+
+(defn dispatch-for-spec
+  "ByteBuddy Advice entry. Fan out across bucket in registration order."
+  [spec-id self args]
+  (try
+    (when-let [spec (lookup spec-id)]
+      (let [bucket (spec-bucket spec)
+            event  (->hook-event spec self args nil)]
+        (walk-bucket bucket event spec-id)))
+    (catch Throwable t
+      (try (log/error t "registry dispatch-for-spec failed (id=" spec-id ")")
+           (catch Throwable _)))))
+
+(defn dispatch-return-for-spec
+  "ByteBuddy OnMethodExit. :modify winner = first non-nil bridge return.
+   :cancel flips the per-event cell; :subscriber flips the cell.
+   :observe runs but does not flip. Returns the (possibly modified) value."
+  [spec-id self args original]
+  (try
+    (if-let [spec (lookup spec-id)]
+      (let [bucket (spec-bucket spec)
+            event  (->hook-event spec self args original)
+            result (atom original)
+            decided? (atom false)
+            modified? (atom false)]
+        (when bucket
+          (loop [remaining bucket]
+            (when (and (seq remaining)
+                       (not @decided?)
+                       (not (ctx-cancelled? event)))
+              (let [s (first remaining)
+                    action (or (:action s) :observe)
+                    f (safe-bridge s)
+                    rv (dispatch-one! f event)]
+                (bump-fired! (:id s))
+                (cond
+                  (and (= action :modify) (some? rv))
+                  (do (reset! result rv)
+                      (reset! modified? true)
+                      (reset! decided? true))
+
+                  (= action :cancel)
+                  (do (call-cancel! event) (reset! decided? true))
+
+                  (= action :subscriber)
+                  (do (call-cancel! event) (reset! decided? true))
+                  :else nil))
+              (recur (next remaining)))))
+        (when @modified?
+          (when-let [r (get-stats spec-id)]
+            (swap! (:modified r) inc)))
+        @result)
+      original)
+    (catch Throwable t
+      (try (log/error t "registry dispatch-return-for-spec failed (id=" spec-id ")")
+           (catch Throwable _))
+      original)))
+
+(defn dispatch-throw-for-spec
+  "ByteBuddy OnMethodExit-onThrowable. Fan out across bucket."
+  [spec-id self args throwable]
+  (try
+    (when-let [spec (lookup spec-id)]
+      (let [bucket (spec-bucket spec)
+            event  (assoc (->hook-event spec self args nil) :throwable throwable)]
+        (walk-bucket bucket event spec-id)))
+    (catch Throwable t
+      (try (log/error t "registry dispatch-throw-for-spec failed (id=" spec-id ")")
+           (catch Throwable _)))))
+
+(defn dispatch-redefine
+  "ByteBuddy MethodDelegation helper. Resolve spec by class+name+arity, invoke bridge fn."
+  ([host-internal method-name args descriptor]
+   (try
+     (let [param-count (count args)
+           spec-id     (lookup-spec-for-call host-internal method-name param-count descriptor :redefine)]
+       (if-let [spec (and spec-id (lookup spec-id))]
+         (if-let [bridge-fn (safe-bridge spec)]
+           (try
+             (bridge-fn args method-name)
+             (catch Throwable t
+               (log/error t "bridge redefine-fire failed (id=" spec-id ")")
+               (throw t)))
+           (throw (IllegalStateException.
+                    (str "no bridge fn for spec id " spec-id))))
+         (throw (IllegalStateException.
+                  (str "no spec for " host-internal "/" method-name "/" param-count)))))
+     (catch Throwable t
+       (throw t))))
+  ([host-internal method-name args]
+   (dispatch-redefine host-internal method-name args nil)))
+
+(defn install-redefine-dispatcher!
+  "Wrap dispatch-redefine in IFn, store in Bridge/REDISPATCHER. Avoids load-order cycle."
+  ([] (install-redefine-dispatcher!
+        (let [bridge-class (Class/forName "nihilite.hooks.Bridge")
+              method (.getMethod bridge-class "installRedefineDispatcher"
+                                 (into-array Class [Object]))]
+          (fn [dispatch-ifn] (.invoke method nil (object-array [dispatch-ifn]))))))
+  ([setter]
+   (let [dispatch-ifn
+         (fn
+           ([host-internal method-name args descriptor]
+            (dispatch-redefine host-internal method-name args descriptor))
+           ([host-internal method-name args]
+            (dispatch-redefine host-internal method-name args nil))
+           ([a b] (dispatch-redefine a b nil nil))
+           ([a]   (dispatch-redefine a nil nil nil)))]
+     (setter dispatch-ifn)
+     :installed)))
