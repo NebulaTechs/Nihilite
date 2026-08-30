@@ -11,7 +11,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Javaagent entry point. Loads init file, arms HookInstaller, spawns the worker. */
 public final class Agent {
 
     private static final Logger LOG = Logger.getLogger("nihilite.agent.Agent");
@@ -37,7 +36,8 @@ public final class Agent {
                 loadFile.invoke(initPath);
             } catch (Throwable t) {
                 LOG.log(Level.WARNING,
-                        "[Nihilite-agent] init load failed: " + initPath + " (" + t + ")",
+                        String.format("[Nihilite-agent] init load failed: %s (%s)",
+                                initPath, t),
                         t);
             }
         }
@@ -50,7 +50,7 @@ public final class Agent {
         startWorkerOnce();
 
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
-        LOG.info("[Nihilite-agent] premain returned in " + elapsedMs + " ms");
+        LOG.info(String.format("[Nihilite-agent] premain returned in %d ms", elapsedMs));
     }
 
     public static void agentmain(String args, Instrumentation inst) {
@@ -59,12 +59,13 @@ public final class Agent {
             HookInstaller.install(inst);
             LOG.info("[Nihilite-agent] agentmain armed HookInstaller (dynamic attach)");
         } else if (inst != null) {
-            LOG.info("[Nihilite-agent] agentmain no-op (HookInstaller already "
-                     + "registered for " + REGISTERED_ON.get() + ")");
+            LOG.info(String.format(
+                    "[Nihilite-agent] agentmain no-op (HookInstaller already registered for %s)",
+                    REGISTERED_ON.get()));
         }
         startWorkerOnce();
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
-        LOG.info("[Nihilite-agent] agentmain returned in " + elapsedMs + " ms");
+        LOG.info(String.format("[Nihilite-agent] agentmain returned in %d ms", elapsedMs));
     }
 
     static boolean claimWorker() {

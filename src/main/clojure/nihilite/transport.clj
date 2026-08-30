@@ -1,9 +1,9 @@
 (ns nihilite.transport
-   "Single-port loopback ServerSocket routing every connection to the nREPL bencode branch."
+  "Single-port loopback ServerSocket routing every connection to the nREPL bencode branch."
   (:require [clojure.tools.logging :as log]
             [clojure.walk :as walk]
             [nrepl.bencode :as bencode]
-            [nrepl.core]                 ; reply/lein :connect evals nrepl.core/version
+            [nrepl.core]   ; reply/lein :connect evals nrepl.core/version
             [nrepl.server :as nrserver]
             [nrepl.transport :as nrtransport])
   (:import [java.net ServerSocket Socket InetSocketAddress
@@ -18,14 +18,12 @@
 (def ^:const ^:long sniff-buffer-size 4096)
 
 (defn- disconnect-ex?
-  "True for a normal client/socket close, not a handler bug."
   [^Throwable t]
   (or (instance? java.io.EOFException t)
       (instance? java.net.SocketException t)
       (instance? java.nio.channels.ClosedChannelException t)))
 
 (defn- decode-message
-  "Walk a parsed nrepl message: keys keywordized; byte-array values UTF-8 decoded except `-unencoded`."
   [msg]
   (let [unencoded (get msg "-unencoded")
         drop-keys (cond-> ["-unencoded"]
@@ -44,7 +42,6 @@
                (select-keys msg unencoded))))))
 
 (defn handle-bencode
-  "Run nrepl.server/handle on sock. Optional :middlewares merged into default-handler."
   [^Socket sock ^BufferedInputStream buf-in
    & {:keys [middlewares]
       :or   {middlewares []}}]
@@ -79,7 +76,6 @@
       (try (.close sock) (catch Throwable _)))))
 
 (defn start!
-  "Start single-port dispatcher. Returns (fn stop! [])."
   ([] (start! {}))
   ([{:keys [port bind threads]
      :or   {port    7888

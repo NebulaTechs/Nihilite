@@ -1,6 +1,7 @@
 (ns nihilite.test.dispatch-modified-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]))
+            [nihilite.registry :as reg]
+            [nihilite.test.fixtures :as fx]))
 
 (defn- install-modify [id bridge-fn]
   (reg/install! {:id                id
@@ -12,10 +13,7 @@
                  :bridge            bridge-fn})
   id)
 
-(use-fixtures :each
-  (fn [f]
-    (reg/clear!)
-    (try (f) (finally (reg/clear!)))))
+(use-fixtures :each fx/reg-cleanup)
 
 (defn- modified-of [id]
   (some-> (reg/get-stats id) :modified deref))

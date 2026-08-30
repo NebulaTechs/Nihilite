@@ -5,7 +5,6 @@ import net.bytebuddy.implementation.bind.annotation.AllArguments;
 import net.bytebuddy.implementation.bind.annotation.Origin;
 import net.bytebuddy.implementation.bind.annotation.RuntimeType;
 
-/** :redefine-phase MethodDelegation target. Clojure fn replaces method body at invocation. */
 public final class GenericDispatcher {
 
     private GenericDispatcher() {}

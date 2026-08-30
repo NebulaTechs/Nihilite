@@ -6,7 +6,6 @@ import net.bytebuddy.asm.Advice;
 
 import java.util.logging.Logger;
 
-/** :entry-phase Advice: dispatch via Clojure spec. */
 public final class HookAdvice {
 
     private static final Logger LOG = Logger.getLogger("nihilite.hooks.HookAdvice");

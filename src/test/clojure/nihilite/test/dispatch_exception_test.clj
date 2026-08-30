@@ -1,10 +1,9 @@
 (ns nihilite.test.dispatch-exception-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]))
+            [nihilite.registry :as reg]
+            [nihilite.test.fixtures :as fx]))
 
 (defn- install-bridge
-  "Install a bridge-fn under a fresh spec id; return the id so
-   the test can dispatch against it."
   [id bridge-fn]
   (reg/install! {:id                id
                  :target-internal   "java/lang/String"
@@ -20,10 +19,7 @@
 (defn- exceptions-of [id]
   (some-> (reg/get-stats id) :exceptions deref))
 
-(use-fixtures :each
-  (fn [f]
-    (reg/clear!)
-    (try (f) (finally (reg/clear!)))))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest dispatch-one-bumps-on-bridge-throw
   (let [id "ex-test"

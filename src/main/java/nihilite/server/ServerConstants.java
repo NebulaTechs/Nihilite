@@ -1,6 +1,5 @@
 package nihilite.server;
 
-/** Pure-config constants for nihilite.server — no logic. */
 public final class ServerConstants {
     private ServerConstants() {}
 

@@ -6,7 +6,6 @@ import clojure.lang.IFn;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Shared Clojure var resolutions and helpers for ByteBuddy Advice classes. */
 final class AdviceSupport {
 
     private static final IFn LOOKUP_SPEC =

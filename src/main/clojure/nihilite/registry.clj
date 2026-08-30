@@ -1,7 +1,8 @@
 (ns nihilite.registry
   "Generic, loader-agnostic registry of hook specs + dispatch helpers.
-   allow: SIZE_OK — single freeze-point façade; Java Clojure.var names live here."
-  (:refer-clojure :exclude [snapshot])
+   Contracts: install! true=fresh/false=replaced; uninstall! true=removed/false=missing;
+   install-fresh! throws :duplicate-spec-id; dispatch-* are ByteBuddy entry points;
+   install-redefine-dispatcher! bridges via reflection to avoid load-order cycle."
   (:require [clojure.tools.logging :as log])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicBoolean AtomicLong]
@@ -21,12 +22,10 @@
    cancelled? cancel! thread-name timestamp-ns sequence note stack])
 
 (defn method-key
-  "Canonical method-key: <internal>/<method-name>#<descriptor>."
   [class-internal method-name descriptor]
   (str class-internal "/" method-name "#" descriptor))
 
 (defn normalize-position
-  "Coerce position (kw/string/nil) to canonical phase kw. :invoke-* rejected."
   [p]
   (cond
     (keyword? p) p
@@ -39,7 +38,6 @@
     :else        :entry))
 
 (defn normalize-action
-  "Coerce action to #{:observe :modify :cancel :subscriber}; nil→:observe."
   [a]
   (cond
     (nil? a)     :observe
@@ -89,8 +87,7 @@
 (defn- get-by-target ^ConcurrentHashMap [] by-target)
 (defn- get-by-method ^ConcurrentHashMap [] by-method)
 
-(defn- get-or-create-bucket ^java.util.List [^ConcurrentHashMap m k]
-  (or (.get m k)
+(defn- get-or-create-bucket ^java.util.List [^ConcurrentHashMap m k]  (or (.get m k)
       (let [fresh (CopyOnWriteArrayList.)]
         (if (nil? (.putIfAbsent m k fresh))
           fresh
@@ -133,9 +130,7 @@
   (some? (.remove stats-index (str spec-id))))
 
 (defn stats-snapshot []
-  (let [m (java.util.HashMap.)]
-    (.putAll m stats-index)
-    m))
+  (into {} stats-index))
 
 (defn- stats-clear! []
   (.clear stats-index)
@@ -173,8 +168,6 @@
        :note         (:note spec)})))
 
 (defn- dispatch-one!
-  "Invoke single observer IFn with event. Per-observer try/catch.
-   Throws are attributed to the per-bucket spec id (when provided), not the dispatching one."
   ([ifn ev] (dispatch-one! ifn ev nil))
   ([ifn ev per-spec-id]
    (if (nil? ifn)
@@ -188,7 +181,6 @@
          ::no-return)))))
 
 (defn- safe-bridge
-  "Return the spec's bridge IFn if it is a real IFn, else nil."
   [spec]
   (when (instance? clojure.lang.IFn (:bridge spec))
     ^clojure.lang.IFn (:bridge spec)))
@@ -233,7 +225,6 @@
                                      :else false))
 
 (defn position
-  "Resolve :position from HookSpec/HookContext/HookEvent. Accepts kw or string keys."
   [m]
   (or (and (instance? HookEvent m) (.-phase ^HookEvent m))
       (and (map? m)
@@ -241,7 +232,6 @@
       nil))
 
 (defn install!
-  "Add or replace spec by :id. Returns true on fresh install, false on replace."
   [spec]
   (let [{:keys [id target-internal method-name position arity
                 descriptor action tag]} spec
@@ -365,7 +355,6 @@
             true)))))
 
 (defn uninstall!
-  "Remove a spec by id. Returns true if removed, false if missing."
   [id]
   (let [by-id     (get-by-id)
         by-target (get-by-target)
@@ -388,7 +377,6 @@
         true))))
 
 (defn install-fresh!
-  "Strict install!: throws :duplicate-spec-id if :id exists."
   [spec]
   (let [{:keys [id] :as m} spec
         spec-id (str id)]
@@ -401,44 +389,32 @@
     (install! m)))
 
 (defn clear!
-  "Drop every spec. Test/diagnostic only."
   []
   (clear-all!)
   (stats-clear!))
 
 (defn matching
-  "Return live list of specs targeting target-internal. Stable snapshot at call time."
   ^java.util.List [target-internal]
   (let [b (.get (get-by-target) target-internal)]
     (if b (vec b) [])))
 
-(defn- snapshot
-  []
-  (let [m (java.util.HashMap.)]
-    (.putAll m (get-by-id))
-    m))
-
 (defn list-ids
-  "Sorted seq of registered spec ids."
   []
   (sort (vec (.keySet (get-by-id)))))
 
 (defn lookup
-  "Spec by id, or nil."
   [id]
   (.get (get-by-id) (str id)))
 
 (defn- spec-bucket
-  "Return relevant spec list: by-method bucket if method-key, else by-target."
   [spec]
   (if-let [mk (:method-key spec)]
     (some-> (.get (get-by-method) mk) seq)
     (some-> (.get (get-by-target) (:target-internal spec)) seq)))
 
 (defn lookup-spec-for-call
-  "ByteBuddy Advice helper. Returns first matching spec :id or nil.
-   Filters by arity and (when provided) :position."
-  ([class-internal method-name parameter-count descriptor position]
+  ([^String class-internal ^String method-name parameter-count
+    ^String descriptor position]
    (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
               (method-key class-internal method-name descriptor))
          mb (when mk (.get (get-by-method) mk))
@@ -455,9 +431,9 @@
                mb))
        :else
        (lookup-spec-for-call class-internal method-name parameter-count))))
-  ([class-internal method-name parameter-count _descriptor]
+  ([^String class-internal ^String method-name parameter-count _descriptor]
    (lookup-spec-for-call class-internal method-name parameter-count))
-  ([class-internal method-name parameter-count]
+  ([^String class-internal method-name parameter-count]
    (let [b (.get (get-by-target) class-internal)]
      (when b
        (let [iname (str method-name)
@@ -471,23 +447,17 @@
                b))))))
 
 (defn- walk-bucket
-  "Walk bucket, dispatching each spec's bridge. Honours :cancelled?."
   [bucket event _spec-id]
-  (when bucket
-    (loop [remaining bucket]
-      (when (and (seq remaining)
-                 (not (ctx-cancelled? event)))
-        (let [s      (first remaining)
-              action (or (:action s) :observe)
-              f      (safe-bridge s)]
-          (dispatch-one! f event (:id s))
-          (bump-fired! (:id s))
-          (when (= action :subscriber)
-            (call-cancel! event)))
-        (recur (next remaining))))))
+  (doseq [s bucket
+          :while (not (ctx-cancelled? event))]
+    (let [action (or (:action s) :observe)
+          f      (safe-bridge s)]
+      (dispatch-one! f event (:id s))
+      (bump-fired! (:id s))
+      (when (= action :subscriber)
+        (call-cancel! event)))))
 
 (defn dispatch-for-spec
-  "ByteBuddy Advice entry. Fan out across bucket in registration order."
   [spec-id self args]
   (try
     (when-let [spec (lookup spec-id)]
@@ -499,9 +469,6 @@
            (catch Throwable _)))))
 
 (defn dispatch-return-for-spec
-  "ByteBuddy OnMethodExit. :modify winner = first non-nil bridge return.
-   :cancel flips the per-event cell; :subscriber flips the cell.
-   :observe runs but does not flip. Returns the (possibly modified) value."
   [spec-id self args original]
   (try
     (if-let [spec (lookup spec-id)]
@@ -510,29 +477,25 @@
             result (atom original)
             decided? (atom false)
             modified? (atom false)]
-        (when bucket
-          (loop [remaining bucket]
-            (when (and (seq remaining)
-                       (not @decided?)
-                       (not (ctx-cancelled? event)))
-              (let [s (first remaining)
-                    action (or (:action s) :observe)
-                    f (safe-bridge s)
-                    rv (dispatch-one! f event)]
-                (bump-fired! (:id s))
-                (cond
-                  (and (= action :modify) (some? rv))
-                  (do (reset! result rv)
-                      (reset! modified? true)
-                      (reset! decided? true))
+        (doseq [s bucket
+                :while (and (not @decided?)
+                            (not (ctx-cancelled? event)))]
+          (let [action (or (:action s) :observe)
+                f (safe-bridge s)
+                rv (dispatch-one! f event)]
+            (bump-fired! (:id s))
+            (cond
+              (and (= action :modify) (some? rv))
+              (do (reset! result rv)
+                  (reset! modified? true)
+                  (reset! decided? true))
 
-                  (= action :cancel)
-                  (do (call-cancel! event) (reset! decided? true))
+              (= action :cancel)
+              (do (call-cancel! event) (reset! decided? true))
 
-                  (= action :subscriber)
-                  (do (call-cancel! event) (reset! decided? true))
-                  :else nil))
-              (recur (next remaining)))))
+              (= action :subscriber)
+              (do (call-cancel! event) (reset! decided? true))
+              :else nil)))
         (when @modified?
           (when-let [r (get-stats spec-id)]
             (swap! (:modified r) inc)))
@@ -544,7 +507,6 @@
       original)))
 
 (defn dispatch-throw-for-spec
-  "ByteBuddy OnMethodExit-onThrowable. Fan out across bucket."
   [spec-id self args throwable]
   (try
     (when-let [spec (lookup spec-id)]
@@ -556,7 +518,6 @@
            (catch Throwable _)))))
 
 (defn dispatch-redefine
-  "ByteBuddy MethodDelegation helper. Resolve spec by class+name+arity, invoke bridge fn."
   ([host-internal method-name args descriptor]
    (try
      (let [param-count (count args)
@@ -578,7 +539,6 @@
    (dispatch-redefine host-internal method-name args nil)))
 
 (defn install-redefine-dispatcher!
-  "Wrap dispatch-redefine in IFn, store in Bridge/REDISPATCHER. Avoids load-order cycle."
   ([] (install-redefine-dispatcher!
         (let [bridge-class (Class/forName "nihilite.hooks.Bridge")
               method (.getMethod bridge-class "installRedefineDispatcher"

@@ -4,12 +4,9 @@
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [clojure.java.io :as jio]
             [nihilite.api :as api]
-            [nihilite.registry :as reg]))
+            [nihilite.test.fixtures :as fx]))
 
-(use-fixtures :each
-  (fn [f]
-    (reg/clear!)
-    (try (f) (finally (reg/clear!)))))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest examples-init-fixture-present
   (let [fixture (jio/file "examples/init.clj")]
@@ -24,5 +21,4 @@
                             :action          :observe
                             :bridge          (fn [_] nil)}))
       "nihilite.api/install! must resolve and accept a minimal spec at test time"))
-
 

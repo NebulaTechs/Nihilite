@@ -11,7 +11,6 @@ import nihilite.server.ServerConstants;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Worker thread: init Clojure, wait for runtime sentinel, bind Compiler/LOADER, boot nREPL. */
 public final class Worker implements Runnable {
 
     private static final Logger LOG = Logger.getLogger("nihilite.agent.Worker");
@@ -68,8 +67,8 @@ public final class Worker implements Runnable {
         ClassLoader hostCl = ClassLoader.getSystemClassLoader();
         DynamicClassLoader loader = new DynamicClassLoader(hostCl);
         Compiler.LOADER.bindRoot(loader);
-        LOG.info("[Nihilite-agent] Compiler/LOADER bound to "
-                 + loader.getClass().getName() + " wrapping " + hostCl);
+        LOG.info(String.format("[Nihilite-agent] Compiler/LOADER bound to %s wrapping %s",
+                loader.getClass().getName(), hostCl));
     }
 
     private static int bootNrepl() {
@@ -87,14 +86,16 @@ public final class Worker implements Runnable {
         try {
             int p = Integer.parseInt(rawValue);
             if (p < 1 || p > 65535) {
-                LOG.warning("[Nihilite-agent] nihilite.port out of range (" + rawValue
-                            + "), using default " + DEFAULT_PORT);
+                LOG.warning(String.format(
+                        "[Nihilite-agent] nihilite.port out of range (%s), using default %d",
+                        rawValue, DEFAULT_PORT));
                 return DEFAULT_PORT;
             }
             return p;
         } catch (NumberFormatException nfe) {
-            LOG.warning("[Nihilite-agent] nihilite.port unparseable (\""
-                        + rawValue + "\"), using default " + DEFAULT_PORT);
+            LOG.warning(String.format(
+                    "[Nihilite-agent] nihilite.port unparseable (\"%s\"), using default %d",
+                    rawValue, DEFAULT_PORT));
             return DEFAULT_PORT;
         }
     }

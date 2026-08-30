@@ -1,6 +1,7 @@
 (ns nihilite.test.uninstall-retransform-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]))
+            [nihilite.registry :as reg]
+            [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]
   {:id id
@@ -11,10 +12,7 @@
    :action :observe
    :bridge (fn [_] nil)})
 
-(use-fixtures :each
-  (fn [f]
-    (reg/clear!)
-    (try (f) (finally (reg/clear!)))))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest uninstall-removes-spec
   (reg/install! (entry-spec "removes-test"))

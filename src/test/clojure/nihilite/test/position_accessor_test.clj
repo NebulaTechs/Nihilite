@@ -1,12 +1,9 @@
 (ns nihilite.test.position-accessor-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [nihilite.registry :as reg]))
+            [nihilite.registry :as reg]
+            [nihilite.test.fixtures :as fx]))
 
-(defn- fixture [f]
-  (reg/clear!)
-  (try (f) (finally (reg/clear!))))
-
-(use-fixtures :each (fn [t] (fixture t)))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest position-keyword-on-spec-map
   (is (= :entry (reg/position {:position :entry})))

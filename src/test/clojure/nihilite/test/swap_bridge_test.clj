@@ -1,7 +1,7 @@
 (ns nihilite.test.swap-bridge-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.api :as api]
-            [nihilite.registry :as reg]))
+            [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]
   {:id id
@@ -12,10 +12,7 @@
    :action :observe
    :bridge (fn [_] :original)})
 
-(use-fixtures :each
-  (fn [f]
-    (reg/clear!)
-    (try (f) (finally (reg/clear!)))))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest swap-bridge-replaces-bridge
   (api/install! (entry-spec "swap-test"))

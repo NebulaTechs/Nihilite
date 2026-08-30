@@ -7,7 +7,6 @@ import clojure.lang.Symbol;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Standalone Clojure+nREPL server entry point. Parses CLI args, hands :port/:bind to boot/start!, loads init. */
 public final class ServerMain {
 
     private static final Logger LOG = Logger.getLogger("nihilite.server.ServerMain");
@@ -38,11 +37,9 @@ public final class ServerMain {
             int port = Integer.parseInt(System.getProperty(ServerConstants.PORT_PROPERTY));
             String bind = System.getProperty(ServerConstants.BIND_PROPERTY);
 
-            Object startArgs = Clojure.read(
-                    "{:port " + port +
-                    " :bind \"" + bind + "\"}");
             clojure.lang.IPersistentMap startArgsMap =
-                    (clojure.lang.IPersistentMap) startArgs;
+                    (clojure.lang.IPersistentMap) Clojure.read(
+                            "{:port " + port + " :bind \"" + bind + "\"}");
 
             server = startFn.invoke(startArgsMap);
 

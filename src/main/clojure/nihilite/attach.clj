@@ -1,12 +1,12 @@
 (ns nihilite.attach
-   "Attach API. Discovers agent jar via protection domain; renamed jars work transparently."
+   "Attach API. Discovers agent jar via protection domain; renamed jars work transparently.
+    agent-jar-path nils on directory/IDE load; attach-to! caller responsible for .detach."
   (:require [clojure.tools.logging :as log])
   (:import (com.sun.tools.attach VirtualMachine)
            (java.io File)
            (nihilite.agent Agent)))
 
 (defn- agent-jar-path
-   "Resolve agent jar path from Agent.class protection domain. Nil on directory/IDE load."
   ^File []
   (let [pd (.getProtectionDomain (class Agent))
         cs (when pd (.getCodeSource pd))
@@ -34,7 +34,6 @@
           nil))))
 
 (defn attach-to!
-   "Attach this agent to JVM at `pid`. Caller responsible for .detach."
   ^VirtualMachine [pid]
   (let [jar (agent-jar-path)]
     (when (nil? jar)

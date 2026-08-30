@@ -4,8 +4,6 @@
   (:import [java.util.logging LogManager ConsoleHandler SimpleFormatter]))
 
 (defn- sync-logging!
-  "Force SimpleFormatter + WARN+ on every ConsoleHandler. Without
-   this, log/error races the synchronous println banners."
   []
   (let [m (LogManager/getLogManager)]
     (doseq [^String name (enumeration-seq (.getLoggerNames m))
@@ -33,12 +31,10 @@
     "nihilite.test.swap-bridge-test"])
 
 (defn- safe-deref
-  "Deref a Ref safely; on nil returns `{}` for downstream destructuring."
   [r]
   (if r @r {}))
 
 (defn- run-one
-  "Run clojure.test/test-ns against ns-sym. Returns {:counters <map> :throwable Throwable-or-nil}."
   [ns-sym]
   (try
     (require ns-sym)

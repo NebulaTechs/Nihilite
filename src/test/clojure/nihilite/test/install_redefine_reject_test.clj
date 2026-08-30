@@ -1,7 +1,8 @@
 (ns nihilite.test.install-redefine-reject-test
   "Regression: install! throws on {:position :redefine, :action :modify|:cancel}."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]))
+            [nihilite.registry :as reg]
+            [nihilite.test.fixtures :as fx]))
 
 (defn- redefine-modify-spec [id]
   {:id id
@@ -30,10 +31,7 @@
    :action :observe
    :bridge (fn [_] nil)})
 
-(use-fixtures :each
-  (fn [f]
-    (reg/clear!)
-    (try (f) (finally (reg/clear!)))))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest install-rejects-redefine-modify
   (let [spec (redefine-modify-spec "redefine-modify-test")]

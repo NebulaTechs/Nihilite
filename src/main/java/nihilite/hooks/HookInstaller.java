@@ -19,7 +19,10 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** Installs :entry/:return/:throw/:redefine ByteBuddy hooks on matched classes. */
+/** Installs :entry/:return/:throw/:redefine ByteBuddy hooks on matched classes.
+ *  Specs arrive as raw Clojure maps; keywords resolve differently under the agent
+ *  classloader so keys are matched by toString() instead of instanceof.
+ *  Key discovery runs once, on the first spec only. */
 public final class HookInstaller {
 
     private static final Logger LOG = Logger.getLogger("nihilite.hooks.HookInstaller");
@@ -84,7 +87,6 @@ public final class HookInstaller {
                     .or(ElementMatchers.isSynthetic()));
     }
 
-    /** (name, descriptor) pair, descriptor may be null. */
     private record MethodKey(String name, String descriptor) {}
 
     private static ElementMatcher.Junction<MethodDescription> matcherFor(Set<MethodKey> keys) {

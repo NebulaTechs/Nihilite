@@ -1,5 +1,8 @@
 (ns nihilite.boot
-  "Server bootstrap. start! binds ONE loopback server."
+  "Server bootstrap. start! binds ONE loopback server.
+   start! {:port 7888 :bind \"127.0.0.1\"} -> {:server stop-fn};
+   stop! accepts {:server stop-fn} or bare IFn, idempotent;
+   load-init! returns path or nil, failures swallowed."
   (:require [clojure.java.io :as jio]
             [clojure.tools.logging :as log]
             [nihilite.version :as v]
@@ -9,14 +12,11 @@
 (defonce ^:private ready-fn (atom nil))
 
 (defn set-ready!
-  "Register a thunk the worker will invoke before binding nREPL.
-   Init authors call (nihilite.boot/set-ready! (fn [] ...))."
   [f]
   (reset! ready-fn f)
   f)
 
 (defn await-runtime-ready!
-  "Worker entry. Invokes the registered thunk if any; no-op otherwise."
   []
   (when-let [f @ready-fn]
     (f)))
@@ -29,7 +29,6 @@
       (= host "")))
 
 (defn start!
-  "Start canonical server. Returns {:server <stop-fn>}. Options: :port (7888), :bind."
   [& {:keys [port bind]
       :or {bind "127.0.0.1"
            port 7888}}]
@@ -43,7 +42,6 @@
     {:server stop-fn}))
 
 (defn stop!
-  "Stop a handle from start!. Accepts {:server stop-fn} or bare IFn. Idempotent."
   [server-or-handle]
   (let [stop-fn (cond
                   (map? server-or-handle)      (:server server-or-handle)
@@ -58,8 +56,6 @@
           (log/error t "stop failed"))))))
 
 (defn load-init!
-  "If -Dnihilite.init points at readable file, load-file it.
-   Returns path or nil. Failures swallowed."
   []
   (when-let [path (System/getProperty "nihilite.init")]
     (let [f (jio/file path)]

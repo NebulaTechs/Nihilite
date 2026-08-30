@@ -1,12 +1,9 @@
 (ns nihilite.test.dispatch-return-cancel-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [nihilite.registry :as reg]))
+            [nihilite.registry :as reg]
+            [nihilite.test.fixtures :as fx]))
 
-(defn- setup [f]
-  (reg/clear!)
-  (try (f) (finally (reg/clear!))))
-
-(use-fixtures :each (fn [t] (setup t)))
+(use-fixtures :each fx/reg-cleanup)
 
 (deftest return-cancel-short-circuits-return-bucket
   (testing "cancel flips skip rest of return bucket"

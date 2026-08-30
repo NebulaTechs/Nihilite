@@ -7,7 +7,6 @@ import net.bytebuddy.asm.Advice;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/** :return-phase Advice: replaces the original return with the user's Clojure fn's result. */
 public final class ReturnAdvice {
 
     private static final Logger LOG = Logger.getLogger("nihilite.hooks.ReturnAdvice");

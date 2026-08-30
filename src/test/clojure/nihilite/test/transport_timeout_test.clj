@@ -1,20 +1,15 @@
 (ns nihilite.test.transport-timeout-test
   (:require [clojure.test :refer [deftest is testing]]
+            [nihilite.test.fixtures :as fx]
             [nihilite.transport :as t])
   (:import [java.net ServerSocket Socket InetSocketAddress
                     SocketTimeoutException]
            [java.io InputStream]
            [java.util.concurrent TimeUnit]))
 
-(defn- free-port ^long []
-  (let [s (ServerSocket. 0)]
-    (try (.getLocalPort s)
-         (finally (.close s)))))
-
 (defn- bind-listener
-  "Bind a ServerSocket with no SO_TIMEOUT and call f with [server port]."
   [f]
-  (let [port (free-port)
+  (let [port (fx/free-port)
         s    (ServerSocket.)]
     (.setReuseAddress s true)
     (.bind s (InetSocketAddress. "127.0.0.1" (int port)))
@@ -22,7 +17,6 @@
     (try (.close s) (catch Throwable _))))
 
 (defn- cleanup
-  "Best-effort cleanup of optional resources; swallows all throwables."
   [& resources]
   (doseq [r resources]
     (when r
@@ -30,7 +24,6 @@
       (try (future-cancel ^java.util.concurrent.Future r) (catch Throwable _)))))
 
 (defn- drive-accepted-read-test
-  "Bind a fresh listener, accept a client, idle > bound, then read must STE."
   [idle-bound-ms]
   (bind-listener
     (fn [server port]
@@ -38,7 +31,7 @@
             acceptor (future (reset! accepted (.accept server)))
             client   (Socket. "127.0.0.1" (int port))]
         (try
-          (.get acceptor 2000 TimeUnit/MILLISECONDS)
+          (.get acceptor fx/connect-timeout-ms TimeUnit/MILLISECONDS)
           (let [^Socket srv-sock @accepted]
             (is (some? srv-sock) "server accepted the client connection")
             (.setSoTimeout srv-sock (int idle-bound-ms))
@@ -52,7 +45,6 @@
             (cleanup client)))))))
 
 (defn- drive-listener-accept-test
-  "Bind a fresh listener, idle > bound, then a client SYN must still accept() promptly."
   [idle-bound-ms]
   (bind-listener
     (fn [server port]
@@ -61,7 +53,7 @@
           (Thread/sleep (+ idle-bound-ms 100))
           (let [client (Socket. "127.0.0.1" (int port))]
             (try
-              (let [accepted (.get acceptor 2000 TimeUnit/MILLISECONDS)]
+              (let [accepted (.get acceptor fx/connect-timeout-ms TimeUnit/MILLISECONDS)]
                 (is (instance? Socket accepted)
                     "listener accepted after idle > idle-timeout-ms"))
               (finally (.close client))))
