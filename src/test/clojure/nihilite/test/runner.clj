@@ -15,7 +15,8 @@
         (.setLevel java.util.logging.Level/WARNING)))))
 
 (def ^:const TEST_NAMESPACES
-  ["nihilite.test.dispatch-return-cancel-test"
+  ["nihilite.test.registry-atomic-install-test"
+   "nihilite.test.dispatch-return-cancel-test"
    "nihilite.test.install-redefine-reject-test"
    "nihilite.test.dispatch-exception-test"
    "nihilite.test.dispatch-modified-test"
@@ -29,8 +30,7 @@
    "nihilite.test.version-resolution-test"
    "nihilite.test.uninstall-retransform-test"
    "nihilite.test.api-facade-test"
-   "nihilite.test.swap-bridge-test"
-   "nihilite.test.registry-atomic-install-test"])
+   "nihilite.test.swap-bridge-test"])
 
 (defn- safe-deref
   [r]

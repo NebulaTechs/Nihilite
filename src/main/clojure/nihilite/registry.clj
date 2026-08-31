@@ -80,6 +80,8 @@
   (ConcurrentHashMap.))
 (defonce ^:private by-method
   (ConcurrentHashMap.))
+(defonce ^:private ^Object registry-lock
+  (Object.))
 (defonce ^:private ^AtomicLong sequence-counter
   (AtomicLong.))
 
@@ -326,55 +328,57 @@
                            :tag spec-tag
                            :method-key spec-method-key
                            :source-class spec-source-class
-                           :source-descriptor spec-desc)
-          prev (.put (get-by-id) (:id norm-spec) norm-spec)
-          replaced? (some? prev)]
-      (when replaced?
-        (let [prev-bucket (.get (get-by-target) (:target-internal prev))]
-          (when prev-bucket (.remove prev-bucket prev)))
-        (when-let [pmk (:method-key prev)]
-          (let [pmb (.get (get-by-method) pmk)]
-            (when pmb (.remove pmb prev)))))
-      (.add (bucket (:target-internal norm-spec)) norm-spec)
-      (when-let [mk (:method-key norm-spec)]
-        (.add (method-bucket mk) norm-spec))
-      (when-not replaced?
-        (ensure-stats spec-id))
-      (if replaced?
-        (do (log/info "hook replaced:" (:id norm-spec)
-                      "target=" (:target-internal norm-spec)
-                      "method=" (:method-name norm-spec))
-            false)
-        (do (log/info "hook registered:" (:id norm-spec)
-                      "target=" (:target-internal norm-spec)
-                      "method=" (:method-name norm-spec)
-                      "@" (:position norm-spec)
-                      "action=" (:action norm-spec)
-                      (when-let [t (:tag norm-spec)] (str " tag=" t))
-                      (when-let [n (:note norm-spec)] (str "// " n)))
-            true)))))
+                           :source-descriptor spec-desc)]
+      (locking registry-lock
+        (let [prev (.put (get-by-id) (:id norm-spec) norm-spec)
+              replaced? (some? prev)]
+          (when replaced?
+            (let [prev-bucket (.get (get-by-target) (:target-internal prev))]
+              (when prev-bucket (.remove prev-bucket prev)))
+            (when-let [pmk (:method-key prev)]
+              (let [pmb (.get (get-by-method) pmk)]
+                (when pmb (.remove pmb prev)))))
+          (.add (bucket (:target-internal norm-spec)) norm-spec)
+          (when-let [mk (:method-key norm-spec)]
+            (.add (method-bucket mk) norm-spec))
+          (when-not replaced?
+            (ensure-stats spec-id))
+          (if replaced?
+            (do (log/info "hook replaced:" (:id norm-spec)
+                          "target=" (:target-internal norm-spec)
+                          "method=" (:method-name norm-spec))
+                false)
+            (do (log/info "hook registered:" (:id norm-spec)
+                          "target=" (:target-internal norm-spec)
+                          "method=" (:method-name norm-spec)
+                          "@" (:position norm-spec)
+                          "action=" (:action norm-spec)
+                          (when-let [t (:tag norm-spec)] (str " tag=" t))
+                          (when-let [n (:note norm-spec)] (str "// " n)))
+                true)))))))
 
 (defn uninstall!
   [id]
   (let [by-id     (get-by-id)
         by-target (get-by-target)
         by-method (get-by-method)]
-    (when-let [removed (.remove by-id (str id))]
-      (let [b (.get by-target (:target-internal removed))]
-        (when b (.remove b removed))
-        (when (and b (.isEmpty b))
-          (.remove by-target (:target-internal removed) b))
-        (when-let [mk (:method-key removed)]
-          (let [mb (.get by-method mk)]
-            (when mb (.remove mb removed))
-            (when (and mb (.isEmpty mb))
-              (.remove by-method mk mb))))
-        (remove-stats (:id removed))
-        (try
-          (Bridge/uninstallSpec (str id))
-          (catch Throwable _t nil))
-        (log/info "hook removed:" (:id removed))
-        true))))
+    (locking registry-lock
+      (when-let [removed (.remove by-id (str id))]
+        (let [b (.get by-target (:target-internal removed))]
+          (when b (.remove b removed))
+          (when (and b (.isEmpty b))
+            (.remove by-target (:target-internal removed) b))
+          (when-let [mk (:method-key removed)]
+            (let [mb (.get by-method mk)]
+              (when mb (.remove mb removed))
+              (when (and mb (.isEmpty mb))
+                (.remove by-method mk mb))))
+          (remove-stats (:id removed))
+          (try
+            (Bridge/uninstallSpec (str id))
+            (catch Throwable _t nil))
+          (log/info "hook removed:" (:id removed))
+          true)))))
 
 (defn install-fresh!
   [spec]
@@ -390,8 +394,9 @@
 
 (defn clear!
   []
-  (clear-all!)
-  (stats-clear!))
+  (locking registry-lock
+    (clear-all!)
+    (stats-clear!)))
 
 (defn matching
   ^java.util.List [target-internal]
