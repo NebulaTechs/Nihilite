@@ -16,6 +16,8 @@
 
 (def ^:const TEST_NAMESPACES
   ["nihilite.test.registry-atomic-install-test"
+   "nihilite.test.pointcut-matchers-test"
+   "nihilite.test.custom-action-test"
    "nihilite.test.dispatch-return-cancel-test"
    "nihilite.test.install-redefine-reject-test"
    "nihilite.test.dispatch-exception-test"

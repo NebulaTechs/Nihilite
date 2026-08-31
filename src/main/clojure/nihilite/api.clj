@@ -17,3 +17,7 @@
 (defn swap-bridge!
   [id new-impl]
   (reg/replace-bridge! id new-impl))
+
+(defn register-action!
+  [action-key]
+  (reg/register-action! action-key))

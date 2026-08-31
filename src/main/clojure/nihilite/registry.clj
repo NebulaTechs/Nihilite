@@ -8,7 +8,21 @@
            [java.util.concurrent.atomic AtomicBoolean AtomicLong]
            [nihilite.hooks Bridge]))
 
-(def ^:const ACTIONS #{:observe :modify :cancel :subscriber})
+(defonce ^:private actions-registry
+  (atom #{:observe :modify :cancel :subscriber}))
+
+(defn registered-actions
+  []
+  @actions-registry)
+
+(defn register-action!
+  [action-key]
+  (when (not (keyword? action-key))
+    (throw (ex-info "action key must be a keyword"
+                    {:nihilite/kind :nihilite/invalid-action-key
+                     :nihilite/action action-key})))
+  (swap! actions-registry conj action-key)
+  action-key)
 
 (defrecord HookSpec
   [id target-internal method-name position arity bridge note
@@ -276,8 +290,8 @@
                        :nihilite/id spec-id
                        :nihilite/target spec-target
                        :nihilite/method spec-method})))
-    (when (and (some? spec-action) (not (contains? ACTIONS spec-action)))
-      (throw (ex-info (str ":action must be one of " (vec ACTIONS))
+    (when (and (some? spec-action) (not (contains? (registered-actions) spec-action)))
+      (throw (ex-info (str ":action must be one of " (vec (registered-actions)))
                       {:nihilite/kind :nihilite/invalid-action
                        :nihilite/id spec-id
                        :nihilite/action spec-action})))
