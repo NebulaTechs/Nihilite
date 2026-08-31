@@ -25,17 +25,11 @@ public final class Bridge {
         if (specId == null) return 0;
         Instrumentation inst = nihilite.agent.Agent.currentInstrumentation();
         if (inst == null) return 0;
-        try {
-            Object spec = CLJ_REG_LOOKUP.invoke(specId);
-            if (spec == null) return 0;
-            String targetInternal = (String) Clojure.var("clojure.core", "get")
-                    .invoke(spec, ":target-internal");
-            if (targetInternal == null) return 0;
-            return nihilite.hooks.HookInstaller.uninstall(inst, targetInternal);
-        } catch (Throwable t) {
-            LOG.log(Level.WARNING,
-                    "Bridge.uninstallSpec failed for " + specId, t);
-            return 0;
-        }
+        Object spec = CLJ_REG_LOOKUP.invoke(specId);
+        if (spec == null) return 0;
+        String targetInternal = (String) Clojure.var("clojure.core", "get")
+                .invoke(spec, ":target-internal");
+        if (targetInternal == null) return 0;
+        return nihilite.hooks.HookInstaller.uninstall(inst, targetInternal);
     }
 }
