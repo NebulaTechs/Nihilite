@@ -3,12 +3,8 @@ package nihilite.hooks;
 import clojure.java.api.Clojure;
 import clojure.lang.IFn;
 import java.lang.instrument.Instrumentation;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 public final class Bridge {
-
-    private static final Logger LOG = Logger.getLogger("nihilite.hooks.Bridge");
 
     private Bridge() {}
 

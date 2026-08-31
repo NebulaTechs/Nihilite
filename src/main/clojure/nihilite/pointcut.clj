@@ -7,7 +7,7 @@
    do not pass :matcher."
   (:require [clojure.string :as str])
   (:import (java.util.regex Pattern)
-           (java.lang.reflect Method Constructor)))
+           (java.lang.reflect Method)))
 
 (defprotocol Pointcut
   (matches? [p ctx]
