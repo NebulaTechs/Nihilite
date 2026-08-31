@@ -155,6 +155,24 @@
 (defn- bump-fired!      [spec-id] (when-let [r (get-stats spec-id)] (swap! (:fired r) inc)))
 (defn- bump-exception!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:exceptions r) inc)))
 
+(defonce ^:private trace-buffer
+  (java.util.concurrent.ConcurrentLinkedQueue.))
+
+(def ^:const trace-capacity 256)
+
+(defn- record-trace! [summary]
+  (.add trace-buffer summary)
+  (while (> (.size trace-buffer) trace-capacity)
+    (.poll trace-buffer))
+  nil)
+
+(defn trace-snapshot []
+  (vec trace-buffer))
+
+(defn- trace-clear! []
+  (.clear trace-buffer)
+  nil)
+
 (defn- ->hook-event
   "Construct HookEvent. :cancelled?/:cancel! are closures over AtomicBoolean."
   [spec self args return-value]
@@ -415,7 +433,8 @@
   []
   (locking registry-lock
     (clear-all!)
-    (stats-clear!)))
+    (stats-clear!)
+    (trace-clear!)))
 
 (defn matching
   ^java.util.List [target-internal]
@@ -492,6 +511,12 @@
                     f      (safe-bridge s)]
                 (dispatch-one! f event (:id s))
                 (bump-fired! (:id s))
+                (record-trace! {:spec-id (:id s)
+                                :phase   (:phase event)
+                                :action  action
+                                :thread  (:thread-name event)
+                                :ts-ns   (:timestamp-ns event)
+                                :seq     (:sequence event)})
                 (cond
                   (= action :cancel)
                   (do (call-cancel! event)
