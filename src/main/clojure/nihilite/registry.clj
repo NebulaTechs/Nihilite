@@ -374,11 +374,16 @@
               (when (and mb (.isEmpty mb))
                 (.remove by-method mk mb))))
           (remove-stats (:id removed))
-          (try
-            (Bridge/uninstallSpec (str id))
-            (catch Throwable _t nil))
-          (log/info "hook removed:" (:id removed))
-          true)))))
+          (let [count (try
+                        (Bridge/uninstallSpec (str id))
+                        (catch Throwable t
+                          (throw (ex-info (str "uninstall retransform failed for id=" id)
+                                          {:nihilite/kind :nihilite/uninstall-failed
+                                           :nihilite/id   id
+                                           :nihilite/cause (.getMessage t)}
+                                          t))))]
+            (log/info "hook removed:" (:id removed) "retransformed=" count "class(es)")
+            count))))))
 
 (defn install-fresh!
   [spec]
