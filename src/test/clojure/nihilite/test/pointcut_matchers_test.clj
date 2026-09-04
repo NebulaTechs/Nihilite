@@ -1,9 +1,6 @@
 (ns nihilite.test.pointcut-matchers-test
-  "C4 deliverable: validate Pointcut protocol and three implementations."
   (:require [clojure.test :refer [deftest testing is]]
-            [nihilite.pointcut :as p])
-  (:import (nihilite.pointcut ExactPointcut WildcardPointcut AnnotationPointcut)
-           (java.lang.reflect Method)))
+            [nihilite.pointcut :as p]))
 
 (deftest exact-pointcut-hits-on-all-fields
   (let [ep (p/exact "com.example.Foo" "bar" "(I)V")
