@@ -415,7 +415,7 @@
                                            :nihilite/cause (.getMessage t)}
                                           t))))]
             (log/info "hook removed:" (:id removed) "retransformed=" count "class(es)")
-            count))))))
+            true))))))
 
 (defn install-fresh!
   [spec]
