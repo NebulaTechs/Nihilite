@@ -155,6 +155,59 @@
 (defn- bump-fired!      [spec-id] (when-let [r (get-stats spec-id)] (swap! (:fired r) inc)))
 (defn- bump-exception!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:exceptions r) inc)))
 
+(defonce ^:private status-index
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- status-record
+  ^java.util.concurrent.atomic.AtomicReference [spec-id]
+  (let [id (str spec-id)
+        existing (.get status-index id)]
+    (if (nil? existing)
+      (let [created (java.util.concurrent.atomic.AtomicReference.
+                      {:spec-id     id
+                       :registered? true
+                       :woven-count 0
+                       :pending?    true
+                       :last-error  nil})]
+        (if (nil? (.putIfAbsent status-index id created))
+          created
+          (.get status-index id)))
+      existing)))
+
+(defn- record-status!
+  [spec-id f]
+  (let [ref ^java.util.concurrent.atomic.AtomicReference (status-record spec-id)]
+    (.set ref (f (.get ref)))
+    nil))
+
+(defn- mark-installed! [spec-id count]
+  (record-status! spec-id
+    (fn [cur]
+      (assoc cur :woven-count (long count)
+                  :pending?    (zero? (long count))
+                  :registered? true))))
+
+(defn- mark-uninstalled! [spec-id count]
+  (record-status! spec-id
+    (fn [cur]
+      (assoc cur :woven-count (long count)
+                  :pending?    false
+                  :registered? false))))
+
+(defn- mark-error! [spec-id ex-msg]
+  (record-status! spec-id
+    (fn [cur]
+      (assoc cur :last-error ex-msg))))
+
+(defn install-status!
+  [id]
+  (let [id (str id)
+        ref (.get status-index id)]
+    (if (nil? ref)
+      {:spec-id id :registered? false :woven-count 0 :pending? false :last-error nil}
+      (let [m (.get ^java.util.concurrent.atomic.AtomicReference ref)]
+        (assoc m :spec-id id)))))
+
 (defonce ^:private trace-buffer
   (java.util.concurrent.ConcurrentLinkedQueue.))
 
@@ -379,6 +432,7 @@
             (do (log/info "hook replaced:" (:id norm-spec)
                           "target=" (:target-internal norm-spec)
                           "method=" (:method-name norm-spec))
+                (mark-installed! (:id norm-spec) 0)
                 false)
             (do (log/info "hook registered:" (:id norm-spec)
                           "target=" (:target-internal norm-spec)
@@ -387,6 +441,7 @@
                           "action=" (:action norm-spec)
                           (when-let [t (:tag norm-spec)] (str " tag=" t))
                           (when-let [n (:note norm-spec)] (str "// " n)))
+                (mark-installed! (:id norm-spec) 0)
                 true)))))))
 
 (defn uninstall!
@@ -409,12 +464,17 @@
           (let [count (try
                         (Bridge/uninstallSpec (str id))
                         (catch Throwable t
+                          (mark-error! (:id removed) (.getMessage t))
                           (throw (ex-info (str "uninstall retransform failed for id=" id)
                                           {:nihilite/kind :nihilite/uninstall-failed
                                            :nihilite/id   id
                                            :nihilite/cause (.getMessage t)}
                                           t))))]
-            (log/info "hook removed:" (:id removed) "retransformed=" count "class(es)")
+            (mark-uninstalled! (:id removed) count)
+            (if (zero? count)
+              (log/warn "hook removed from registry but 0 classes retransformed"
+                        "(agent not armed or class not loaded):" (:id removed))
+              (log/info "hook removed:" (:id removed) "retransformed=" count "class(es)"))
             true))))))
 
 (defn install-fresh!
@@ -591,25 +651,23 @@
            (catch Throwable _)))))
 
 (defn dispatch-redefine
-  ([host-internal method-name args descriptor]
-   (try
-     (let [param-count (count args)
-           spec-id     (lookup-spec-for-call host-internal method-name param-count descriptor :redefine)]
-       (if-let [spec (and spec-id (lookup spec-id))]
-         (if-let [bridge-fn (safe-bridge spec)]
-           (try
-             (bridge-fn args method-name)
-             (catch Throwable t
-               (log/error t "bridge redefine-fire failed (id=" spec-id ")")
-               (throw t)))
-           (throw (IllegalStateException.
-                    (str "no bridge fn for spec id " spec-id))))
-         (throw (IllegalStateException.
-                  (str "no spec for " host-internal "/" method-name "/" param-count)))))
-     (catch Throwable t
-       (throw t))))
-  ([host-internal method-name args]
-   (dispatch-redefine host-internal method-name args nil)))
+  [host-internal method-name self args descriptor]
+  (try
+    (let [param-count (count args)
+          spec-id     (lookup-spec-for-call host-internal method-name param-count descriptor :redefine)]
+      (if-let [spec (and spec-id (lookup spec-id))]
+        (if-let [bridge-fn (safe-bridge spec)]
+          (try
+            (bridge-fn self args method-name)
+            (catch Throwable t
+              (log/error t "bridge redefine-fire failed (id=" spec-id ")")
+              (throw t)))
+          (throw (IllegalStateException.
+                   (str "no bridge fn for spec id " spec-id))))
+        (throw (IllegalStateException.
+                 (str "no spec for " host-internal "/" method-name "/" param-count)))))
+    (catch Throwable t
+      (throw t))))
 
 (defn install-redefine-dispatcher!
   ([] (install-redefine-dispatcher!
@@ -619,12 +677,7 @@
           (fn [dispatch-ifn] (.invoke method nil (object-array [dispatch-ifn]))))))
   ([setter]
    (let [dispatch-ifn
-         (fn
-           ([host-internal method-name args descriptor]
-            (dispatch-redefine host-internal method-name args descriptor))
-           ([host-internal method-name args]
-            (dispatch-redefine host-internal method-name args nil))
-           ([a b] (dispatch-redefine a b nil nil))
-           ([a]   (dispatch-redefine a nil nil nil)))]
+         (fn [host-internal method-name self args descriptor]
+           (dispatch-redefine host-internal method-name self args descriptor))]
      (setter dispatch-ifn)
      :installed)))

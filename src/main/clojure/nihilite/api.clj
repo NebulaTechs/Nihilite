@@ -14,6 +14,10 @@
 (defn list-specs []
   (vec (sort (keys (reg/stats-snapshot)))))
 
+(defn install-status!
+  [id]
+  (reg/install-status! id))
+
 (defn swap-bridge!
   [id new-impl]
   (reg/replace-bridge! id new-impl))
