@@ -33,7 +33,10 @@
    "nihilite.test.version-resolution-test"
    "nihilite.test.uninstall-retransform-test"
    "nihilite.test.api-facade-test"
-   "nihilite.test.swap-bridge-test"])
+   "nihilite.test.swap-bridge-test"
+   "nihilite.test.install-status-test"
+   "nihilite.test.compiler-loader-hint-test"
+   "nihilite.test.uninstall-warn-test"])
 
 (defn- safe-deref
   [r]

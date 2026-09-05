@@ -44,7 +44,7 @@ public final class retransformDriver {
         };
 
 IFn redefineHandler = new clojure.lang.AFn() {
-            @Override public Object invoke(Object args, Object methodName) {
+            @Override public Object invoke(Object self, Object args, Object methodName) {
                 REDEFINED++;
                 return "REDEFINED-BY-DRIVER";
             }
