@@ -4,6 +4,7 @@ import clojure.lang.IFn;
 import net.bytebuddy.implementation.bind.annotation.AllArguments;
 import net.bytebuddy.implementation.bind.annotation.Origin;
 import net.bytebuddy.implementation.bind.annotation.RuntimeType;
+import net.bytebuddy.implementation.bind.annotation.This;
 
 public final class GenericDispatcher {
 
@@ -13,6 +14,7 @@ public final class GenericDispatcher {
     public static Object dispatch(
             @Origin Class<?> hostClass,
             @Origin String methodSig,
+            @This(optional = true) Object self,
             @AllArguments Object[] args) {
         String hostInternal = hostClass.getName().replace('.', '/');
         String methodName = extractMethodName(methodSig);
@@ -22,7 +24,7 @@ public final class GenericDispatcher {
             throw new IllegalStateException(
                     "GenericDispatcher: worker not booted (REDISPATCHER null)");
         }
-        return ((IFn) dispatcher).invoke(hostInternal, methodName, args, descriptor);
+        return ((IFn) dispatcher).invoke(hostInternal, methodName, self, args, descriptor);
     }
 
     private static String extractMethodName(String sig) {
