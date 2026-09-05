@@ -23,16 +23,13 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.clojure:clojure:1.12.0'
+    implementation 'org.clojure:clojure:1.12.5'
     implementation 'org.clojure:spec.alpha:0.5.238'
     implementation 'org.clojure:core.specs.alpha:0.4.74'
-    // nREPL server (Clojars-only); the only transport.
     implementation 'nrepl:nrepl:1.7.0'
-    // tools.logging: Clojure-side facade over java.util.logging; unified with Java side.
     implementation 'org.clojure:tools.logging:1.3.1'
-    // ByteBuddy 1.18.11; byte-buddy-agent is for retransformDriver self-attach only.
-    implementation 'net.bytebuddy:byte-buddy:1.18.11'
-    implementation 'net.bytebuddy:byte-buddy-agent:1.18.11'
+    implementation 'net.bytebuddy:byte-buddy:1.18.13'
+    implementation 'net.bytebuddy:byte-buddy-agent:1.18.13'
 }
 
 application {
