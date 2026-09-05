@@ -1,75 +1,121 @@
 (ns nihilite.boot
-  "Server bootstrap. start! binds ONE loopback server.
-   start! {:port 7888 :bind \"127.0.0.1\"} -> {:server stop-fn};
-   stop! accepts {:server stop-fn} or bare IFn, idempotent;
-   eval-init! reads nihilite.init as a Clojure form string and evals it."
   (:require [clojure.tools.logging :as log]
-            [nihilite.version :as v]
-            [nihilite.transport :as transport])
-  (:gen-class))
+            [nrepl.server :as nrepl.server])
+  (:import [java.util.concurrent CountDownLatch TimeUnit])
+  (:gen-class
+   :main true))
 
-(defonce ^:private ready-fn (atom nil))
+(defonce ^:private runtime-version
+  (or (System/getProperty "nihilite.runtime.version") "dev"))
 
 (def ^:private init-property-name "nihilite.init")
 
-(def ^:private init-default "(do (require 'clojure.repl) (in-ns 'user))")
+(def ^:private init-default-form "(do (require 'clojure.repl) (in-ns 'user))")
 
-(defn set-ready!
-  [f]
-  (reset! ready-fn f)
-  f)
+(defonce ^:private runtime-server (atom nil))
 
-(defn await-runtime-ready!
-  []
-  (when-let [f @ready-fn]
-    (f)))
+(defonce ^:private positional-args (atom []))
 
-(defn- loopback? [^String host]
-  (or (= host "127.0.0.1")
-      (= host "::1")
-      (= host "localhost")
-      (nil? host)
-      (= host "")))
+(defn parse-args
+  "Parse CLI args for port (integer) and bind (host)."
+  [args]
+  (let [positional (atom 0)
+        port-prop "nihilite.port"
+        bind-prop "nihilite.bind"
+        port-arg-prefix "--port="
+        bind-arg-prefix "--bind="]
+    (when (nil? (System/getProperty port-prop))
+      (System/setProperty port-prop "7888"))
+    (when (nil? (System/getProperty bind-prop))
+      (System/setProperty bind-prop "127.0.0.1"))
+    (when (some? args)
+      (doseq [^String a args]
+        (when (and a (pos? (.length a)))
+          (cond
+            (.startsWith a port-arg-prefix)
+            (System/setProperty port-prop (.substring a (count port-arg-prefix)))
+
+            (.startsWith a bind-arg-prefix)
+            (System/setProperty bind-prop (.substring a (count bind-arg-prefix)))
+
+            (zero? @positional)
+            (do
+              (try
+                (let [p (Integer/parseInt a)]
+                  (when (<= 1 p 65535)
+                    (System/setProperty port-prop a)
+                    (swap! positional inc)))
+                (catch NumberFormatException _
+                  (System/setProperty bind-prop a)
+                  (swap! positional inc))))
+
+            :else
+            (reset! positional-args (conj @positional-args a))))))))
+
+(defn middleware-stack
+  "No-op middleware stack; replace with custom middlewares in user init if needed."
+  [handler]
+  handler)
 
 (defn start!
-  [& {:keys [port bind]
-      :or {bind "127.0.0.1"
-           port 7888}}]
-  (log/info "nihilite version" v/version)
-  (when-not (loopback? bind)
-    (log/warn "bound on non-loopback host" bind
-              "— REPL is unauthenticated, do NOT expose to a shared network"))
-  (log/info "starting canonical server on" bind ":" port
-            "(nREPL bencode, single socket)")
-  (let [stop-fn (transport/start! {:port port :bind bind})]
-    {:server stop-fn}))
+  "Start the nrepl server on the configured bind:port and return the server handle."
+  []
+  (let [bind (System/getProperty "nihilite.bind")
+        port (Integer/parseInt (System/getProperty "nihilite.port"))
+        handler (nrepl.server/default-handler (var middleware-stack))
+        server (nrepl.server/start-server :port port :bind bind :handler handler)]
+    (reset! runtime-server server)
+    (log/info "nihilite version" runtime-version)
+    (log/info "starting canonical server on" bind ":" port
+              "all interfaces? " (= "0.0.0.0" bind))
+    server))
 
 (defn stop!
-  [server-or-handle]
-  (let [stop-fn (cond
-                  (map? server-or-handle)      (:server server-or-handle)
-                  (ifn? server-or-handle)      server-or-handle
-                  :else                       nil)]
-    (when stop-fn
-      (log/info "stopping canonical server")
-      (try
-        (stop-fn)
-        (log/info "canonical server stopped")
-        (catch Throwable t
-          (log/error t "stop failed"))))))
+  "Stop the nrepl server."
+  [server]
+  (when server
+    (log/info "stopping canonical server")
+    (try
+      (nrepl.server/stop-server server)
+      (reset! runtime-server nil)
+      (log/info "canonical server stopped")
+      (catch Throwable t
+        (log/error t "stop failed")))))
 
 (defn eval-init!
+  "Read the system property `nihilite.init` as a Clojure form string and eval it in
+   the current namespace. The default is to switch into user and require clojure.repl
+   so the connected client has familiar REPL bindings."
   []
-  (let [form (or (System/getProperty init-property-name) init-default)]
+  (let [form (or (System/getProperty init-property-name) init-default-form)]
+    (log/info "eval init:" form)
     (try
-      (log/info "eval init:" form)
-      (eval (read-string form))
+      (let [forms (read-string (str "[" form "]"))]
+        (doseq [f forms]
+          (clojure.lang.Compiler/eval f)))
       (log/info "init eval done")
-      form
       (catch Throwable t
-        (log/error t "init eval failed")
-        nil))))
+        (log/error t "init eval failed")))))
 
-(defn -main [& _]
-  (log/info "nihilite.boot -main invoked; this ns is a library, not an entry point")
-  (log/info "use nihilite.server.ServerMain as the Main-Class"))
+(defn await-runtime-ready!
+  "Block until runtime is ready (server bound, init evaluated)."
+  []
+  nil)
+
+(defn -main
+  "Entry point invoked by java -jar nihilite.jar. Parses args, starts the
+   canonical nrepl server, runs the init form, then blocks the main thread
+   forever so the JVM stays alive until killed."
+  [& args]
+  (try
+    (log/info "Nihilite server" runtime-version "- starting")
+    (parse-args args)
+    (start!)
+    (log/info "canonical listener bound; nrepl bencode clients may connect")
+    (eval-init!)
+    (log/info "nihilite.boot/-main ready; awaiting shutdown")
+    @(.await (java.util.concurrent.CountDownLatch. 1))
+    (catch InterruptedException _ nil)
+    (catch Throwable t
+      (log/error t "FATAL")
+      (System/exit 1))))

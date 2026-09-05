@@ -17,7 +17,6 @@ public final class Worker implements Runnable {
     public void run() {
         try {
             initClojure();
-            waitForRuntimeViaAdapter();
             bindCompilerLoader();
         } catch (Throwable t) {
             LOG.log(Level.SEVERE, "[Nihilite-agent] worker failed", t);

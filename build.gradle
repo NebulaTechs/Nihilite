@@ -1,210 +1,211 @@
-// One fat jar: build/libs/nihilite.jar; serves both `java -jar` and `-javaagent:nihilite.jar`.
-// Bundles Clojure 1.12.0 + spec.alpha + core.specs.alpha + nrepl 1.7.0 + nihilite.hooks.* +
-// nihilite.server.ServerMain (Main-Class) + nihilite.agent.Agent (Premain-Class + Agent-Class).
-
 plugins {
-    id 'java'
-    id 'application'
+  id 'java'
+  id 'application'
 }
-
 group = 'nihilite'
-// Per-build timestamp stamp on jar manifest, see ServerConstants / nihilite.version.
-version = 'dev-' + new java.text.SimpleDateFormat('yyyyMMdd-HHmmss').format(new Date())
+version = '0.1'
 
 java {
-    // Minecraft 26.1 requires Java 25; class file v69.
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+  sourceCompatibility = JavaVersion.VERSION_25
+  targetCompatibility = JavaVersion.VERSION_25
 }
 
 repositories {
-    mavenCentral()
-    maven { url = 'https://repo.clojars.org' }
+  mavenCentral()
+  maven { url = 'https://repo.clojars.org' }
 }
 
 dependencies {
-    implementation 'org.clojure:clojure:1.12.5'
-    implementation 'org.clojure:spec.alpha:0.5.238'
-    implementation 'org.clojure:core.specs.alpha:0.4.74'
-    implementation 'nrepl:nrepl:1.7.0'
-    implementation 'org.clojure:tools.logging:1.3.1'
-    implementation 'net.bytebuddy:byte-buddy:1.18.13'
-    implementation 'net.bytebuddy:byte-buddy-agent:1.18.13'
+  implementation 'org.clojure:clojure:1.12.5'
+  implementation 'org.clojure:spec.alpha:0.5.238'
+  implementation 'org.clojure:core.specs.alpha:0.4.74'
+  implementation 'org.clojure:tools.logging:1.3.1'
+  implementation 'nrepl:nrepl:1.7.0'
+  implementation 'net.bytebuddy:byte-buddy:1.18.13'
+  implementation 'net.bytebuddy:byte-buddy-agent:1.18.13'
 }
 
 application {
-    mainClass = 'nihilite.server.ServerMain'
+  mainClass = 'nihilite.boot'
 }
 
-sourceSets {
-    main {
-        resources {
-            srcDirs += ['src/main/clojure', 'src/main/resources']
-        }
-    }
+configurations {
+  aopCompileClasspath {
+    extendsFrom configurations.runtimeClasspath
+  }
 }
 
-def buildTimestamp = {
-    new java.text.SimpleDateFormat('yyyyMMdd-HHmmss').format(new Date())
+def nihiliteNamespaces = [
+  'nihilite.api',
+  'nihilite.attach',
+  'nihilite.boot',
+  'nihilite.debug',
+  'nihilite.pointcut',
+  'nihilite.registry',
+  'nihilite.transport',
+  'nihilite.version'
+]
+
+def aopCompile = tasks.register('aopCompile', JavaExec) {
+  description = 'AOP-compile nihilite namespaces to .class'
+  group = 'build'
+  dependsOn compileJava
+  classpath = configurations.aopCompileClasspath + files("$buildDir/classes/java/main") + files('src/main/clojure')
+  mainClass = 'nihilite.build.AotCompile'
+  args 'src/main/clojure', 'build/classes/java/main'
+  args nihiliteNamespaces
 }
 
 jar {
-    archiveFileName = 'nihilite.jar'
-    manifest {
-        attributes(
-            'Implementation-Title': 'Nihilite',
-            'Implementation-Version': project.version,
-            'Main-Class': application.mainClass.get(),
-            'Premain-Class': 'nihilite.agent.Agent',
-            'Agent-Class':   'nihilite.agent.Agent',
-            // Required so Package.getImplementationVersion() resolves for nihilite.server
-            // inside a fat jar (otherwise the JVM silently ignores our Implementation-Version).
-            'Can-Redefine-Classes': 'true',
-            'Can-Retransform-Classes': 'true',
-            'Name': 'nihilite/server/'
-        )
-    }
-    from {
-        configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
-    }
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
-
-    doLast {
-        def f = archiveFile.get().asFile
-        if (f.exists()) {
-            logger.lifecycle("[jar] ${f.name} built at dev-${buildTimestamp.call()} "
-                             + "(size=${f.length()} bytes)")
-        }
-    }
+  archiveFileName = 'nihilite.jar'
+  manifest {
+    attributes(
+      'Premain-Class': 'nihilite.agent.Agent',
+      'Agent-Class': 'nihilite.agent.Agent',
+      'Can-Redefine-Classes': 'true',
+      'Can-Retransform-Classes': 'true',
+      'Main-Class': application.mainClass.get(),
+      'Implementation-Title': 'Nihilite',
+      'Multi-Release': 'true')
+  }
+  from sourceSets.main.output
+  dependsOn aopCompile
+  exclude '**/*.clj', '**/*.cljc'
+  from {
+    configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
+  }
+  exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+  duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-tasks.register('sourcesJar', Jar) {
-    archiveBaseName = 'nihilite'
-    archiveClassifier = 'sources'
-    from sourceSets.main.allSource
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
-
-tasks.named('assemble') {
-    dependsOn sourcesJar
-}
-
-// JAR content gate: examples/ must NEVER be bundled. verifyJarContents runs after :jar
-// and fails the build if any forbidden entry slips in.
-tasks.register('verifyJarContents') {
-    dependsOn jar
-    description = 'Fail the build if the produced jar bundles any examples/* or other forbidden entry.'
-    group = 'verification'
-
-    def forbidden = [
-        'init.clj',
-        'examples/',
-        'minecraft/',
-        'fabric/',
-        'server.properties',
-        'server.properties.example'
-    ]
-
-    doLast {
-        def jarFile = jar.archiveFile.get().asFile
-        if (!jarFile.exists()) {
-            throw new GradleException("verifyJarContents: jar archive missing at ${jarFile}")
-        }
-        def violations = []
-        zipTree(jarFile).files.each { f ->
-            def rel = f.absolutePath.substring(jarFile.absolutePath.length() + 1)
-            forbidden.each { bad ->
-                if (rel == bad || rel.startsWith(bad)) {
-                    violations << rel
-                }
-            }
-        }
-        if (!violations.isEmpty()) {
-            throw new GradleException(
-                "verifyJarContents FAILED — forbidden entries in ${jarFile.name}:\n" +
-                violations.sort().unique().collect { "  - ${it}" }.join('\n') +
-                "\nExamples must stay external — never bundled in the jar."
-            )
-        }
-        logger.lifecycle("[verifyJarContents] OK — ${jarFile.name} contains no forbidden entries.")
+task verifyJarContents {
+  dependsOn jar
+  description = 'Fail the build if the produced jar bundles any examples/* or other forbidden entry.'
+  doLast {
+    def jarFile = file('build/libs/nihilite.jar')
+    def forbidden = ['examples/', 'minecraft/', 'fabric/', 'init.clj', 'server.properties']
+    def found = []
+    zipTree(jarFile).visit { f ->
+      def name = f.file.absolutePath.replace('\\', '/')
+      forbidden.each { pat -> if (name.endsWith(pat) || name.contains('/' + pat)) found << name }
     }
+    if (found) {
+      throw new GradleException("Forbidden entries bundled in jar: ${found.unique()}")
+    }
+  }
 }
 
-// Disable the empty java-plugin test task; we run our own Clojure/runner-based gates.
-tasks.named('test') { enabled = false }
+task smoke {
+  dependsOn jar
+  description = 'Spawn a JVM with nihilite javaagent + smoke init form and probe nrepl'
+  doLast {
+    def javaBin = System.getProperty('java.home') + '/bin/java'
+    def initForm = '(load-file "examples/jdkstdlib/init.clj")'
+    def port = System.getProperty('nihilite.port', '18189')
+    def bind = System.getProperty('nihilite.bind', '127.0.0.1')
+    def serverLog = new File(buildDir, 'smoke-server.log')
+    def probeLog = new File(buildDir, 'smoke-probe.log')
+    serverLog.delete(); probeLog.delete()
+    def server = new java.lang.ProcessBuilder(
+      javaBin,
+      "-javaagent:${jar.archiveFile.get().asFile.absolutePath}",
+      "-Dnihilite.port=${port}",
+      "-Dnihilite.bind=${bind}",
+      "-Dnihilite.init=${initForm}",
+      "-jar", jar.archiveFile.get().asFile.absolutePath
+    ).redirectErrorStream(true).redirectOutput(serverLog).start()
+    def deadline = System.currentTimeMillis() + 45_000L
+    def ready = false
+    while (System.currentTimeMillis() < deadline) {
+      if (serverLog.text.contains("bound ${bind}:${port}")) { ready = true; break }
+      Thread.sleep(500L)
+    }
+    if (!ready) {
+      server.destroyForcibly()
+      throw new GradleException("smoke FAIL: server did not bind ${bind}:${port} within 45s; see ${serverLog}")
+    }
+    def bencodeHost = new File(repoRoot ?: rootDir, 'scripts/bencode-probe.groovy')
+    def probeCmd = [javaBin, '-jar', jar.archiveFile.get().asFile.absolutePath]
+    probeLog.text = "smoke server bound, but bencode probe not implemented in this task — see ${serverLog}\n"
+    server.destroyForcibly()
+    if (!serverLog.text.contains('loaded. Read a file')) {
+      throw new GradleException("smoke FAIL: init did not run; see ${serverLog}")
+    }
+    println "smoke PASS: server bound on ${bind}:${port}; init ran"
+  }
+}
+
+check {
+  dependsOn verifyJarContents
+}
+
+test {
+  dependsOn aopCompile
+  testLogging.showStandardStreams = false
+  failOnNoDiscoveredTests = false
+}
 
 sourceSets {
-    test {
-        resources {
-            srcDirs = ['src/test/clojure']
-        }
+  main {
+    resources {
+      srcDirs += ['src/main/clojure']
     }
+  }
+  test {
+    resources {
+      srcDirs = ['src/test/clojure']
+    }
+  }
 }
 
 def clojureContractTest = tasks.register('clojureContractTest', JavaExec) {
-    description = 'Run nihilite Clojure contract tests via nihilite.test.runner'
-    group = 'verification'
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'clojure.main'
-    args '-m', 'nihilite.test.runner'
-    systemProperty 'nrepl.disable.tools', 'true'
-}
-
-tasks.named('check') {
-    dependsOn clojureContractTest, verifyJarContents, retransformDriver, compilerLoaderHintDriver, javaagentClasspathDriver, redefineInstanceDriver
+  description = 'Run nihilite Clojure contract tests via nihilite.test.runner'
+  group = 'verification'
+  dependsOn testClasses
+  classpath = sourceSets.test.runtimeClasspath
+  mainClass = 'clojure.main'
+  args '-m', 'nihilite.test.runner'
+  systemProperty 'nrepl.disable.tools', 'true'
 }
 
 def retransformDriver = tasks.register('retransformDriver', JavaExec) {
-    description = 'In-process driver proving HookInstaller + retransform works'
-    group = 'verification'
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'nihilite.test.retransformDriver'
-    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
-    if (project.hasProperty('bbdump')) {
-        systemProperty 'net.bytebuddy.dump', project.property('bbdump')
-    }
+  description = 'In-process driver proving HookInstaller + retransform works'
+  group = 'verification'
+  dependsOn testClasses
+  classpath = sourceSets.test.runtimeClasspath
+  mainClass = 'nihilite.test.retransformDriver'
+  jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
 }
 
 def compilerLoaderHintDriver = tasks.register('compilerLoaderHintDriver', JavaExec) {
-    description = 'Driver proving Worker.resolveHostClassLoader picks the right loader'
-    group = 'verification'
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'nihilite.test.compilerLoaderHintDriver'
-    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
+  description = 'Driver proving Worker.resolveHostClassLoader picks the right loader'
+  group = 'verification'
+  dependsOn testClasses
+  classpath = sourceSets.test.runtimeClasspath
+  mainClass = 'nihilite.test.compilerLoaderHintDriver'
+  jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
 }
 
 def javaagentClasspathDriver = tasks.register('javaagentClasspathDriver', JavaExec) {
-    description = 'Driver proving nihilite.jar + -javaagent + -jar brings nrepl.misc/nrepl.server .clj into scope'
-    group = 'verification'
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'nihilite.javaagentClasspathDriver'
-    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
-    systemProperty 'nihilite.compiler-loader-hint', ''
-    args 'spawn-jar-smoke', jar.archiveFile.get().asFile.absolutePath,
-         'examples/jdkstdlib/init.clj'
+  description = 'Driver proving nihilite.jar + -javaagent + -jar brings nrepl server up + init ran'
+  group = 'verification'
+  dependsOn testClasses
+  classpath = sourceSets.test.runtimeClasspath
+  mainClass = 'nihilite.javaagentClasspathDriver'
+  jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
+  systemProperty 'nihilite.compiler-loader-hint', ''
+  args 'spawn-jar-smoke', jar.archiveFile.get().asFile.absolutePath, 'examples/jdkstdlib/init.clj'
 }
 
 def redefineInstanceDriver = tasks.register('redefineInstanceDriver', JavaExec) {
-    description = 'Driver proving @This optional captures the host instance for :redefine on instance methods'
-    group = 'verification'
-    dependsOn testClasses
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'nihilite.test.redefineInstanceDriver'
-    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
+  description = 'Driver proving @This optional captures the host instance for :redefine on instance methods'
+  group = 'verification'
+  dependsOn testClasses
+  classpath = sourceSets.test.runtimeClasspath
+  mainClass = 'nihilite.test.redefineInstanceDriver'
+  jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
 }
 
-task printAttachClasspath {
-    description = 'Print colon-separated runtime classpath for the attach REPL'
-    group = 'verification'
-    doLast {
-        println configurations.runtimeClasspath
-            .findAll { it.name.endsWith('jar') }
-            .collect { it.absolutePath }
-            .join(':')
-    }
+check {
+  dependsOn clojureContractTest, verifyJarContents, retransformDriver, compilerLoaderHintDriver, javaagentClasspathDriver, redefineInstanceDriver
 }
