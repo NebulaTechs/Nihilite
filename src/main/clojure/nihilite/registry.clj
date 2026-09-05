@@ -128,7 +128,7 @@
               (.retransformClasses inst (into-array Class (vec modifiable)))
               (log/debug "retransform-loaded-matching! retransformed"
                          (count modifiable) "class(es) for target=" target-internal)
-              (catch java.lang.instrument.UnmodifiableClassException uce
+              (catch java.lang.instrument.UnmodifiableClassException _
                 (log/warn "retransform-loaded-matching! could not retransform"
                           target-internal " (UnmodifiableClassException)"))
               (catch Throwable t
