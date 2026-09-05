@@ -1,7 +1,8 @@
 (ns nihilite.debug
   "Diagnostics for hook specs: why a hook is not firing, recent fire
    traces, and woven-bytecode export."
-  (:require [nihilite.registry :as reg])
+  (:require [clojure.java.io :as jio]
+            [nihilite.registry :as reg])
   (:import [java.io FileOutputStream]
            [java.lang.instrument Instrumentation]
            [nihilite.agent Agent]))
@@ -63,5 +64,5 @@
                 in  (.getResourceAsStream loader res)]
             (when in
               (with-open [out (FileOutputStream. path)]
-                (clojure.java.io/copy in out))
+                (jio/copy in out))
               path)))))))

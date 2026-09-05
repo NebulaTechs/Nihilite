@@ -13,7 +13,7 @@
         s    (ServerSocket.)]
     (.setReuseAddress s true)
     (.bind s (InetSocketAddress. "127.0.0.1" (int port)))
-    (f s (long port))
+    (f s port)
     (try (.close s) (catch Throwable _))))
 
 (defn- cleanup

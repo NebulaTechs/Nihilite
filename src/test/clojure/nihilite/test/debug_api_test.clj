@@ -1,5 +1,5 @@
 (ns nihilite.test.debug-api-test
-  (:require [clojure.test :refer [deftest testing is use-fixtures]]
+  (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.debug :as dbg]
             [nihilite.test.fixtures :as fx]))
