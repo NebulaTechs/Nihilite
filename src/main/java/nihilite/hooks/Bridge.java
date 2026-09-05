@@ -17,10 +17,17 @@ public final class Bridge {
         REDISPATCHER = d;
     }
 
+    private static final java.util.logging.Logger LOG =
+            java.util.logging.Logger.getLogger("nihilite.hooks.Bridge");
+
     public static int uninstallSpec(String specId) {
         if (specId == null) return 0;
         Instrumentation inst = nihilite.agent.Agent.currentInstrumentation();
-        if (inst == null) return 0;
+        if (inst == null) {
+            LOG.warning("Bridge.uninstallSpec: no Instrumentation (agent not armed); "
+                    + "spec '" + specId + "' removed from registry but bytecode NOT reverted");
+            return 0;
+        }
         Object spec = CLJ_REG_LOOKUP.invoke(specId);
         if (spec == null) return 0;
         String targetInternal = (String) Clojure.var("clojure.core", "get")
