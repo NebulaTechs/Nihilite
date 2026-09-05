@@ -186,7 +186,7 @@ def javaagentClasspathDriver = tasks.register('javaagentClasspathDriver', JavaEx
     jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
     systemProperty 'nihilite.compiler-loader-hint', ''
     args 'spawn-jar-smoke', jar.archiveFile.get().asFile.absolutePath,
-         project.projectDir.absolutePath + '/examples/jdkstdlib/init.clj'
+         'examples/jdkstdlib/init.clj'
 }
 
 def redefineInstanceDriver = tasks.register('redefineInstanceDriver', JavaExec) {

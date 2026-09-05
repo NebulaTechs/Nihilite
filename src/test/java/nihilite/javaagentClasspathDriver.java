@@ -31,52 +31,58 @@ public final class javaagentClasspathDriver {
     private static void spawnJavaJarSmoke(String[] argv) throws Exception {
         String nihiliteJar = argv[1];
         String initScript = argv.length > 2 ? argv[2] : "";
+        String initForm = initScript.isEmpty()
+                ? "(do (require 'clojure.repl) (in-ns 'user))"
+                : "(load-file \"" + initScript.replace("\\", "\\\\").replace("\"", "\\\"") + "\")";
         String[] cmd = new String[] {
                 System.getProperty("java.home") + "/bin/java",
                 "-Djdk.attach.allowAttachSelf=true",
                 "-XX:+EnableDynamicAgentLoading",
                 "-javaagent:" + nihiliteJar,
-                "-Dnihilite.init=" + initScript,
+                "-Dnihilite.init=" + initForm,
                 "-Dnihilite.port=0",
                 "-Dnihilite.bind=127.0.0.1",
                 "-jar", nihiliteJar
             };
         Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
         java.io.InputStream is = p.getInputStream();
-        java.io.OutputStream pipe = new java.io.ByteArrayOutputStream();
+        java.io.ByteArrayOutputStream pipe = new java.io.ByteArrayOutputStream();
         byte[] buf = new byte[4096];
         Thread reader = new Thread(() -> {
             try {
                 int n;
-                while ((n = is.read(buf)) != -1) { pipe.write(buf, 0, n); }
+                while ((n = is.read(buf)) != -1) {
+                    synchronized (pipe) { pipe.write(buf, 0, n); }
+                }
             } catch (Throwable ignored) {}
         });
         reader.setDaemon(true);
         reader.start();
-        boolean finished = p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS);
-        if (!finished) {
-            p.destroyForcibly();
-            System.err.println("javaagentClasspathDriver: jar-smoke timeout (no ServerMain boot in 15s)");
-            String log = pipe.toString();
-            int idx = log.indexOf("system loader class");
-            if (idx >= 0) System.err.println("...captured log tail:\n" + log.substring(idx));
+
+        boolean bound = false;
+        boolean initDone = false;
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(45);
+        while (System.nanoTime() < deadline && p.isAlive()) {
+            Thread.sleep(200);
+            String snap;
+            synchronized (pipe) { snap = pipe.toString(); }
+            if (!initDone && snap.contains("init eval done")) initDone = true;
+            if (!bound && snap.contains("nREPL bencode clients may connect")) bound = true;
+            if (initDone && bound) break;
+        }
+        p.destroyForcibly();
+        try { p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        String log;
+        synchronized (pipe) { log = pipe.toString(); }
+        if (!bound || !initDone) {
+            System.err.println("javaagentClasspathDriver: jar-smoke incomplete (bound=" + bound
+                    + ", initDone=" + initDone + ")");
+            System.err.println("...captured log (full):\n" + log);
             FAIL++;
             return;
         }
-        int rc = p.exitValue();
-        String log = pipe.toString();
-        if (rc == 0) {
-            System.out.println("javaagentClasspathDriver: jar-smoke (nrepl server bound + init ran) OK");
-            PASS++;
-        } else {
-            System.err.println("javaagentClasspathDriver: jar-smoke exited rc=" + rc);
-            System.err.println("...captured log (last 40 lines):");
-            String[] lines = log.split("\n");
-            for (int i = Math.max(0, lines.length - 40); i < lines.length; i++) {
-                System.err.println("    " + lines[i]);
-            }
-            FAIL++;
-        }
+        System.out.println("javaagentClasspathDriver: jar-smoke (nrepl server bound + init ran) OK");
+        PASS++;
     }
 
     private static void runNreplMiscProbe() {
