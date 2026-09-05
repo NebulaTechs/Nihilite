@@ -84,6 +84,13 @@ public final class HookInstaller {
                     .or(ElementMatchers.nameStartsWith("jdk."))
                     .or(ElementMatchers.nameStartsWith("sun."))
                     .or(ElementMatchers.nameStartsWith("com.sun."))
+                    .or(ElementMatchers.nameStartsWith("clojure."))
+                    .or(ElementMatchers.nameStartsWith("nrepl."))
+                    .or(ElementMatchers.nameStartsWith("nihilite.agent."))
+                    .or(ElementMatchers.nameStartsWith("nihilite.hooks."))
+                    .or(ElementMatchers.nameStartsWith("nihilite.boot."))
+                    .or(ElementMatchers.nameStartsWith("nihilite.transport."))
+                    .or(ElementMatchers.nameStartsWith("nihilite.registry."))
                     .or(ElementMatchers.isSynthetic()));
     }
 

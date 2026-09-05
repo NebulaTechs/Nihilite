@@ -27,6 +27,8 @@ public final class ServerMain {
                 ServerConstants.runtimeVersion());
 
         try {
+            nihilite.agent.Agent.awaitWorkerReady();
+
             IFn require = Clojure.var("clojure.core", "require");
             require.invoke(Symbol.intern("nihilite.boot"));
 

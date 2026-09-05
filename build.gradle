@@ -156,7 +156,7 @@ def clojureContractTest = tasks.register('clojureContractTest', JavaExec) {
 }
 
 tasks.named('check') {
-    dependsOn clojureContractTest, verifyJarContents, retransformDriver
+    dependsOn clojureContractTest, verifyJarContents, retransformDriver, compilerLoaderHintDriver, javaagentClasspathDriver, redefineInstanceDriver
 }
 
 def retransformDriver = tasks.register('retransformDriver', JavaExec) {
@@ -169,6 +169,36 @@ def retransformDriver = tasks.register('retransformDriver', JavaExec) {
     if (project.hasProperty('bbdump')) {
         systemProperty 'net.bytebuddy.dump', project.property('bbdump')
     }
+}
+
+def compilerLoaderHintDriver = tasks.register('compilerLoaderHintDriver', JavaExec) {
+    description = 'Driver proving Worker.resolveHostClassLoader picks the right loader'
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'nihilite.test.compilerLoaderHintDriver'
+    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
+}
+
+def javaagentClasspathDriver = tasks.register('javaagentClasspathDriver', JavaExec) {
+    description = 'Driver proving nihilite.jar + -javaagent + -jar brings nrepl.misc/nrepl.server .clj into scope'
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'nihilite.javaagentClasspathDriver'
+    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
+    systemProperty 'nihilite.compiler-loader-hint', ''
+    args 'spawn-jar-smoke', jar.archiveFile.get().asFile.absolutePath,
+         project.projectDir.absolutePath + '/examples/jdkstdlib/init.clj'
+}
+
+def redefineInstanceDriver = tasks.register('redefineInstanceDriver', JavaExec) {
+    description = 'Driver proving @This optional captures the host instance for :redefine on instance methods'
+    group = 'verification'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'nihilite.test.redefineInstanceDriver'
+    jvmArgs '-Djdk.attach.allowAttachSelf=true', '-XX:+EnableDynamicAgentLoading'
 }
 
 task printAttachClasspath {

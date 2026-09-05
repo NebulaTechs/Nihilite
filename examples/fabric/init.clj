@@ -4,11 +4,20 @@
             [nihilite.boot :as boot])
   (:import [net.minecraft.network.chat Component]))
 
+(defn- find-loaded-class
+  ^Class [^String dot-name]
+  (if-let [inst (nihilite.agent.Agent/currentInstrumentation)]
+    (some (fn [^Class c]
+            (when (and c (= dot-name (.getName c))) c))
+          (.getAllLoadedClasses inst))
+    (try
+      (Class/forName dot-name false (ClassLoader/getSystemClassLoader))
+      (catch Throwable _ nil))))
+
 (defn get-server-instance
   []
   (try
-    (let [mc-c (Class/forName "net.minecraft.server.MinecraftServer"
-                              false (ClassLoader/getSystemClassLoader))
+    (let [mc-c (find-loaded-class "net.minecraft.server.MinecraftServer")
           find-on-class (fn find-on-class [c]
                           (some (fn [field]
                                   (let [mods (.getModifiers field)]
@@ -87,10 +96,7 @@
 (boot/set-ready!
   (fn []
     (loop [attempt 0]
-      (let [found? (try
-                     (Class/forName "net.minecraft.server.MinecraftServer"
-                                    false (ClassLoader/getSystemClassLoader))
-                     (catch Throwable _ nil))]
+      (let [found? (find-loaded-class "net.minecraft.server.MinecraftServer")]
         (cond
           found? nil
           (> attempt 600)
