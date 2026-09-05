@@ -18,6 +18,7 @@ public class redefineInstanceDriver {
 
     public static void main(String[] args) throws Exception {
         Instrumentation inst = ByteBuddyAgent.install();
+        nihilite.agent.Agent.agentmain(null, inst);
         nihilite.hooks.HookInstaller.install(inst);
 
         IFn require = Clojure.var("clojure.core", "require");
@@ -49,7 +50,6 @@ public class redefineInstanceDriver {
 
         redefineInstanceDriver instance = new redefineInstanceDriver();
         instance.counter = 99;
-        inst.retransformClasses(redefineInstanceDriver.class);
         String result = instance.probe();
 
         if (!"REDEFINED-AT-ARITY0".equals(result)) {

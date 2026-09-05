@@ -6,6 +6,7 @@
   (:require [clojure.tools.logging :as log])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicBoolean AtomicLong]
+           [java.lang.instrument Instrumentation]
            [nihilite.hooks Bridge]))
 
 (defonce ^:private actions-registry
@@ -111,6 +112,31 @@
 
 (defn- bucket        ^java.util.List [t]  (get-or-create-bucket by-target t))
 (defn- method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
+
+(defn- retransform-loaded-matching!
+  [^String target-internal]
+  (when-let [^Instrumentation inst (nihilite.agent.Agent/currentInstrumentation)]
+    (let [dot-name (.replace ^String target-internal "/" ".")]
+      (try
+        (let [candidates (->> (.getAllLoadedClasses inst)
+                              (filter (fn [^Class c]
+                                        (and c (.equals dot-name (.getName c)))))
+                              vec)
+              modifiable (filter (fn [^Class c] (.isModifiableClass inst c)) candidates)]
+          (when (seq modifiable)
+            (try
+              (.retransformClasses inst (into-array Class (vec modifiable)))
+              (log/debug "retransform-loaded-matching! retransformed"
+                         (count modifiable) "class(es) for target=" target-internal)
+              (catch java.lang.instrument.UnmodifiableClassException uce
+                (log/warn "retransform-loaded-matching! could not retransform"
+                          target-internal " (UnmodifiableClassException)"))
+              (catch Throwable t
+                (log/warn t "retransform-loaded-matching! retransform failed for"
+                          target-internal)))))
+        (catch Throwable t
+          (log/warn t "retransform-loaded-matching! getAllLoadedClasses failed for"
+                    target-internal))))))
 
 (defn- next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
 
@@ -442,6 +468,7 @@
                           (when-let [t (:tag norm-spec)] (str " tag=" t))
                           (when-let [n (:note norm-spec)] (str "// " n)))
                 (mark-installed! (:id norm-spec) 0)
+                (retransform-loaded-matching! spec-target)
                 true)))))))
 
 (defn uninstall!

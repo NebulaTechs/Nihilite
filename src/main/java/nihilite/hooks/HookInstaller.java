@@ -173,34 +173,12 @@ public final class HookInstaller {
             return null;
         }
         SpecBuckets out = new SpecBuckets();
-        Object posKey = null, methodNameKey = null, descKey = null;
         for (Object s : specs) {
             Map<?, ?> sm = (Map<?, ?>) s;
-            if (posKey == null) {
-                for (Object k : sm.keySet()) {
-                    if (k != null && k.toString().equals(":position")) {
-                        posKey = k;
-                        for (Object k2 : sm.keySet()) {
-                            if (k2 != null && k2.toString().equals(":method-name")) {
-                                methodNameKey = k2;
-                            }
-                            if (k2 != null && k2.toString().equals(":source-descriptor")) {
-                                descKey = k2;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-            if (posKey == null) break;
-            Object pos = sm.get(posKey);
-            if (pos == null) continue;
-            String p = pos.toString();
-            Object mn = methodNameKey == null ? null : sm.get(methodNameKey);
-            String name = mn == null ? null : mn.toString();
-            if (name == null) continue;
-            Object desc = descKey == null ? null : sm.get(descKey);
-            String descriptor = (desc == null) ? null : desc.toString();
+            String p = lookupByName(sm, ":position");
+            String name = lookupByName(sm, ":method-name");
+            if (p == null || name == null) continue;
+            String descriptor = lookupByName(sm, ":source-descriptor");
             MethodKey mk = new MethodKey(name, descriptor);
             if (p.equals(":entry")) out.entryMethods.add(mk);
             else if (p.equals(":return")) out.returnMethods.add(mk);
@@ -208,6 +186,17 @@ public final class HookInstaller {
             else if (p.equals(":redefine")) out.redefineMethods.add(mk);
         }
         return out;
+    }
+
+    private static String lookupByName(Map<?, ?> sm, String keyName) {
+        for (Map.Entry<?, ?> e : sm.entrySet()) {
+            Object k = e.getKey();
+            if (k != null && k.toString().equals(keyName)) {
+                Object v = e.getValue();
+                return v == null ? null : v.toString();
+            }
+        }
+        return null;
     }
 
     static final class HookTypeMatcher
