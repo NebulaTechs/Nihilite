@@ -44,6 +44,16 @@ public final class Worker implements Runnable {
                             + ":redefine specs will throw at first call",
                     t);
         }
+
+        try {
+            IFn evalInit = Clojure.var("nihilite.boot", "eval-init!");
+            Object initResult = evalInit.invoke();
+            LOG.info("[Nihilite-agent] init form evaled: " + initResult);
+        } catch (Throwable t) {
+            LOG.log(Level.WARNING,
+                    "[Nihilite-agent] eval-init! failed; continuing",
+                    t);
+        }
     }
 
     private static void waitForRuntimeViaAdapter() {

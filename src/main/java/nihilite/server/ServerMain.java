@@ -34,7 +34,6 @@ public final class ServerMain {
 
             IFn startFn = Clojure.var("nihilite.boot", "start!");
             IFn stopFn  = Clojure.var("nihilite.boot", "stop!");
-            IFn loadInitFn = Clojure.var("nihilite.boot", "load-init!");
 
             int port = Integer.parseInt(System.getProperty(ServerConstants.PORT_PROPERTY));
             String bind = System.getProperty(ServerConstants.BIND_PROPERTY);
@@ -47,8 +46,6 @@ public final class ServerMain {
 
             LOG.info("canonical listener bound on " + bind + ":" + port
                     + " — nREPL bencode clients may connect");
-
-            loadInitFn.invoke();
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 LOG.info("shutdown hook firing");

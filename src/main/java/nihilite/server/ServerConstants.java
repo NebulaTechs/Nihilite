@@ -17,8 +17,6 @@ public final class ServerConstants {
 
     public static final String BIND_PROPERTY = "nihilite.bind";
 
-    public static final String INIT_PROPERTY = "nihilite.init";
-
     public static String runtimeVersion() {
         Package pkg = ServerConstants.class.getPackage();
         if (pkg != null) {

@@ -2,14 +2,17 @@
   "Server bootstrap. start! binds ONE loopback server.
    start! {:port 7888 :bind \"127.0.0.1\"} -> {:server stop-fn};
    stop! accepts {:server stop-fn} or bare IFn, idempotent;
-   load-init! returns path or nil, failures swallowed."
-  (:require [clojure.java.io :as jio]
-            [clojure.tools.logging :as log]
+   eval-init! reads nihilite.init as a Clojure form string and evals it."
+  (:require [clojure.tools.logging :as log]
             [nihilite.version :as v]
             [nihilite.transport :as transport])
   (:gen-class))
 
 (defonce ^:private ready-fn (atom nil))
+
+(def ^:private init-property-name "nihilite.init")
+
+(def ^:private init-default "(do (require 'clojure.repl) (in-ns 'user))")
 
 (defn set-ready!
   [f]
@@ -55,20 +58,17 @@
         (catch Throwable t
           (log/error t "stop failed"))))))
 
-(defn load-init!
+(defn eval-init!
   []
-  (when-let [path (System/getProperty "nihilite.init")]
-    (let [f (jio/file path)]
-      (if (.isFile f)
-        (try
-          (log/info "loading init:" (.getAbsolutePath f))
-          (load-file (.getAbsolutePath f))
-          (log/info "init loaded:" (.getAbsolutePath f))
-          (.getAbsolutePath f)
-          (catch Throwable t
-            (log/error t "init load failed")
-            nil))
-        (do (log/warn "init path is not a file:" (.getAbsolutePath f)) nil)))))
+  (let [form (or (System/getProperty init-property-name) init-default)]
+    (try
+      (log/info "eval init:" form)
+      (eval (read-string form))
+      (log/info "init eval done")
+      form
+      (catch Throwable t
+        (log/error t "init eval failed")
+        nil))))
 
 (defn -main [& _]
   (log/info "nihilite.boot -main invoked; this ns is a library, not an entry point")

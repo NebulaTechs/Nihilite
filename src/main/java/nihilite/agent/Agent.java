@@ -1,9 +1,6 @@
 package nihilite.agent;
 
-import clojure.java.api.Clojure;
-import clojure.lang.IFn;
 import nihilite.hooks.HookInstaller;
-import nihilite.server.ServerConstants;
 
 import java.io.File;
 import java.lang.instrument.Instrumentation;
@@ -54,19 +51,6 @@ public final class Agent {
         long t0 = System.nanoTime();
 
         extendSystemClassLoaderSearch(inst);
-
-        String initPath = System.getProperty(ServerConstants.INIT_PROPERTY, "");
-        if (!initPath.isEmpty()) {
-            try {
-                IFn loadFile = Clojure.var("clojure.core", "load-file");
-                loadFile.invoke(initPath);
-            } catch (Throwable t) {
-                LOG.log(Level.WARNING,
-                        String.format("[Nihilite-agent] init load failed: %s (%s)",
-                                initPath, t),
-                        t);
-            }
-        }
 
         if (inst != null && REGISTERED_ON.compareAndSet(null, inst)) {
             HookInstaller.install(inst);
