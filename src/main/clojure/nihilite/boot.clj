@@ -1,7 +1,6 @@
 (ns nihilite.boot
   (:require [clojure.tools.logging :as log]
             [nrepl.server :as nrepl.server])
-  (:import [java.util.concurrent CountDownLatch TimeUnit])
   (:gen-class
    :main true))
 
@@ -39,15 +38,14 @@
             (System/setProperty bind-prop (.substring a (count bind-arg-prefix)))
 
             (zero? @positional)
-            (do
-              (try
-                (let [p (Integer/parseInt a)]
-                  (when (<= 1 p 65535)
-                    (System/setProperty port-prop a)
-                    (swap! positional inc)))
-                (catch NumberFormatException _
-                  (System/setProperty bind-prop a)
-                  (swap! positional inc))))
+            (try
+              (let [p (Integer/parseInt a)]
+                (when (<= 1 p 65535)
+                  (System/setProperty port-prop a)
+                  (swap! positional inc)))
+              (catch NumberFormatException _
+                (System/setProperty bind-prop a)
+                (swap! positional inc)))
 
             :else
             (reset! positional-args (conj @positional-args a))))))))
@@ -70,22 +68,10 @@
               "all interfaces? " (= "0.0.0.0" bind))
     server))
 
-(defn stop!
-  "Stop the nrepl server."
-  [server]
-  (when server
-    (log/info "stopping canonical server")
-    (try
-      (nrepl.server/stop-server server)
-      (reset! runtime-server nil)
-      (log/info "canonical server stopped")
-      (catch Throwable t
-        (log/error t "stop failed")))))
-
 (defn eval-init!
   "Read the system property `nihilite.init` as a Clojure form string and eval it in
-   the current namespace. The default is to switch into user and require clojure.repl
-   so the connected client has familiar REPL bindings."
+   the current namespace. The default is (require 'clojure.repl) so the connected
+   nREPL client has familiar REPL bindings."
   []
   (let [form (or (System/getProperty init-property-name) init-default-form)]
     (log/info "eval init:" form)
@@ -96,11 +82,6 @@
       (log/info "init eval done")
       (catch Throwable t
         (log/error t "init eval failed")))))
-
-(defn await-runtime-ready!
-  "Block until runtime is ready (server bound, init evaluated)."
-  []
-  nil)
 
 (defn -main
   "Entry point invoked by java -jar nihilite.jar. Parses args, starts the
