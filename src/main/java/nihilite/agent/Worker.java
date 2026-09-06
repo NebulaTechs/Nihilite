@@ -55,17 +55,6 @@ public final class Worker implements Runnable {
         }
     }
 
-    private static void waitForRuntimeViaAdapter() {
-        try {
-            IFn awaitFn = Clojure.var("nihilite.boot", "await-runtime-ready!");
-            awaitFn.invoke();
-        } catch (Throwable t) {
-            LOG.log(Level.WARNING,
-                    "[Nihilite-agent] runtime-sentinel wait failed (soft); continuing",
-                    t);
-        }
-    }
-
     private static void bindCompilerLoader() {
         ClassLoader hostCl = resolveHostClassLoader();
         DynamicClassLoader loader = new DynamicClassLoader(hostCl);

@@ -10,7 +10,7 @@
 
 (def ^:private init-property-name "nihilite.init")
 
-(def ^:private init-default-form "(do (require 'clojure.repl) (in-ns 'user))")
+(def ^:private init-default-form "(require 'clojure.repl)")
 
 (defonce ^:private runtime-server (atom nil))
 

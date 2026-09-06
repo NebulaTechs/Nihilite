@@ -31,7 +31,7 @@ application {
 
 configurations {
   aopCompileClasspath {
-    extendsFrom configurations.runtimeClasspath
+    extendsFrom configurations.compileClasspath
   }
 }
 
@@ -50,7 +50,7 @@ def aopCompile = tasks.register('aopCompile', JavaExec) {
   description = 'AOP-compile nihilite namespaces to .class'
   group = 'build'
   dependsOn compileJava
-  classpath = configurations.aopCompileClasspath + files("$buildDir/classes/java/main") + files('src/main/clojure')
+  classpath = sourceSets.main.runtimeClasspath + files('src/main/clojure')
   mainClass = 'nihilite.build.AotCompile'
   args 'src/main/clojure', 'build/classes/java/main'
   args nihiliteNamespaces
