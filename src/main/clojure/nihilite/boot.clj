@@ -1,12 +1,17 @@
 (ns nihilite.boot
-  (:require [clojure.tools.logging :as log]
+  (:require [nihilite.version :as v]
             [nrepl.middleware]
             [nrepl.server :as nrepl.server])
-  (:gen-class
-   :main true))
+  (:import [java.util.logging Logger Level]))
 
-(defonce ^:private runtime-version
-  (or (System/getProperty "nihilite.runtime.version") "dev"))
+(defonce ^:private log (Logger/getLogger "Nihilite.Boot"))
+
+(defonce ^{:tag '[String Level]} silent-log
+  (let [l (Logger/getLogger "Nihilite.Boot")]
+    (.setLevel l Level/WARNING)
+    l))
+
+(defonce ^:private runtime-version v/version)
 
 (def ^:private init-property-name "nihilite.init")
 
@@ -69,9 +74,6 @@
         handler (nrepl.server/default-handler (var middleware-stack))
         server (nrepl.server/start-server :port port :bind bind :handler handler)]
     (reset! runtime-server server)
-    (log/info "nihilite version" runtime-version)
-    (log/info "starting canonical server on" bind ":" port
-              "all interfaces? " (= "0.0.0.0" bind))
     server))
 
 (defn eval-init!
@@ -80,14 +82,13 @@
    nREPL client has familiar REPL bindings."
   []
   (let [form (or (System/getProperty init-property-name) init-default-form)]
-    (log/info "eval init:" form)
     (try
       (let [forms (read-string (str "[" form "]"))]
         (doseq [f forms]
           (clojure.lang.Compiler/eval f)))
-      (log/info "init eval done")
       (catch Throwable t
-        (log/error t "init eval failed")))))
+        (.log ^Logger log Level/WARNING
+              (str "[Nihilite] init failed: " (.getMessage t)) t)))))
 
 (defn -main
   "Entry point invoked by java -jar nihilite.jar. Parses args, starts the
@@ -95,14 +96,15 @@
    forever so the JVM stays alive until killed."
   [& args]
   (try
-    (log/info "Nihilite server" runtime-version "- starting")
     (parse-args args)
     (start!)
-    (log/info "canonical listener bound; nrepl bencode clients may connect")
     (eval-init!)
-    (log/info "nihilite.boot/-main ready; awaiting shutdown")
+    (println (str "[Nihilite] server " runtime-version " ready on "
+                  (System/getProperty "nihilite.bind") ":"
+                  (System/getProperty "nihilite.port")))
+    (flush)
     @(.await (java.util.concurrent.CountDownLatch. 1))
     (catch InterruptedException _ nil)
     (catch Throwable t
-      (log/error t "FATAL")
+      (.log ^Logger log Level/SEVERE (str "[Nihilite] FATAL: " (.getMessage t)) t)
       (System/exit 1))))

@@ -1,5 +1,7 @@
 package nihilite.agent;
 
+import clojure.lang.IFn;
+
 import nihilite.hooks.HookInstaller;
 
 import java.io.File;
@@ -16,6 +18,15 @@ public final class Agent {
 
     private static final Logger LOG = Logger.getLogger("nihilite.agent.Agent");
 
+    static {
+        Level defaultLevel = Level.WARNING;
+        Logger.getLogger("nihilite.agent.Agent").setLevel(defaultLevel);
+        Logger.getLogger("nihilite.agent.Worker").setLevel(defaultLevel);
+        Logger.getLogger("Nihilite").setLevel(defaultLevel);
+        Logger.getLogger("Nihilite.Boot").setLevel(defaultLevel);
+        Logger.getLogger("").setLevel(defaultLevel);
+    }
+
     private static final AtomicReference<Instrumentation> REGISTERED_ON =
             new AtomicReference<>();
 
@@ -25,6 +36,17 @@ public final class Agent {
 
     public static Instrumentation currentInstrumentation() {
         return REGISTERED_ON.get();
+    }
+
+    public static void main(String[] args) {
+        premain(null, null);
+        awaitWorkerReady();
+        IFn bootMain = clojure.java.api.Clojure.var("nihilite.boot", "-main");
+        if (bootMain == null) {
+            LOG.log(Level.SEVERE, "[Nihilite] nihilite.boot/-main is not present; abort");
+            System.exit(1);
+        }
+        bootMain.applyTo(clojure.lang.RT.seq(args));
     }
 
     private static final AtomicBoolean WORKER_STARTED = new AtomicBoolean(false);
@@ -41,9 +63,9 @@ public final class Agent {
             try (java.util.jar.JarFile jarFile = new java.util.jar.JarFile(jar)) {
                 inst.appendToSystemClassLoaderSearch(jarFile);
             }
-            LOG.info("[Nihilite-agent] appended " + jar + " to system classloader search");
+            LOG.info("[Nihilite Agent] appended " + jar + " to system classloader search");
         } catch (Throwable t) {
-            LOG.log(Level.WARNING, "[Nihilite-agent] appendToSystemClassLoaderSearch failed", t);
+            LOG.log(Level.WARNING, "[Nihilite Agent] appendToSystemClassLoaderSearch failed", t);
         }
     }
 
@@ -54,13 +76,13 @@ public final class Agent {
 
         if (inst != null && REGISTERED_ON.compareAndSet(null, inst)) {
             HookInstaller.install(inst);
-            LOG.info("[Nihilite-agent] premain armed HookInstaller (ByteBuddy AgentBuilder)");
+            LOG.info("[Nihilite Agent] premain armed HookInstaller (ByteBuddy AgentBuilder)");
         }
 
         startWorkerOnce();
 
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
-        LOG.info(String.format("[Nihilite-agent] premain returned in %d ms", elapsedMs));
+        LOG.info(String.format("[Nihilite Agent] premain returned in %d ms", elapsedMs));
     }
 
     public static void agentmain(String args, Instrumentation inst) {
@@ -68,15 +90,15 @@ public final class Agent {
         extendSystemClassLoaderSearch(inst);
         if (inst != null && REGISTERED_ON.compareAndSet(null, inst)) {
             HookInstaller.install(inst);
-            LOG.info("[Nihilite-agent] agentmain armed HookInstaller (dynamic attach)");
+            LOG.info("[Nihilite Agent] agentmain armed HookInstaller (dynamic attach)");
         } else if (inst != null) {
             LOG.info(String.format(
-                    "[Nihilite-agent] agentmain no-op (HookInstaller already registered for %s)",
+                    "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)",
                     REGISTERED_ON.get()));
         }
         startWorkerOnce();
         long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
-        LOG.info(String.format("[Nihilite-agent] agentmain returned in %d ms", elapsedMs));
+        LOG.info(String.format("[Nihilite Agent] agentmain returned in %d ms", elapsedMs));
     }
 
     static boolean claimWorker() {

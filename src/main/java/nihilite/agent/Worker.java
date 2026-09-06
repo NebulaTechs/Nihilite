@@ -19,7 +19,7 @@ public final class Worker implements Runnable {
             initClojure();
             bindCompilerLoader();
         } catch (Throwable t) {
-            LOG.log(Level.SEVERE, "[Nihilite-agent] worker failed", t);
+            LOG.log(Level.SEVERE, "[Nihilite Agent] worker failed", t);
         } finally {
             nihilite.agent.Agent.signalWorkerReady();
         }
@@ -36,21 +36,11 @@ public final class Worker implements Runnable {
             IFn installRedisp = Clojure.var(
                     "nihilite.registry", "install-redefine-dispatcher!");
             Object result = installRedisp.invoke();
-            LOG.info("[Nihilite-agent] redefine dispatcher installed: " + result);
+            LOG.info("[Nihilite Agent] redefine dispatcher installed: " + result);
         } catch (Throwable t) {
             LOG.log(Level.WARNING,
-                    "[Nihilite-agent] install-redefine-dispatcher! failed; "
+                    "[Nihilite Agent] install-redefine-dispatcher! failed; "
                             + ":redefine specs will throw at first call",
-                    t);
-        }
-
-        try {
-            IFn evalInit = Clojure.var("nihilite.boot", "eval-init!");
-            Object initResult = evalInit.invoke();
-            LOG.info("[Nihilite-agent] init form evaled: " + initResult);
-        } catch (Throwable t) {
-            LOG.log(Level.WARNING,
-                    "[Nihilite-agent] eval-init! failed; continuing",
                     t);
         }
     }
@@ -59,7 +49,7 @@ public final class Worker implements Runnable {
         ClassLoader hostCl = resolveHostClassLoader();
         DynamicClassLoader loader = new DynamicClassLoader(hostCl);
         Compiler.LOADER.bindRoot(loader);
-        LOG.info(String.format("[Nihilite-agent] Compiler/LOADER bound to %s wrapping %s",
+        LOG.info(String.format("[Nihilite Agent] Compiler/LOADER bound to %s wrapping %s",
                 loader.getClass().getName(), hostCl));
     }
 
@@ -73,16 +63,16 @@ public final class Worker implements Runnable {
                 for (Class<?> c : inst.getAllLoadedClasses()) {
                     if (c != null && dotName.equals(c.getName()) && c.getClassLoader() != null) {
                         LOG.info(String.format(
-                                "[Nihilite-agent] compiler-loader hint '%s' resolved to %s",
+                                "[Nihilite Agent] compiler-loader hint '%s' resolved to %s",
                                 hint, c.getClassLoader()));
                         return c.getClassLoader() == null ? ClassLoader.getSystemClassLoader() : c.getClassLoader();
                     }
                 }
                 LOG.warning(String.format(
-                        "[Nihilite-agent] compiler-loader hint '%s' not found among loaded classes; "
+                        "[Nihilite Agent] compiler-loader hint '%s' not found among loaded classes; "
                                 + "falling back to system classloader", hint));
             } else {
-                LOG.warning("[Nihilite-agent] compiler-loader hint set but no Instrumentation "
+                LOG.warning("[Nihilite Agent] compiler-loader hint set but no Instrumentation "
                         + "(standalone server mode); falling back to system classloader");
             }
         }

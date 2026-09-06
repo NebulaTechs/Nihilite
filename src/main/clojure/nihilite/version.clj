@@ -1,10 +1,14 @@
-(ns nihilite.version)
+(ns nihilite.version
+  (:import [java.text SimpleDateFormat]
+           [java.util Date]))
 
-(def ^:private hardcoded "dev-j25-1.0")
+(defonce ^:private timestamp
+  (let [fmt (SimpleDateFormat. "yyyyMMdd-HHmmss")]
+    (.format fmt (Date.))))
 
 (def version
   (or (System/getProperty "nihilite.runtime.version")
       (let [pkg (Package/getPackage "nihilite.server")]
         (when pkg
           (.getImplementationVersion pkg)))
-      hardcoded))
+      (str "dev-" timestamp)))

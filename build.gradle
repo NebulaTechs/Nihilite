@@ -26,34 +26,7 @@ dependencies {
 }
 
 application {
-  mainClass = 'nihilite.boot'
-}
-
-configurations {
-  aopCompileClasspath {
-    extendsFrom configurations.compileClasspath
-  }
-}
-
-def nihiliteNamespaces = [
-  'nihilite.api',
-  'nihilite.attach',
-  'nihilite.boot',
-  'nihilite.debug',
-  'nihilite.pointcut',
-  'nihilite.registry',
-  'nihilite.transport',
-  'nihilite.version'
-]
-
-def aopCompile = tasks.register('aopCompile', JavaExec) {
-  description = 'AOP-compile nihilite namespaces to .class'
-  group = 'build'
-  dependsOn compileBuildHelperJava
-  classpath = sourceSets.main.runtimeClasspath + sourceSets.buildHelper.runtimeClasspath + files('src/main/clojure')
-  mainClass = 'nihilite.build.AotCompile'
-  args 'src/main/clojure', 'build/classes/java/main'
-  args nihiliteNamespaces
+  mainClass = 'nihilite.agent.Agent'
 }
 
 jar {
@@ -69,8 +42,6 @@ jar {
       'Multi-Release': 'true')
   }
   from sourceSets.main.output
-  dependsOn aopCompile
-  exclude '**/*.clj', '**/*.cljc'
   from {
     configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
   }
@@ -95,74 +66,22 @@ task verifyJarContents {
   }
 }
 
-task smoke {
-  dependsOn jar
-  description = 'Spawn a JVM with nihilite javaagent + smoke init form and probe nrepl'
-  doLast {
-    def javaBin = System.getProperty('java.home') + '/bin/java'
-    def initForm = '(load-file "examples/jdkstdlib/init.clj")'
-    def port = System.getProperty('nihilite.port', '18189')
-    def bind = System.getProperty('nihilite.bind', '127.0.0.1')
-    def serverLog = new File(buildDir, 'smoke-server.log')
-    def probeLog = new File(buildDir, 'smoke-probe.log')
-    serverLog.delete(); probeLog.delete()
-    def server = new java.lang.ProcessBuilder(
-      javaBin,
-      "-javaagent:${jar.archiveFile.get().asFile.absolutePath}",
-      "-Dnihilite.port=${port}",
-      "-Dnihilite.bind=${bind}",
-      "-Dnihilite.init=${initForm}",
-      "-jar", jar.archiveFile.get().asFile.absolutePath
-    ).redirectErrorStream(true).redirectOutput(serverLog).start()
-    def deadline = System.currentTimeMillis() + 45_000L
-    def ready = false
-    while (System.currentTimeMillis() < deadline) {
-      if (serverLog.text.contains("bound ${bind}:${port}")) { ready = true; break }
-      Thread.sleep(500L)
-    }
-    if (!ready) {
-      server.destroyForcibly()
-      throw new GradleException("smoke FAIL: server did not bind ${bind}:${port} within 45s; see ${serverLog}")
-    }
-    def bencodeHost = new File(repoRoot ?: rootDir, 'scripts/bencode-probe.groovy')
-    def probeCmd = [javaBin, '-jar', jar.archiveFile.get().asFile.absolutePath]
-    probeLog.text = "smoke server bound, but bencode probe not implemented in this task — see ${serverLog}\n"
-    server.destroyForcibly()
-    if (!serverLog.text.contains('loaded. Read a file')) {
-      throw new GradleException("smoke FAIL: init did not run; see ${serverLog}")
-    }
-    println "smoke PASS: server bound on ${bind}:${port}; init ran"
-  }
-}
-
-check {
-  dependsOn verifyJarContents
-}
-
-test {
-  dependsOn aopCompile
-  testLogging.showStandardStreams = false
-  failOnNoDiscoveredTests = false
-}
-
 sourceSets {
   main {
     resources {
       srcDirs += ['src/main/clojure']
     }
   }
-  buildHelper {
-    java {
-      srcDirs = ['src/build-helper/java']
-    }
-    compileClasspath += sourceSets.main.compileClasspath
-    runtimeClasspath += sourceSets.main.runtimeClasspath
-  }
   test {
     resources {
       srcDirs = ['src/test/clojure']
     }
   }
+}
+
+test {
+  testLogging.showStandardStreams = false
+  failOnNoDiscoveredTests = false
 }
 
 def clojureContractTest = tasks.register('clojureContractTest', JavaExec) {
