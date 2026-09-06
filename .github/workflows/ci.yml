@@ -31,7 +31,7 @@ jobs:
           java-version: '25'
           cache: gradle
 
-      - run: ./gradlew --no-daemon clojureContractTest retransformDriver assemble verifyJarContents
+      - run: ./gradlew --no-daemon --no-build-cache --no-configuration-cache clojureContractTest retransformDriver assemble verifyJarContents
 
       - uses: actions/upload-artifact@v7
         if: success()

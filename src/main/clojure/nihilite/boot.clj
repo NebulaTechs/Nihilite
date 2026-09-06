@@ -1,5 +1,6 @@
 (ns nihilite.boot
   (:require [clojure.tools.logging :as log]
+            [nrepl.middleware]
             [nrepl.server :as nrepl.server])
   (:gen-class
    :main true))
@@ -54,6 +55,11 @@
   "No-op middleware stack; replace with custom middlewares in user init if needed."
   [handler]
   handler)
+
+(nrepl.middleware/set-descriptor!
+ #'middleware-stack
+ {:requires #{}
+  :expects  #{"eval"}})
 
 (defn start!
   "Start the nrepl server on the configured bind:port and return the server handle."

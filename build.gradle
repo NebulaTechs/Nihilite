@@ -49,8 +49,8 @@ def nihiliteNamespaces = [
 def aopCompile = tasks.register('aopCompile', JavaExec) {
   description = 'AOP-compile nihilite namespaces to .class'
   group = 'build'
-  dependsOn compileJava
-  classpath = sourceSets.main.runtimeClasspath + files('src/main/clojure')
+  dependsOn compileBuildHelperJava
+  classpath = sourceSets.main.runtimeClasspath + sourceSets.buildHelper.runtimeClasspath + files('src/main/clojure')
   mainClass = 'nihilite.build.AotCompile'
   args 'src/main/clojure', 'build/classes/java/main'
   args nihiliteNamespaces
@@ -150,6 +150,13 @@ sourceSets {
     resources {
       srcDirs += ['src/main/clojure']
     }
+  }
+  buildHelper {
+    java {
+      srcDirs = ['src/build-helper/java']
+    }
+    compileClasspath += sourceSets.main.compileClasspath
+    runtimeClasspath += sourceSets.main.runtimeClasspath
   }
   test {
     resources {

@@ -1,9 +1,11 @@
 (ns nihilite.attach
    "Attach API. Discovers agent jar via protection domain; renamed jars work transparently.
-    agent-jar-path nils on directory/IDE load; attach-to! caller responsible for .detach."
+    agent-jar-path nils on directory/IDE load; attach-to! caller responsible for .detach.
+
+    VirtualMachine (com.sun.tools.attach) is referenced only inside attach-to! so the
+    rest of nihilite loads cleanly on minimal JVMs that lack tools.jar."
   (:require [clojure.tools.logging :as log])
-  (:import (com.sun.tools.attach VirtualMachine)
-           (java.io File)
+  (:import (java.io File)
            (nihilite.agent Agent)))
 
 (defn- agent-jar-path
@@ -34,17 +36,24 @@
           nil))))
 
 (defn attach-to!
-  ^VirtualMachine [pid]
+  [pid]
   (let [jar (agent-jar-path)]
     (when (nil? jar)
       (throw (IllegalStateException.
               "[Nihilite-attach] cannot resolve agent jar path")))
     (log/info "[Nihilite-attach] attaching to pid=" pid
               " via agent jar=" (.getAbsolutePath ^File jar))
-    (let [vm (.attach VirtualMachine (str pid))]
+    (let [VirtualMachine (Class/forName "com.sun.tools.attach.VirtualMachine")
+          vm (.invoke (.getMethod VirtualMachine "attach" (into-array Class [(Class/forName "java.lang.String")]))
+                      VirtualMachine
+                      (object-array [(str pid)]))]
       (try
-        (.loadAgent vm (.getAbsolutePath ^File jar))
+        (.invoke (.getMethod VirtualMachine "loadAgent" (into-array Class [(Class/forName "java.lang.String")]))
+                 vm
+                 (object-array [(.getAbsolutePath ^File jar)]))
         vm
         (catch Throwable t
-          (.detach vm)
+          (.invoke (.getMethod VirtualMachine "detach" (into-array Class []))
+                   vm
+                   (object-array []))
           (throw t))))))
