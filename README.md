@@ -3,14 +3,14 @@
 Clojure nREPL agent for any running JVM, with ByteBuddy hooks into host
 classes.
 
-```
+```sh
 ./gradlew --no-daemon assemble
 ./gradlew --no-daemon check
 ```
 
 ## Run
 
-```
+```sh
 java -jar build/libs/nihilite.jar
 java -javaagent:build/libs/nihilite.jar -jar build/libs/nihilite.jar
 ```
@@ -25,7 +25,7 @@ Configuration (`-D` system property or `--key=value` CLI arg, CLI wins):
 
 ## Hooks
 
-```
+```clojure
 (require '[nihilite.api :as api])
 
 (api/install!
@@ -66,10 +66,10 @@ See `examples/jdkstdlib/init.clj` for a complete hook.
 
 ## Test
 
-```
+```sh
 ./gradlew --no-daemon check                 # full
 ./gradlew --no-daemon clojureContractTest   # Clojure tests
-bash scripts/smoke-jdkstdlib.sh             # end-to-end spawn + probe
+bash scripts/smoke-jdkstdlib.sh             # E2E spawn & probe
 ```
 
 ## License
