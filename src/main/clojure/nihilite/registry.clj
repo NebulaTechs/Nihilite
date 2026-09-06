@@ -234,24 +234,6 @@
       (let [m (.get ^java.util.concurrent.atomic.AtomicReference ref)]
         (assoc m :spec-id id)))))
 
-(defonce ^:private trace-buffer
-  (java.util.concurrent.ConcurrentLinkedQueue.))
-
-(def ^:const trace-capacity 256)
-
-(defn- record-trace! [summary]
-  (.add trace-buffer summary)
-  (while (> (.size trace-buffer) trace-capacity)
-    (.poll trace-buffer))
-  nil)
-
-(defn trace-snapshot []
-  (vec trace-buffer))
-
-(defn- trace-clear! []
-  (.clear trace-buffer)
-  nil)
-
 (defn- ->hook-event
   "Construct HookEvent. :cancelled?/:cancel! are closures over AtomicBoolean."
   [spec self args return-value]
@@ -315,15 +297,7 @@
     :else nil))
 
 (defn ctx-self        [x]          (when-some [c (->ctx x)] (:self c)))
-(defn ctx-arg         [x n]        (when-some [c (->ctx x)]
-                                     (let [args (.-args ^HookContext c)]
-                                       (when (and args (>= n 0) (< n (alength args)))
-                                         (aget args (int n))))))
-(defn ctx-argc        [x]          (when-some [c (->ctx x)]
-                                     (let [args (.-args ^HookContext c)]
-                                         (if args (alength args) 0))))
 (defn ctx-return      [x]          (when-some [c (->ctx x)] (.-returnValue ^HookContext c)))
-(defn ctx-phase       [x]          (when-some [c (->ctx x)] (.-phase ^HookContext c)))
 (defn ctx-cancel!     [x value]    (cond
                                      (instance? HookContext x)
                                      (set! (.-cancelled ^HookContext x) (boolean value))
@@ -336,13 +310,6 @@
                                      (let [c (.-cancelled? ^HookEvent x)]
                                        (if (fn? c) (boolean (c)) (boolean c)))
                                      :else false))
-
-(defn position
-  [m]
-  (or (and (instance? HookEvent m) (.-phase ^HookEvent m))
-      (and (map? m)
-           (or (get m "position") (:position m)))
-      nil))
 
 (defn install!
   [spec]
@@ -520,8 +487,7 @@
   []
   (locking registry-lock
     (clear-all!)
-    (stats-clear!)
-    (trace-clear!)))
+    (stats-clear!)))
 
 (defn matching
   ^java.util.List [target-internal]
@@ -598,12 +564,6 @@
                     f      (safe-bridge s)]
                 (dispatch-one! f event (:id s))
                 (bump-fired! (:id s))
-                (record-trace! {:spec-id (:id s)
-                                :phase   (:phase event)
-                                :action  action
-                                :thread  (:thread-name event)
-                                :ts-ns   (:timestamp-ns event)
-                                :seq     (:sequence event)})
                 (cond
                   (= action :cancel)
                   (do (call-cancel! event)

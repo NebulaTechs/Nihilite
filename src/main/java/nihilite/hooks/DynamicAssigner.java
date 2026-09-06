@@ -5,9 +5,7 @@ import net.bytebuddy.implementation.bytecode.StackManipulation;
 import net.bytebuddy.implementation.bytecode.assign.Assigner;
 import net.bytebuddy.implementation.bytecode.assign.TypeCasting;
 
-/** Custom Assigner that always uses DYNAMIC typing for cast steps,
- *  so Clojure functions returning Object can stand in for any host
- *  method's return type without per-spec assigner wiring. */
+
 public final class DynamicAssigner implements Assigner {
 
     public static final DynamicAssigner INSTANCE = new DynamicAssigner();

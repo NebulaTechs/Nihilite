@@ -18,6 +18,6 @@
                  :bridge (fn [_])})
   (let [e (reg/lookup "common-entry")
         t (reg/lookup "common-throw")]
-    (is (= :entry (reg/position e)))
-    (is (= :throw (reg/position t)))
+    (is (= :entry (:position e)))
+    (is (= :throw (:position t)))
     (is (= 2 (count (reg/matching "java/lang/String"))))))

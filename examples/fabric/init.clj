@@ -1,7 +1,6 @@
 (ns examples.fabric.init
   "Fabric runtime init for nihilite, loaded by nihilite.agent.Agent#premain via -Dnihilite.init."
-  (:require [nihilite.api :as api]
-            [nihilite.boot :as boot])
+  (:require [nihilite.api :as api])
   (:import [net.minecraft.network.chat Component]))
 
 (defn- find-loaded-class
@@ -93,16 +92,7 @@
      :bridge (fn [ctx] (let [f @return-var] (f ctx)))
      :note "Fabric :return demo on MinecraftServer.sendSystemMessage"}))
 
-(boot/set-ready!
-  (fn []
-    (loop [attempt 0]
-      (let [found? (find-loaded-class "net.minecraft.server.MinecraftServer")]
-        (cond
-          found? nil
-          (> attempt 600)
-          (throw (ex-info "MC never reached" {:attempt attempt}))
-          :else (do (Thread/sleep 100) (recur (inc attempt))))))))
-
 (println (str "[examples.fabric.init] loaded. Get server via "
-               "(examples.fabric.init/get-server-instance)."))
+               "(examples.fabric.init/get-server-instance).")
+         "MinecraftServer class must be loaded before any MC hook will fire.")
 (flush)

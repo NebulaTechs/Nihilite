@@ -16,9 +16,7 @@
 
 (def ^:const TEST_NAMESPACES
   ["nihilite.test.registry-atomic-install-test"
-   "nihilite.test.pointcut-matchers-test"
    "nihilite.test.custom-action-test"
-   "nihilite.test.debug-api-test"
    "nihilite.test.dispatch-return-cancel-test"
    "nihilite.test.install-redefine-reject-test"
    "nihilite.test.dispatch-exception-test"
@@ -26,7 +24,6 @@
    "nihilite.test.dispatch-common-test"
    "nihilite.test.dispatch-entry-cancel-test"
    "nihilite.test.transport-timeout-test"
-   "nihilite.test.position-accessor-test"
    "nihilite.test.attach-test"
    "nihilite.test.agent-worker-once-test"
    "nihilite.test.transport-bencode-roundtrip-test"

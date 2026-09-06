@@ -1,7 +1,6 @@
 (ns examples.minecraft.init
   "Minecraft vanilla runtime init for nihilite, loaded via -Dnihilite.init=examples/minecraft/init.clj."
-  (:require [nihilite.api :as api]
-            [nihilite.boot :as boot])
+  (:require [nihilite.api :as api])
   (:import [net.minecraft.server MinecraftServer]
            [net.minecraft.network.chat Component]))
 
@@ -77,23 +76,10 @@
      :action :observe
      :bridge (fn [ctx]
                (let [f @handler-var]
-                 (f ctx)))
+                  (f ctx)))
      :note "Default MC sendSystemMessage event — bridge forwards to minecraft-handler; alter-var-root for live rewrite."}))
 
-(boot/set-ready!
-  (fn []
-    (loop [attempt 0]
-      (let [found? (find-loaded-class "net.minecraft.server.MinecraftServer")]
-        (cond
-          found? nil
-          (> attempt 600)
-          (throw (ex-info "MinecraftServer class never reached after 60s"
-                          {:nihilite/kind :nihilite/timeout
-                           :attempt attempt}))
-          :else
-          (do (Thread/sleep 100)
-              (recur (inc attempt))))))))
-
 (println (str "[examples.minecraft.init] loaded. Get server via "
-              "(examples.minecraft.init/get-server-instance)."))
+              "(examples.minecraft.init/get-server-instance).")
+         "MinecraftServer class must be loaded before any MC hook will fire.")
 (flush)

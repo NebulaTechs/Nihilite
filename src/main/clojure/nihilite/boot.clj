@@ -4,12 +4,9 @@
             [nrepl.server :as nrepl.server])
   (:import [java.util.logging Logger Level]))
 
-(defonce ^:private log (Logger/getLogger "Nihilite.Boot"))
-
-(defonce ^{:tag '[String Level]} silent-log
-  (let [l (Logger/getLogger "Nihilite.Boot")]
-    (.setLevel l Level/WARNING)
-    l))
+(defonce ^:private log
+  (doto (Logger/getLogger "Nihilite.Boot")
+    (.setLevel Level/WARNING)))
 
 (defonce ^:private runtime-version v/version)
 

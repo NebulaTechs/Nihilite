@@ -6,7 +6,7 @@ import net.bytebuddy.asm.Advice;
 
 import java.util.logging.Logger;
 
-/** :throw-phase Advice: dispatch throws via Clojure spec; original throwable re-thrown after dispatch. */
+
 public final class ThrowAdvice {
 
     private static final Logger LOG = Logger.getLogger("nihilite.hooks.ThrowAdvice");
