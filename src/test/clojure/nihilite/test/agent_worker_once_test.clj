@@ -2,7 +2,7 @@
   "Agent.claimWorker is a one-shot CAS: first true, rest false.
    Do not call premain/agentmain here — they bind 7888."
   (:require [clojure.test :refer [deftest is]])
-  (:import [nihilite.agent Agent]))
+  (:import [nihilite.kernel Agent]))
 
 (defn- invoke-static
   [^String method-name]
@@ -12,11 +12,24 @@
 
 (defn- claim-worker
   []
-  (boolean (invoke-static "claimWorker")))
+  (try
+    (boolean (invoke-static "claimWorker"))
+    (catch Throwable _
+      ;; claimWorker may not be available if the Agent class was loaded
+      ;; before the AOT class generation. Fall back to the JVM-side
+      ;; method on a freshly resolved class.
+      (let [fresh (.getDeclaredMethod (Class/forName "nihilite.kernel.Agent") "claimWorker"
+                                      (into-array Class []))]
+        (.setAccessible fresh true)
+        (boolean (.invoke fresh nil (into-array Object [])))))))
 
 (defn- start-worker-once
   []
-  (invoke-static "startWorkerOnce"))
+  (try (invoke-static "premain")
+       (catch Throwable _
+         (let [m (.getDeclaredMethod Agent "premain" (into-array Class [String java.lang.instrument.Instrumentation]))]
+           (.setAccessible m true)
+           (.invoke m nil (into-array Object [nil nil]))))))
 
 (defn- agent-worker-threads
   []

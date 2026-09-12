@@ -32,8 +32,9 @@
    "nihilite.test.api-facade-test"
    "nihilite.test.swap-bridge-test"
    "nihilite.test.install-status-test"
-   "nihilite.test.compiler-loader-hint-test"
-   "nihilite.test.uninstall-warn-test"])
+    "nihilite.test.compiler-loader-hint-test"
+    "nihilite.test.uninstall-warn-test"
+    "nihilite.test.redefine-advice-composition-test"])
 
 (defn- safe-deref
   [r]

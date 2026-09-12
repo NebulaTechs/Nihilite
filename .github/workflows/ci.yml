@@ -29,15 +29,34 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-          cache: gradle
+          cache: maven
 
-      - run: ./gradlew --no-daemon --no-build-cache --no-configuration-cache clojureContractTest retransformDriver assemble verifyJarContents
+      - uses: DeppkHP/clojure-cli-action@v2
+        with:
+          version: '1.12.5'
+
+      - name: AOT compile
+        run: clojure -T:build compile-clj
+
+      - name: Contract tests
+        run: clojure -T:build clojure-contract-test
+
+      - name: Driver probes
+        run: |
+          clojure -T:build retransform-driver
+          clojure -T:build compiler-loader-driver
+
+      - name: Build uberjar
+        run: clojure -T:build uberjar
+
+      - name: Verify jar contents
+        run: clojure -T:build verify-jar
 
       - uses: actions/upload-artifact@v7
         if: success()
         with:
           name: nihilite.jar
-          path: build/libs/nihilite.jar
+          path: target/nihilite.jar
           retention-days: 14
 
       - name: Publish dev release
@@ -45,5 +64,5 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: dev-$(date -u +%Y%m%d-%H%M%S)
-          files: build/libs/nihilite.jar
+          files: target/nihilite.jar
           generate_release_notes: true

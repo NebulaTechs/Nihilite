@@ -6,7 +6,7 @@
     rest of nihilite loads cleanly on minimal JVMs that lack tools.jar."
   (:require [clojure.tools.logging :as log])
   (:import (java.io File)
-           (nihilite.agent Agent)))
+           (nihilite.kernel Agent)))
 
 (defn- agent-jar-path
   ^File []

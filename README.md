@@ -1,29 +1,31 @@
 # Nihilite
 
-Clojure nREPL agent for any running JVM, with ByteBuddy hooks into host
-classes.
+Clojure nREPL agent for any running JVM. Attaches an nREPL server on
+`:7888` and weaves ByteBuddy method hooks into host classes via a
+pure-Clojure kernel.
+
+## Build
 
 ```sh
-./gradlew --no-daemon assemble
-./gradlew --no-daemon check
+clojure -T:build uberjar
 ```
 
 ## Run
 
 ```sh
-java -jar build/libs/nihilite.jar
-java -javaagent:build/libs/nihilite.jar -jar build/libs/nihilite.jar
+java -jar target/nihilite.jar
+java -javaagent:target/nihilite.jar -jar target/nihilite.jar
 ```
 
-Connect: `lein repl :connect 127.0.0.1:7888`.
+Connect to `127.0.0.1:7888` with any bencode nREPL client.
 
-Configuration (`-D` system property or `--key=value` CLI arg, CLI wins):
+Configuration via `-D` system property or `--key=value` CLI arg:
 
 - `nihilite.bind` (default `127.0.0.1`)
 - `nihilite.port` (default `7888`)
-- `nihilite.init` — a Clojure form run at startup. Default `(require 'clojure.repl)`. Use `(load-file "examples/jdkstdlib/init.clj")` for scripts.
+- `nihilite.init` — a Clojure form run at startup
 
-## Hooks
+## Hooks API
 
 ```clojure
 (require '[nihilite.api :as api])
@@ -39,37 +41,32 @@ Configuration (`-D` system property or `--key=value` CLI arg, CLI wins):
    :note            "..."})
 ```
 
-`spec` keys:
+| key | meaning |
+|-----|---------|
+| `:id` | unique hook identifier (string) |
+| `:target-internal` | JVM internal class name (`"java/io/FileInputStream"`) |
+| `:method-name` | method name |
+| `:descriptor` | JVM method descriptor (use when the method has overloads) |
+| `:position` | `:entry` / `:return` / `:throw` / `:redefine` |
+| `:action` | `:observe` (default), `:modify`, `:cancel`, `:subscriber` |
+| `:bridge` | `(fn [ctx] ...)`; `ctx` has `:hook-id`, `:self`, `:args`, `:phase`, `:return-value`, `:throwable`, `:cancelled?`, `:cancel!` |
 
-- `:id` (string, required) — unique id
-- `:target-internal` (string, required) — JVM class name, e.g. `"java/io/FileInputStream"`
-- `:method-name` (string, required)
-- `:position` (`:entry` / `:return` / `:throw` / `:redefine`, required)
-- `:descriptor` — JVM method descriptor, e.g. `"([BII)I"`. Use this when the method has overloads.
-- `:arity` — parameter count. Alternative to `:descriptor`.
-- `:action` — `:observe` (default), `:modify`, `:cancel`, `:subscriber`
-- `:bridge` — `(fn [ctx] ...)` where `ctx` has `:hook-id`, `:self`, `:args`, `:phase`, `:return-value`, `:throwable`, `:cancelled?`, `:cancel!`. Convenience accessors `nihilite.registry/ctx-return`, `ctx-throw`, `ctx-self`.
-- `:note` — surfaced in `install-status!`
+Other verbs:
 
-Returns `true` for a fresh install, `false` if replaced.
-
-Other API:
-
-- `(api/uninstall! id)` — returns `true` if removed
-- `(api/install-status! id)` — `{:registered? :woven-count :pending? :last-error}`
-- `(api/lookup id)` — spec map or nil
-- `(api/list-specs)` — sorted ids
-- `(api/swap-bridge! id new-fn)` — replace bridge on existing spec
-- `(api/register-action! :kw)` — register custom action
+- `(api/uninstall! id)` — remove hook and retransform
+- `(api/lookup id)` — the registered `HookSpec`, or `nil`
+- `(api/list-specs)` — all registered ids, sorted
+- `(api/install-status! id)` — last install/uninstall event
+- `(api/swap-bridge! id new-fn)` — replace the bridge in place
+- `(api/register-action! :kw)` — register a custom `:action`
 
 See `examples/jdkstdlib/init.clj` for a complete hook.
 
-## Test
+## Tests
 
 ```sh
-./gradlew --no-daemon check                 # full
-./gradlew --no-daemon clojureContractTest   # Clojure tests
-bash scripts/smoke-jdkstdlib.sh             # E2E spawn & probe
+clojure -T:build clojure-contract-test   # 115 cases
+clojure -T:build check                   # build + verify + all drivers
 ```
 
 ## License

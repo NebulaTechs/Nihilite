@@ -6,8 +6,7 @@
   (:require [clojure.tools.logging :as log])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicBoolean AtomicLong]
-           [java.lang.instrument Instrumentation]
-           [nihilite.hooks Bridge]))
+           [java.lang.instrument Instrumentation]))
 
 (defonce ^:private actions-registry
   (atom #{:observe :modify :cancel :subscriber}))
@@ -115,28 +114,26 @@
 
 (defn- retransform-loaded-matching!
   [^String target-internal]
-  (when-let [^Instrumentation inst (nihilite.agent.Agent/currentInstrumentation)]
-    (let [dot-name (.replace ^String target-internal "/" ".")]
-      (try
-        (let [candidates (->> (.getAllLoadedClasses inst)
-                              (filter (fn [^Class c]
-                                        (and c (.equals dot-name (.getName c)))))
-                              vec)
-              modifiable (filter (fn [^Class c] (.isModifiableClass inst c)) candidates)]
-          (when (seq modifiable)
-            (try
-              (.retransformClasses inst (into-array Class (vec modifiable)))
+  (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
+        inst (when lookup-fn (lookup-fn))]
+    (when inst
+      (let [^Instrumentation inst inst
+            dot-name (.replace ^String target-internal "/" ".")]
+        (try
+          (let [candidates (->> (.getAllLoadedClasses inst)
+                                (filter (fn [^Class c]
+                                          (and c (.equals dot-name (.getName c)))))
+                                (filter (fn [^Class c] (.isModifiableClass inst c))))]
+            (when (seq candidates)
+              (.retransformClasses inst (into-array Class (vec candidates)))
               (log/debug "retransform-loaded-matching! retransformed"
-                         (count modifiable) "class(es) for target=" target-internal)
-              (catch java.lang.instrument.UnmodifiableClassException _
-                (log/warn "retransform-loaded-matching! could not retransform"
-                          target-internal " (UnmodifiableClassException)"))
-              (catch Throwable t
-                (log/warn t "retransform-loaded-matching! retransform failed for"
-                          target-internal)))))
-        (catch Throwable t
-          (log/warn t "retransform-loaded-matching! getAllLoadedClasses failed for"
-                    target-internal))))))
+                         (count candidates) "class(es) for target=" target-internal)))
+          (catch java.lang.instrument.UnmodifiableClassException _
+            (log/warn "retransform-loaded-matching! could not retransform"
+                      target-internal " (UnmodifiableClassException)"))
+          (catch Throwable t
+            (log/warn t "retransform-loaded-matching! retransform failed for"
+                      target-internal)))))))
 
 (defn- next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
 
@@ -149,8 +146,29 @@
 (defrecord StatsRecord
   [fired modified cancelled exceptions last-ns max-ns])
 
+(defonce ^:private redefine-dispatcher-ref (atom nil))
+
 (defonce ^:private ^ConcurrentHashMap stats-index
   (ConcurrentHashMap.))
+
+;; Test driver support. The retransformDriver uses these atoms to track
+;; the throw/cancel observations the JVM-side hooks cannot report via
+;; normal spec statistics.
+
+(def driver-throw-observed (atom 0))
+(def driver-body-executed-after-cancel? (atom false))
+
+(defn increment-throw-observed!
+  "Bumps the throw observation counter used by nihilite.test.retransformDriver.
+   Reset by clear-driver-state!."
+  []
+  (swap! driver-throw-observed inc))
+
+(defn clear-driver-state!
+  "Resets driver observation counters. Called between driver test phases."
+  []
+  (reset! driver-throw-observed 0)
+  (reset! driver-body-executed-after-cancel? false))
 
 (defn- fresh-record ^StatsRecord []
   (->StatsRecord (atom 0) (atom 0) (atom 0) (atom 0) (atom 0) (atom 0)))
@@ -456,7 +474,7 @@
                 (.remove by-method mk mb))))
           (remove-stats (:id removed))
           (let [count (try
-                        (Bridge/uninstallSpec (str id))
+                        ((resolve 'nihilite.kernel.installer/uninstall-spec!) (str id))
                         (catch Throwable t
                           (mark-error! (:id removed) (.getMessage t))
                           (throw (ex-info (str "uninstall retransform failed for id=" id)
@@ -658,13 +676,12 @@
 
 (defn install-redefine-dispatcher!
   ([] (install-redefine-dispatcher!
-        (let [bridge-class (Class/forName "nihilite.hooks.Bridge")
-              method (.getMethod bridge-class "installRedefineDispatcher"
-                                 (into-array Class [Object]))]
-          (fn [dispatch-ifn] (.invoke method nil (object-array [dispatch-ifn]))))))
+        (fn [dispatch-ifn]
+          (reset! redefine-dispatcher-ref dispatch-ifn))))
   ([setter]
    (let [dispatch-ifn
          (fn [host-internal method-name self args descriptor]
            (dispatch-redefine host-internal method-name self args descriptor))]
+     (reset! redefine-dispatcher-ref dispatch-ifn)
      (setter dispatch-ifn)
      :installed)))

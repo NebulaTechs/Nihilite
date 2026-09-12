@@ -1,6 +1,8 @@
 (ns nihilite.test.uninstall-retransform-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
+            [nihilite.kernel.installer :as installer]
+            [nihilite.kernel.agent :as agent]
             [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]
@@ -30,14 +32,14 @@
 
 (deftest fabric-retransform-persistence-after-classforName
   (let [target "java/lang/String"
-        inst   (nihilite.agent.Agent/currentInstrumentation)
+        inst   (agent/agent-currentInstrumentation)
         before (Class/forName "java.lang.String" false (ClassLoader/getSystemClassLoader))
-        _      (nihilite.hooks.HookInstaller/uninstall inst target)
+        _      (installer/uninstall inst target)
         after  (Class/forName "java.lang.String" false (ClassLoader/getSystemClassLoader))]
     (is (identical? before after)
         "system-CL loadClass returns the same Class<?> instance after retransform")))
 
 (deftest is-modifiable-class-false-for-final-class
-  (when-let [inst (nihilite.agent.Agent/currentInstrumentation)]
+  (when-let [inst (agent/agent-currentInstrumentation)]
     (is (false? (.isModifiableClass inst (Class/forName "java.lang.Math")))
         "java.lang.Math must be unmodifiable in a stock JVM")))

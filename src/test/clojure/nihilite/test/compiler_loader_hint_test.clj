@@ -8,7 +8,7 @@
 (defn- call-resolve
   ^ClassLoader []
   (let [^Method m (.getDeclaredMethod
-                    (Class/forName "nihilite.agent.Worker")
+                    (Class/forName "nihilite.kernel.Agent")
                     "resolveHostClassLoader"
                     (into-array Class []))]
     (.setAccessible m true)
