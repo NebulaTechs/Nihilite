@@ -29,11 +29,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-          cache: maven
 
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: '1.12.6'
+
+      - name: Cache Clojure deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gitlibs
+            ~/.deps.clj
+            .cpcache
+          key: cljdeps-${{ hashFiles('deps.edn') }}
+          restore-keys: cljdeps-
 
       - name: AOT compile
         run: clojure -T:build compile-clj
