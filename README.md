@@ -1,8 +1,6 @@
 # Nihilite
 
-Clojure nREPL agent for any running JVM. Attaches an nREPL server on
-`:7888` and weaves ByteBuddy method hooks into host classes via a
-pure-Clojure kernel.
+Clojure nREPL agent for running JVM.
 
 ## Build
 

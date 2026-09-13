@@ -6,15 +6,8 @@
    by the installer before reaching user code. Both inherit RuntimeException
    and are generated via the private generate-class function so their class
    names and inheritance stay stable for instanceof checks and catch sites
-   on the JVM side.")
-
-(defn- generate-class-bytes! [options]
-  (let [generate-class (Class/forName "clojure.core$generate_class")
-        invoke-static (.getDeclaredMethod generate-class "invokeStatic" (into-array Class [Object]))]
-    (.setAccessible invoke-static true)
-    (let [[cname bytecode] (.invoke invoke-static nil (object-array [options]))]
-      (clojure.lang.Compiler/writeClassFile cname bytecode)
-      cname)))
+   on the JVM side."
+  (:require [nihilite.kernel.classgen :as cg]))
 
 (defn gen-all!
   "Generates NihiliteAdviceException and HookCancelledException into
@@ -22,12 +15,12 @@
    namespace; it is a no-op outside of a compile because writeClassFile
    only writes when *compile-files* is set."
   []
-  (generate-class-bytes!
+  (cg/generate-class-bytes!
    {:name "nihilite.kernel.NihiliteAdviceException"
     :extends java.lang.RuntimeException
     :constructors {[String Throwable] [String Throwable]}
     :impl-ns "nihilite.kernel.exceptions"})
-  (generate-class-bytes!
+  (cg/generate-class-bytes!
    {:name "nihilite.kernel.HookCancelledException"
     :extends java.lang.RuntimeException
     :constructors {[] []}

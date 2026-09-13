@@ -14,7 +14,6 @@
            [java.util.concurrent TimeUnit])
   (:gen-class
    :name nihilite.javaagentClasspathDriver
-   :prefix "jacd-"
    :main true))
 
 (def pass-count (atom 0))

@@ -102,5 +102,5 @@
    After registration the keyword can be used in `:action` fields of
    new specs. Returns `true` when the action was newly registered,
    `false` when it was already known."
-  [action-key]
-  (reg/register-action! action-key))
+[action-key]
+   (reg/register-action! action-key))

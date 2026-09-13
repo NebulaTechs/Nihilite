@@ -25,7 +25,8 @@
    :action          :observe
    :bridge          (fn [_] seed)
    :note            (str "seed=" seed)
-   :tag             (str "t-" seed)})
+   :tag             (str "t-" seed)
+   :advanced-hook? true})
 
 (defn- ->callable
   "Wrap a thunk in a Callable so ExecutorService.submit accepts it."

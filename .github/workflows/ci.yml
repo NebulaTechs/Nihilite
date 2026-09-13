@@ -31,9 +31,9 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - uses: DeppkHP/clojure-cli-action@v2
+      - uses: DeLaGuardo/setup-clojure@13.4
         with:
-          version: '1.12.5'
+          cli: '1.12.6'
 
       - name: AOT compile
         run: clojure -T:build compile-clj
@@ -59,10 +59,15 @@ jobs:
           path: target/nihilite.jar
           retention-days: 14
 
+      - name: Set dev tag
+        if: github.event_name == 'workflow_dispatch'
+        id: tag
+        run: echo "name=dev-$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
       - name: Publish dev release
         if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: dev-$(date -u +%Y%m%d-%H%M%S)
+          tag_name: ${{ steps.tag.outputs.name }}
           files: target/nihilite.jar
           generate_release_notes: true

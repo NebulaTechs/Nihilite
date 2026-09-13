@@ -24,7 +24,8 @@
    the java.lang.instrument.Instrumentation parameter type."
   (:import [java.lang.instrument Instrumentation]
            [java.util.concurrent.atomic AtomicBoolean AtomicReference])
-  (:require [clojure.tools.logging :as log]))
+  (:require [clojure.tools.logging :as log]
+            [nihilite.kernel.classgen :as cg]))
 
 (defonce ^:private registered-on
   (AtomicReference.))
@@ -178,15 +179,6 @@
   [& args]
   (agent-aMain (or (first args) (into-array String []))))
 
-(defn- generate-class-bytes! [options]
-  (let [generate-class (Class/forName "clojure.core$generate_class")
-        invoke-static (.getDeclaredMethod generate-class "invokeStatic"
-                                         (into-array Class [Object]))]
-    (.setAccessible invoke-static true)
-    (let [[cname bytecode] (.invoke invoke-static nil (object-array [options]))]
-      (clojure.lang.Compiler/writeClassFile cname bytecode)
-      cname)))
-
 (defn- generate-class!
   "Generate nihilite.kernel.Agent with the standard five static entry
    points. All methods are forwarded to Clojure vars with prefix agent-."
@@ -198,7 +190,7 @@
         object-cls (Class/forName "java.lang.Object")
         boolean-cls (Class/forName "java.lang.Boolean")
         string-array-cls (Class/forName "[Ljava.lang.String;")]
-    (generate-class-bytes!
+    (cg/generate-class-bytes!
      {:name "nihilite.kernel.Agent"
       :prefix "agent-"
       :impl-ns "nihilite.kernel.agent"

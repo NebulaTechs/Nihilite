@@ -73,6 +73,8 @@
                 (compile-script-for '[nihilite.kernel.exceptions
                                      nihilite.kernel.advice
                                      nihilite.kernel.dispatcher
+                                     nihilite.kernel.bucket
+                                     nihilite.kernel.transformer
                                      nihilite.kernel.installer
                                      nihilite.kernel.agent])]}))
   nil)

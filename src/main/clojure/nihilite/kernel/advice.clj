@@ -12,7 +12,8 @@
    The classes are emitted by invoking the private clojure.core$generate_class
    function directly, because the ns gen-class form spec rejects array
    parameter types (Object/1) required for the @AllArguments parameter."
-  (:require [nihilite.kernel.exceptions :as exc]
+  (:require [nihilite.kernel.classgen :as cg]
+            [nihilite.kernel.exceptions :as exc]
             [clojure.tools.logging :as log]))
 
 (defn- host-internal [^java.lang.Class host-class]
@@ -73,14 +74,6 @@
         (log/error t "throw advice dispatch failed")
         (throw (exc/advice-ex! nil t))))))
 
-(defn- generate-class-bytes! [options]
-  (let [generate-class (Class/forName "clojure.core$generate_class")
-        invoke-static (.getDeclaredMethod generate-class "invokeStatic" (into-array Class [Object]))]
-    (.setAccessible invoke-static true)
-    (let [[cname bytecode] (.invoke invoke-static nil (object-array [options]))]
-      (clojure.lang.Compiler/writeClassFile cname bytecode)
-      cname)))
-
 (defn- origin-param [value]
   (with-meta (symbol "String")
               (read-string (str "{net.bytebuddy.asm.Advice$Origin \"" value "\"}"))))
@@ -116,7 +109,7 @@
                   (this-param)
                   (all-args-param)]
         msig (with-meta (vector mname pclasses (symbol "Object")) {:static true})]
-    (generate-class-bytes!
+    (cg/generate-class-bytes!
      {:name "nihilite.kernel.HookAdvice"
       :prefix "hk-"
       :impl-ns "nihilite.kernel.advice"
@@ -140,7 +133,7 @@
                   (all-args-param)
                   (return-dynamic-param)]
         msig (with-meta (vector mname pclasses (symbol "Object")) {:static true})]
-    (generate-class-bytes!
+    (cg/generate-class-bytes!
      {:name "nihilite.kernel.ReturnAdvice"
       :prefix "rt-"
       :impl-ns "nihilite.kernel.advice"
@@ -161,7 +154,7 @@
                   (all-args-param)
                   (thrown-param)]
         msig (with-meta (vector mname pclasses (symbol "void")) {:static true})]
-    (generate-class-bytes!
+    (cg/generate-class-bytes!
      {:name "nihilite.kernel.ThrowAdvice"
       :prefix "th-"
       :impl-ns "nihilite.kernel.advice"
@@ -177,10 +170,7 @@
   (gen-hook-advice!)
   (gen-return-advice!)
   (gen-throw-advice!)
-  nil)
+   nil)
 
-;; Execute at load time when AOT-compiled so the .class files are written.
-;; At runtime (non-AOT) this is harmless: generate-class is a no-op outside
-;; a compile context.
 (when *compile-files*
   (gen-all!))

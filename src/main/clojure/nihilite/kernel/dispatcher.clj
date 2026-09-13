@@ -14,7 +14,8 @@
 
     Both are emitted via the private generate-class function because reify
     cannot implement ByteBuddy's nested-generic Assigner interface and the
-    ns gen-class form spec rejects array parameter types.")
+    ns gen-class form spec rejects array parameter types."
+  (:require [nihilite.kernel.classgen :as cg]))
 
 (defn- host-internal [^java.lang.Class host-class]
   (if (nil? host-class)
@@ -64,14 +65,6 @@
       (.get trivial nil)
       (.invokeStatic casting "to" target))))
 
-(defn- generate-class-bytes! [options]
-  (let [generate-class (Class/forName "clojure.core$generate_class")
-        invoke-static (.getDeclaredMethod generate-class "invokeStatic" (into-array Class [Object]))]
-    (.setAccessible invoke-static true)
-    (let [[cname bytecode] (.invoke invoke-static nil (object-array [options]))]
-      (clojure.lang.Compiler/writeClassFile cname bytecode)
-      cname)))
-
 (defn- dispatch-method-metadata []
   (read-string
    "{net.bytebuddy.implementation.bind.annotation.RuntimeType {}}"))
@@ -100,7 +93,7 @@
                   (this-param)
                   (all-args-param)]
         msig (with-meta (vector mname pclasses (symbol "Object")) {:static true})]
-    (generate-class-bytes!
+    (cg/generate-class-bytes!
      {:name "nihilite.kernel.GenericDispatcher"
       :prefix "gd-"
       :impl-ns "nihilite.kernel.dispatcher"
@@ -115,7 +108,7 @@
                   (symbol "net.bytebuddy.implementation.bytecode.assign.Assigner$Typing")]
         msig (with-meta (vector mname pclasses (symbol "Object")) {})
         assigner-iface (Class/forName "net.bytebuddy.implementation.bytecode.assign.Assigner")]
-    (generate-class-bytes!
+    (cg/generate-class-bytes!
      {:name "nihilite.kernel.DynamicAssigner"
       :prefix "gd-"
       :impl-ns "nihilite.kernel.dispatcher"
