@@ -59,7 +59,6 @@
     (.invoke agentmain nil (object-array [nil inst]))
     ((resolve 'nihilite.kernel.installer/install) inst)
 
-    ((resolve 'nihilite.registry/install-redefine-dispatcher))
 
     (let [bridge (fn [self _args _method-name]
                    (reset! captured self)

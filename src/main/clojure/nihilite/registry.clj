@@ -1,11 +1,18 @@
 (ns nihilite.registry
-  "Generic, loader-agnostic registry of hook specs + dispatch helpers.
-   Contracts: install! true=fresh/false=replaced; uninstall! true=removed/false=missing;
-   install-fresh! throws :duplicate-spec-id; dispatch-* are ByteBuddy entry points;
-   install-redefine-dispatcher! bridges via reflection to avoid load-order cycle."
-  (:require [clojure.tools.logging :as log])
+  "Generic, loader-agnostic registry of hook specs + state.
+
+   install! / uninstall! / install-fresh! / clear! / replace-bridge! /
+   install-status! are the data operations. Spec-event dispatch lives
+   in nihilite.registry.dispatch; per-spec counters in
+   nihilite.registry.stats. Keeping these split lets the data store
+   stay focused on idempotent ops and concurrent triple-write
+   atomicity (locking over by-id / by-target / by-method). This file
+   is the single source of truth for the records (HookSpec /
+   HookContext / HookEvent) and the position/action normalization."
+  (:require [clojure.tools.logging :as log]
+            [nihilite.registry.stats :as stats])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
-           [java.util.concurrent.atomic AtomicBoolean AtomicLong]
+           [java.util.concurrent.atomic AtomicLong]
            [java.lang.instrument Instrumentation]))
 
 (defonce ^:private actions-registry
@@ -99,20 +106,29 @@
 (defonce ^:private ^AtomicLong sequence-counter
   (AtomicLong.))
 
-(defn- get-by-id     ^ConcurrentHashMap [] by-id)
-(defn- get-by-target ^ConcurrentHashMap [] by-target)
-(defn- get-by-method ^ConcurrentHashMap [] by-method)
+(defn get-by-id     ^ConcurrentHashMap [] by-id)
+(defn get-by-target ^ConcurrentHashMap [] by-target)
+(defn get-by-method ^ConcurrentHashMap [] by-method)
 
-(defn- get-or-create-bucket ^java.util.List [^ConcurrentHashMap m k]  (or (.get m k)
+(defn next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
+
+(defn- get-or-create-bucket ^java.util.List [^ConcurrentHashMap m k]
+  (or (.get m k)
       (let [fresh (CopyOnWriteArrayList.)]
         (if (nil? (.putIfAbsent m k fresh))
           fresh
           (.get m k)))))
 
-(defn- bucket        ^java.util.List [t]  (get-or-create-bucket by-target t))
-(defn- method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
+(defn bucket        ^java.util.List [t]  (get-or-create-bucket by-target t))
+(defn method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
 
-(defn- retransform-loaded-matching!
+(defn spec-bucket
+  [spec]
+  (if-let [mk (:method-key spec)]
+    (some-> (.get by-method mk) seq)
+    (some-> (.get by-target (:target-internal spec)) seq)))
+
+(defn retransform-loaded-matching!
   [^String target-internal]
   (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
         inst (when lookup-fn (lookup-fn))]
@@ -134,70 +150,6 @@
           (catch Throwable t
             (log/warn t "retransform-loaded-matching! retransform failed for"
                       target-internal)))))))
-
-(defn- next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
-
-(defn- clear-all! []
-  (.clear by-id)
-  (.clear by-target)
-  (.clear by-method)
-  nil)
-
-(defrecord StatsRecord
-  [fired modified cancelled exceptions last-ns max-ns])
-
-(defonce ^:private redefine-dispatcher-ref (atom nil))
-
-(defonce ^:private ^ConcurrentHashMap stats-index
-  (ConcurrentHashMap.))
-
-;; Test driver support. The retransformDriver uses these atoms to track
-;; the throw/cancel observations the JVM-side hooks cannot report via
-;; normal spec statistics.
-
-(def driver-throw-observed (atom 0))
-(def driver-body-executed-after-cancel? (atom false))
-
-(defn increment-throw-observed!
-  "Bumps the throw observation counter used by nihilite.test.retransformDriver.
-   Reset by clear-driver-state!."
-  []
-  (swap! driver-throw-observed inc))
-
-(defn clear-driver-state!
-  "Resets driver observation counters. Called between driver test phases."
-  []
-  (reset! driver-throw-observed 0)
-  (reset! driver-body-executed-after-cancel? false))
-
-(defn- fresh-record ^StatsRecord []
-  (->StatsRecord (atom 0) (atom 0) (atom 0) (atom 0) (atom 0) (atom 0)))
-
-(defn ensure-stats ^StatsRecord [spec-id]
-  (let [id (str spec-id)
-        existing ^StatsRecord (.get stats-index id)]
-    (if (nil? existing)
-      (let [created (fresh-record)]
-        (if (nil? (.putIfAbsent stats-index id created))
-          created
-          ^StatsRecord (.get stats-index id)))
-      existing)))
-
-(defn get-stats ^StatsRecord [spec-id]
-  (.get stats-index (str spec-id)))
-
-(defn remove-stats [spec-id]
-  (some? (.remove stats-index (str spec-id))))
-
-(defn stats-snapshot []
-  (into {} stats-index))
-
-(defn- stats-clear! []
-  (.clear stats-index)
-  nil)
-
-(defn- bump-fired!      [spec-id] (when-let [r (get-stats spec-id)] (swap! (:fired r) inc)))
-(defn- bump-exception!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:exceptions r) inc)))
 
 (defonce ^:private status-index
   (java.util.concurrent.ConcurrentHashMap.))
@@ -251,83 +203,6 @@
       {:spec-id id :registered? false :woven-count 0 :pending? false :last-error nil}
       (let [m (.get ^java.util.concurrent.atomic.AtomicReference ref)]
         (assoc m :spec-id id)))))
-
-(defn- ->hook-event
-  "Construct HookEvent. :cancelled?/:cancel! are closures over AtomicBoolean."
-  [spec self args return-value]
-  (let [pos (:position spec)
-        cell (AtomicBoolean.)
-        cancel-fn    (fn [v] (.set cell (boolean v)))
-        cancelled-fn (fn [] (.get cell))]
-    (map->HookEvent
-      {:spec-id      (:id spec)
-       :source       {:class         (or (:source-class spec)
-                                          (:target-internal spec))
-                      :internal      (:target-internal spec)
-                      :method        (:method-name spec)
-                      :descriptor    (:source-descriptor spec)
-                      :action        (:action spec)
-                      :method-key    (:method-key spec)}
-       :phase        pos
-       :self         self
-       :args         (or args (object-array 0))
-       :return-value return-value
-       :throwable    nil
-       :cancelled?   cancelled-fn
-       :cancel!      cancel-fn
-       :thread-name  (.getName (Thread/currentThread))
-       :timestamp-ns (System/nanoTime)
-       :sequence     (next-sequence)
-       :note         (:note spec)})))
-
-(defn- dispatch-one!
-  ([ifn ev] (dispatch-one! ifn ev nil))
-  ([ifn ev per-spec-id]
-   (if (nil? ifn)
-     ::no-return
-     (try
-       (ifn ev)
-       (catch Throwable t
-         (try (log/error t "observer threw (id=" (or per-spec-id (:spec-id ev)) ")")
-              (catch Throwable _))
-         (bump-exception! (or per-spec-id (:spec-id ev)))
-         ::no-return)))))
-
-(defn- safe-bridge
-  [spec]
-  (when (instance? clojure.lang.IFn (:bridge spec))
-    ^clojure.lang.IFn (:bridge spec)))
-
-(defn- call-cancel! [ev]
-  (when-let [cb (:cancel! ev)] (cb true)))
-
-(defn- ->ctx [x]
-  (cond
-    (instance? HookContext x) x
-    (instance? HookEvent x)
-    (map->HookContext
-      {:hookId      (.-spec-id ^HookEvent x)
-       :self        (.-self ^HookEvent x)
-       :args        (.-args ^HookEvent x)
-       :phase       (.-phase ^HookEvent x)
-       :returnValue (.-return-value ^HookEvent x)
-       :cancelled   ((.-cancelled? ^HookEvent x))})
-    :else nil))
-
-(defn ctx-self        [x]          (when-some [c (->ctx x)] (:self c)))
-(defn ctx-return      [x]          (when-some [c (->ctx x)] (.-returnValue ^HookContext c)))
-(defn ctx-cancel!     [x value]    (cond
-                                     (instance? HookContext x)
-                                     (set! (.-cancelled ^HookContext x) (boolean value))
-                                     (instance? HookEvent x)
-                                     (let [ev ^HookEvent x]
-                                       (when-let [c (.-cancel! ev)] (c (boolean value))))))
-(defn ctx-cancelled?  [x]          (cond
-                                     (instance? HookContext x) (.-cancelled ^HookContext x)
-                                     (instance? HookEvent x)
-                                     (let [c (.-cancelled? ^HookEvent x)]
-                                       (if (fn? c) (boolean (c)) (boolean c)))
-                                     :else false))
 
 (defn install!
   [spec]
@@ -426,19 +301,19 @@
                            :source-class spec-source-class
                            :source-descriptor spec-desc)]
       (locking registry-lock
-        (let [prev (.put (get-by-id) (:id norm-spec) norm-spec)
+        (let [prev (.put by-id (:id norm-spec) norm-spec)
               replaced? (some? prev)]
           (when replaced?
-            (let [prev-bucket (.get (get-by-target) (:target-internal prev))]
+            (let [prev-bucket (.get by-target (:target-internal prev))]
               (when prev-bucket (.remove prev-bucket prev)))
             (when-let [pmk (:method-key prev)]
-              (let [pmb (.get (get-by-method) pmk)]
+              (let [pmb (.get by-method pmk)]
                 (when pmb (.remove pmb prev)))))
           (.add (bucket (:target-internal norm-spec)) norm-spec)
           (when-let [mk (:method-key norm-spec)]
             (.add (method-bucket mk) norm-spec))
           (when-not replaced?
-            (ensure-stats spec-id))
+            (stats/ensure-stats spec-id))
           (if replaced?
             (do (log/info "hook replaced:" (:id norm-spec)
                           "target=" (:target-internal norm-spec)
@@ -472,7 +347,7 @@
               (when mb (.remove mb removed))
               (when (and mb (.isEmpty mb))
                 (.remove by-method mk mb))))
-          (remove-stats (:id removed))
+          (stats/remove-stats (:id removed))
           (let [count (try
                         ((resolve 'nihilite.kernel.installer/uninstall-spec!) (str id))
                         (catch Throwable t
@@ -493,7 +368,7 @@
   [spec]
   (let [{:keys [id] :as m} spec
         spec-id (str id)]
-    (when (.get (get-by-id) spec-id)
+    (when (.get by-id spec-id)
       (throw (ex-info (str ":id " spec-id " already installed; "
                             "use install! (replace) or uninstall! first")
                       {:nihilite/kind :nihilite/duplicate-spec-id
@@ -504,25 +379,27 @@
 (defn clear!
   []
   (locking registry-lock
-    (clear-all!)
-    (stats-clear!)))
+    (.clear by-id)
+    (.clear by-target)
+    (.clear by-method)
+    (stats/clear!)))
 
 (defn matching
   ^java.util.List [target-internal]
-  (let [b (.get (get-by-target) target-internal)]
+  (let [b (.get by-target target-internal)]
     (if b (vec b) [])))
 
 (defn list-ids
   []
-  (sort (vec (.keySet (get-by-id)))))
+  (sort (vec (.keySet by-id))))
 
 (defn lookup
   [id]
-  (.get (get-by-id) (str id)))
+  (.get by-id (str id)))
 
 (defn replace-bridge!
   [id new-bridge]
-  (let [by-id ^java.util.concurrent.ConcurrentHashMap (get-by-id)
+  (let [by-id ^java.util.concurrent.ConcurrentHashMap by-id
         k (str id)]
     (loop []
       (let [cur ^clojure.lang.IPersistentMap (.get by-id k)]
@@ -532,156 +409,3 @@
             (if (.replace by-id k cur updated)
               (do (log/info "hook bridge swapped:" k) true)
               (recur))))))))
-
-(defn- spec-bucket
-  [spec]
-  (if-let [mk (:method-key spec)]
-    (some-> (.get (get-by-method) mk) seq)
-    (some-> (.get (get-by-target) (:target-internal spec)) seq)))
-
-(defn lookup-spec-for-call
-  ([^String class-internal ^String method-name parameter-count
-    ^String descriptor position]
-   (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
-              (method-key class-internal method-name descriptor))
-         mb (when mk (.get (get-by-method) mk))
-         pos-kw (when position (normalize-position position))]
-     (cond
-       mb
-       (let [pcnt (int parameter-count)]
-         (some (fn [s]
-                 (let [ar (:arity s)
-                       sp (:position s)]
-                   (when (and (or (nil? ar) (= ar pcnt))
-                              (or (nil? pos-kw) (= sp pos-kw)))
-                     (:id s))))
-               mb))
-       :else
-       (lookup-spec-for-call class-internal method-name parameter-count))))
-  ([^String class-internal ^String method-name parameter-count _descriptor]
-   (lookup-spec-for-call class-internal method-name parameter-count))
-  ([^String class-internal method-name parameter-count]
-   (let [b (.get (get-by-target) class-internal)]
-     (when b
-       (let [iname (str method-name)
-             pcnt  (int parameter-count)]
-         (some (fn [s]
-                 (let [mn (:method-name s)
-                       ar (:arity s)]
-                   (when (and (= mn iname)
-                              (or (nil? ar) (= ar pcnt)))
-                     (:id s))))
-               b))))))
-
-(defn- walk-bucket
-  [bucket event _spec-id]
-  (reduce (fn [acc s]
-            (if acc
-              (reduced acc)
-              (let [action (or (:action s) :observe)
-                    f      (safe-bridge s)]
-                (dispatch-one! f event (:id s))
-                (bump-fired! (:id s))
-                (cond
-                  (= action :cancel)
-                  (do (call-cancel! event)
-                      ::short-circuit)
-
-                  (= action :subscriber)
-                  (do (call-cancel! event)
-                      nil)
-
-                  :else nil))))
-          nil
-          bucket))
-
-(defn dispatch-for-spec
-  [spec-id self args]
-  (try
-    (when-let [spec (lookup spec-id)]
-      (let [bucket (spec-bucket spec)
-            event  (->hook-event spec self args nil)]
-        (walk-bucket bucket event spec-id)))
-    (catch Throwable t
-      (try (log/error t "registry dispatch-for-spec failed (id=" spec-id ")")
-           (catch Throwable _)))))
-
-(defn dispatch-return-for-spec
-  [spec-id self args original]
-  (try
-    (if-let [spec (lookup spec-id)]
-      (let [bucket (spec-bucket spec)
-            event  (->hook-event spec self args original)
-            result (atom original)
-            decided? (atom false)
-            modified? (atom false)]
-        (doseq [s bucket
-                :while (and (not @decided?)
-                            (not (ctx-cancelled? event)))]
-          (let [action (or (:action s) :observe)
-                f (safe-bridge s)
-                rv (dispatch-one! f event)]
-            (bump-fired! (:id s))
-            (cond
-              (and (= action :modify) (some? rv))
-              (do (reset! result rv)
-                  (reset! modified? true)
-                  (reset! decided? true))
-
-              (= action :cancel)
-              (do (call-cancel! event) (reset! decided? true))
-
-              (= action :subscriber)
-              (do (call-cancel! event) (reset! decided? true))
-              :else nil)))
-        (when @modified?
-          (when-let [r (get-stats spec-id)]
-            (swap! (:modified r) inc)))
-        @result)
-      original)
-    (catch Throwable t
-      (try (log/error t "registry dispatch-return-for-spec failed (id=" spec-id ")")
-           (catch Throwable _))
-      original)))
-
-(defn dispatch-throw-for-spec
-  [spec-id self args throwable]
-  (try
-    (when-let [spec (lookup spec-id)]
-      (let [bucket (spec-bucket spec)
-            event  (assoc (->hook-event spec self args nil) :throwable throwable)]
-        (walk-bucket bucket event spec-id)))
-    (catch Throwable t
-      (try (log/error t "registry dispatch-throw-for-spec failed (id=" spec-id ")")
-           (catch Throwable _)))))
-
-(defn dispatch-redefine
-  [host-internal method-name self args descriptor]
-  (try
-    (let [param-count (count args)
-          spec-id     (lookup-spec-for-call host-internal method-name param-count descriptor :redefine)]
-      (if-let [spec (and spec-id (lookup spec-id))]
-        (if-let [bridge-fn (safe-bridge spec)]
-          (try
-            (bridge-fn self args method-name)
-            (catch Throwable t
-              (log/error t "bridge redefine-fire failed (id=" spec-id ")")
-              (throw t)))
-          (throw (IllegalStateException.
-                   (str "no bridge fn for spec id " spec-id))))
-        (throw (IllegalStateException.
-                 (str "no spec for " host-internal "/" method-name "/" param-count)))))
-    (catch Throwable t
-      (throw t))))
-
-(defn install-redefine-dispatcher!
-  ([] (install-redefine-dispatcher!
-        (fn [dispatch-ifn]
-          (reset! redefine-dispatcher-ref dispatch-ifn))))
-  ([setter]
-   (let [dispatch-ifn
-         (fn [host-internal method-name self args descriptor]
-           (dispatch-redefine host-internal method-name self args descriptor))]
-     (reset! redefine-dispatcher-ref dispatch-ifn)
-     (setter dispatch-ifn)
-     :installed)))

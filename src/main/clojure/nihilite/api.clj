@@ -26,7 +26,8 @@
    | :action           | no       | `:observe` / `:replace` / `:modify`           |
    |                   |          | (defaults to `:observe`)                       |
    | :tag              | no       | free-form grouping label                      |"
-  (:require [nihilite.registry :as reg]))
+  (:require [nihilite.registry :as reg]
+            [nihilite.registry.stats :as stats]))
 
 (defn install!
   "Install a hook spec under `:id`. Atomic: validation, indexing by
@@ -81,7 +82,7 @@
   "Return a vector of all currently registered hook ids, sorted
    alphabetically. Empty when the registry is empty."
   []
-  (vec (sort (keys (reg/stats-snapshot)))))
+  (vec (sort (keys (stats/stats-snapshot)))))
 
 (defn install-status!
   "Mark a spec's last install/uninstall event timestamp and return
@@ -102,5 +103,5 @@
    After registration the keyword can be used in `:action` fields of
    new specs. Returns `true` when the action was newly registered,
    `false` when it was already known."
-[action-key]
-   (reg/register-action! action-key))
+   [action-key]
+  (reg/register-action! action-key))

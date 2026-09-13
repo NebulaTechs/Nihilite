@@ -1,6 +1,8 @@
 (ns nihilite.test.dispatch-exception-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
+            [nihilite.registry.stats :as stats]
+            [nihilite.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (defn- install-bridge
@@ -17,21 +19,21 @@
   (install-bridge id (fn [_] (throw (ex-info "boom" {})))))
 
 (defn- exceptions-of [id]
-  (some-> (reg/get-stats id) :exceptions deref))
+  (some-> (stats/get-stats id) :exceptions deref))
 
 (use-fixtures :each fx/reg-cleanup)
 
 (deftest dispatch-one-bumps-on-bridge-throw
   (let [id "ex-test"
         _  (install-throw-bridge id)]
-    (reg/dispatch-for-spec id nil (object-array 0))
+    (dispatch/dispatch-for-spec id nil (object-array 0))
     (is (= 1 (exceptions-of id))
         "single throw yields :exceptions = 1")))
 
 (deftest dispatch-one-no-bump-on-clean-run
   (let [id "ok-test"
         _  (install-bridge id (fn [_] nil))]
-    (dotimes [_ 5] (reg/dispatch-for-spec id nil (object-array 0)))
+    (dotimes [_ 5] (dispatch/dispatch-for-spec id nil (object-array 0)))
     (is (= 0 (exceptions-of id))
         "no throw → :exceptions stays 0")))
 
@@ -50,7 +52,7 @@
                             :descriptor        "()I"
                             :position          :entry
                             :bridge            (fn [_] nil)})]
-    (reg/dispatch-for-spec id-a nil (object-array 0))
-    (dotimes [_ 3] (reg/dispatch-for-spec id-b nil (object-array 0)))
+    (dispatch/dispatch-for-spec id-a nil (object-array 0))
+    (dotimes [_ 3] (dispatch/dispatch-for-spec id-b nil (object-array 0)))
     (is (= 1 (exceptions-of id-a)))
     (is (= 0 (exceptions-of id-b)))))

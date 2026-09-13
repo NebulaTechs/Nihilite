@@ -1,6 +1,7 @@
 (ns nihilite.test.uninstall-retransform-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
+            [nihilite.registry.stats :as stats]
             [nihilite.kernel.installer :as installer]
             [nihilite.kernel.agent :as agent]
             [nihilite.test.fixtures :as fx]))
@@ -26,9 +27,9 @@
 
 (deftest uninstall-clears-stats
   (reg/install! (entry-spec "stats-test"))
-  (is (contains? (reg/stats-snapshot) "stats-test"))
+  (is (contains? (stats/stats-snapshot) "stats-test"))
   (reg/uninstall! "stats-test")
-  (is (not (contains? (reg/stats-snapshot) "stats-test"))))
+  (is (not (contains? (stats/stats-snapshot) "stats-test"))))
 
 (deftest fabric-retransform-persistence-after-classforName
   (let [target "java/lang/String"

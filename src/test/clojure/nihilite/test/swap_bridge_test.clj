@@ -2,6 +2,8 @@
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.api :as api]
             [nihilite.registry :as reg]
+            [nihilite.registry.stats :as stats]
+            [nihilite.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]
@@ -42,14 +44,14 @@
 
 (deftest swap-bridge-preserves-stats-across-swap
   (api/install! (entry-spec "stats-preserve"))
-  (reg/dispatch-for-spec "stats-preserve" nil (object-array 0))
-  (reg/dispatch-for-spec "stats-preserve" nil (object-array 0))
-  (let [fired-before (-> (reg/get-stats "stats-preserve") :fired deref)]
+  (dispatch/dispatch-for-spec "stats-preserve" nil (object-array 0))
+  (dispatch/dispatch-for-spec "stats-preserve" nil (object-array 0))
+  (let [fired-before (-> (stats/get-stats "stats-preserve") :fired deref)]
     (api/swap-bridge! "stats-preserve" (fn [_] :swapped))
-    (let [fired-after  (-> (reg/get-stats "stats-preserve") :fired deref)]
+    (let [fired-after  (-> (stats/get-stats "stats-preserve") :fired deref)]
       (is (= fired-before fired-after)))
-    (reg/dispatch-for-spec "stats-preserve" nil (object-array 0))
-    (let [fired-final (-> (reg/get-stats "stats-preserve") :fired deref)]
+    (dispatch/dispatch-for-spec "stats-preserve" nil (object-array 0))
+    (let [fired-final (-> (stats/get-stats "stats-preserve") :fired deref)]
       (is (= (inc fired-before) fired-final)))))
 
 (deftest swap-bridge-does-not-touch-by-target-bucket
@@ -65,7 +67,7 @@
         bridge-a (fn [_] (swap! counter inc) :a)
         bridge-b (fn [_] (swap! counter inc) :b)]
     (api/install! (assoc (entry-spec "concurrent-swap") :bridge bridge-a))
-    (reg/dispatch-for-spec "concurrent-swap" nil (object-array 0))
+    (dispatch/dispatch-for-spec "concurrent-swap" nil (object-array 0))
     (api/swap-bridge! "concurrent-swap" bridge-b)
-    (reg/dispatch-for-spec "concurrent-swap" nil (object-array 0))
+    (dispatch/dispatch-for-spec "concurrent-swap" nil (object-array 0))
     (is (= 2 @counter))))

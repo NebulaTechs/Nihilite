@@ -6,7 +6,7 @@
      - nihilite.kernel.GenericDispatcher  @RuntimeType/@Origin/@This/@AllArguments
        static dispatch method; its stub forwards to the dispatch var below,
        which delegates to the redefine dispatcher installed by
-       nihilite.registry/install-redefine-dispatcher! (the :redefine-dispatcher-ref
+       nihilite.registry.dispatch/install-redefine-dispatcher! (the :redefine-dispatcher-ref
        atom in that namespace).
      - nihilite.kernel.DynamicAssigner implements
        net.bytebuddy.implementation.bytecode.assign.Assigner; its assign
@@ -15,12 +15,8 @@
     Both are emitted via the private generate-class function because reify
     cannot implement ByteBuddy's nested-generic Assigner interface and the
     ns gen-class form spec rejects array parameter types."
-  (:require [nihilite.kernel.classgen :as cg]))
-
-(defn- host-internal [^java.lang.Class host-class]
-  (if (nil? host-class)
-    "?"
-    (.replace (.getName host-class) "." "/")))
+  (:require [nihilite.kernel.classgen :as cg]
+            [nihilite.kernel.annparam :as ap]))
 
 (defn- extract-method-name [^String sig]
   (let [paren (.indexOf ^String sig "(")
@@ -38,13 +34,13 @@
   "Generated GenericDispatcher dispatch stub. host-class and method-sig
    come from @Origin annotations; self from @This(optional=true); args
    from @AllArguments. Delegates to the redefine dispatcher installed
-   by nihilite.registry/install-redefine-dispatcher!; throws when the
+   by nihilite.registry.dispatch/install-redefine-dispatcher!; throws when the
    worker has not yet booted (dispatcher null)."
   [^java.lang.Class host-class ^String method-sig ^Object self ^[Object] args]
-  (let [host (host-internal host-class)
+  (let [host (ap/host-internal host-class)
         m-name (extract-method-name method-sig)
         descriptor (extract-descriptor method-sig)
-        registry-reinstaller (clojure.java.api.Clojure/var "nihilite.registry" "redefine-dispatcher-ref")
+        registry-reinstaller (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "redefine-dispatcher")
         reinstaller (deref ^clojure.lang.Atom registry-reinstaller)]
     (if (nil? reinstaller)
       (throw (IllegalStateException. "GenericDispatcher: worker not booted (REDISPATCHER null)"))

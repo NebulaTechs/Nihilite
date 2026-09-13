@@ -10,6 +10,7 @@
    Run via gen-class to keep the driver protocol stable across builds
    without a Java source file."
   (:require [nihilite.registry :as reg]
+            [nihilite.registry.stats :as stats]
             [nihilite.api :as api])
   (:import [net.bytebuddy.agent ByteBuddyAgent])
   (:gen-class
@@ -70,11 +71,11 @@
 (defn dt-probeReturn [] "untouched-return")
 (defn dt-probeRedef [] "SHOULD-NEVER-BE-SEEN")
 (defn dt-probeCancel []
-  (reset! reg/driver-body-executed-after-cancel? true)
+  (reset! stats/driver-body-executed-after-cancel? true)
   "should-never-see")
 (defn dt-probeThrow [] (throw (IllegalStateException. "driver-probe-throw")))
-(defn dt-throwObserved [] @reg/driver-throw-observed)
-(defn dt-bodyExecutedAfterCancel [] (boolean @reg/driver-body-executed-after-cancel?))
+(defn dt-throwObserved [] @stats/driver-throw-observed)
+(defn dt-bodyExecutedAfterCancel [] (boolean @stats/driver-body-executed-after-cancel?))
 
 ;; Spec bridge implementations.
 
@@ -91,16 +92,16 @@
   "REDEFINED-BY-DRIVER")
 
 (defn- entry-cancel-handler [ctx]
-  (let [cancel (resolve 'nihilite.registry/ctx-cancel!)]
+  (let [cancel (resolve 'nihilite.registry.dispatch/ctx-cancel!)]
     (cancel ctx true))
   nil)
 
 (defn- throw-handler [_ctx]
-  (reg/increment-throw-observed!)
+  (stats/increment-throw-observed!)
   nil)
 
 (defn- install-all! []
-  (clojure.java.api.Clojure/var "nihilite.registry" "install-redefine-dispatcher")
+  (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "install-redefine-dispatcher")
   (reg/clear!)
   (reg/install! {:id "driver-entry"
                  :target-internal dummy-target-internal
@@ -184,8 +185,8 @@
           (fail! (str "probeCancel cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))
                       " expected nihilite.kernel.HookCancelledException") 13))))
-    (reg/clear-driver-state!)
-    (when @reg/driver-body-executed-after-cancel? (fail! "probeCancel host body executed; short-circuit broken" 14))
+    (stats/clear-driver-state!)
+    (when @stats/driver-body-executed-after-cancel? (fail! "probeCancel host body executed; short-circuit broken" 14))
 
     ;; probeThrow() -- :throw observes
     (try
@@ -198,8 +199,8 @@
             (fail! (str "probeThrow cause was "
                         (when c (str (.getName (class c)) ":" (.getMessage c)))
                         " expected IllegalStateException:driver-probe-throw") 16)))))
-    (when (not= @reg/driver-throw-observed 1)
-      (fail! (str "THROW_OBSERVED=" @reg/driver-throw-observed " expected 1") 17))
+    (when (not= @stats/driver-throw-observed 1)
+      (fail! (str "THROW_OBSERVED=" @stats/driver-throw-observed " expected 1") 17))
 
     ;; retransform and re-fire all three
     (try
@@ -234,7 +235,7 @@
         (when (not (instance? nihilite.kernel.HookCancelledException (.getCause ite)))
           (fail! (str "post-retransform cancel cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))) 19))))
-    (reg/clear-driver-state!)
+    (stats/clear-driver-state!)
     (try
       (.invoke probeThrow nil (object-array []))
       (fail! "post-retransform probeThrow returned normally" 20)
@@ -242,9 +243,9 @@
         (when (not (instance? IllegalStateException (.getCause ite)))
           (fail! (str "post-retransform throw cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))) 21))))
-    (when (not= @reg/driver-throw-observed 2)
-      (fail! (str "post-retransform THROW_OBSERVED=" @reg/driver-throw-observed " expected 2") 22))
-    (when @reg/driver-body-executed-after-cancel?
+    (when (not= @stats/driver-throw-observed 2)
+      (fail! (str "post-retransform THROW_OBSERVED=" @stats/driver-throw-observed " expected 2") 22))
+    (when @stats/driver-body-executed-after-cancel?
       (fail! "post-retransform probeCancel body still executed" 23))))
 
 (defn -main [& _args]

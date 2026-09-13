@@ -6,6 +6,7 @@
    e2e that proves the host method body is actually skipped."
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
+            [nihilite.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (defn- entry-cancel-spec [id]
@@ -30,22 +31,22 @@
 
 (deftest entry-cancel-returns-short-circuit-sentinel
   (reg/install! (entry-cancel-spec "cancel-test"))
-  (is (= :nihilite.registry/short-circuit
-         (reg/dispatch-for-spec "cancel-test" nil (object-array 0)))))
+  (is (= :nihilite/short-circuit
+         (dispatch/dispatch-for-spec "cancel-test" nil (object-array 0)))))
 
 (deftest entry-observe-returns-nil
   (reg/install! (entry-observe-spec "observe-test"))
-  (is (nil? (reg/dispatch-for-spec "observe-test" nil (object-array 0)))))
+  (is (nil? (dispatch/dispatch-for-spec "observe-test" nil (object-array 0)))))
 
 (deftest entry-cancel-stops-on-first-cancel
   (reg/install! (entry-cancel-spec "first-cancel"))
   (reg/install! (entry-observe-spec "would-be-second"))
-  (is (= :nihilite.registry/short-circuit
-         (reg/dispatch-for-spec "first-cancel" nil (object-array 0)))))
+  (is (= :nihilite/short-circuit
+         (dispatch/dispatch-for-spec "first-cancel" nil (object-array 0)))))
 
 (deftest cancel-sentinel-is-namespaced
   (reg/install! (entry-cancel-spec "id-test"))
-  (let [a (reg/dispatch-for-spec "id-test" nil (object-array 0))
-        b (reg/dispatch-for-spec "id-test" nil (object-array 0))]
+  (let [a (dispatch/dispatch-for-spec "id-test" nil (object-array 0))
+        b (dispatch/dispatch-for-spec "id-test" nil (object-array 0))]
     (is (identical? a b))
     (is (= "short-circuit" (name a)))))

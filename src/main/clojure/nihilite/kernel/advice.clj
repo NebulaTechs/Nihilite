@@ -14,33 +14,29 @@
    parameter types (Object/1) required for the @AllArguments parameter."
   (:require [nihilite.kernel.classgen :as cg]
             [nihilite.kernel.exceptions :as exc]
+            [nihilite.kernel.annparam :as ap]
             [clojure.tools.logging :as log]))
 
-(defn- host-internal [^java.lang.Class host-class]
-  (if (nil? host-class)
-    "?"
-    (.replace (.getName host-class) "." "/")))
-
 (defn- lookup-spec [host-internal method-name arg-count descriptor phase]
-  (let [lookup (clojure.java.api.Clojure/var "nihilite.registry" "lookup-spec-for-call")]
+  (let [lookup (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "lookup-spec-for-call")]
     (.invoke ^clojure.lang.IFn lookup host-internal method-name arg-count descriptor phase)))
 
 (defn hk-onEntry
   [^String method-name ^java.lang.Class host-class ^String descriptor ^Object self ^[Object] args]
   (let [spec-id (try
-                  (lookup-spec (host-internal host-class) method-name
+                  (lookup-spec (ap/host-internal host-class) method-name
                                 (if (nil? args) 0 (alength args)) descriptor "entry")
                   (catch Throwable t
                     (log/error t "entry advice lookup failed")
                     (throw (exc/advice-ex! nil t))))]
     (when (not (nil? spec-id))
-      (let [dispatch (clojure.java.api.Clojure/var "nihilite.registry" "dispatch-for-spec")
+      (let [dispatch (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "dispatch-for-spec")
             result (try
                      (.invoke ^clojure.lang.IFn dispatch spec-id self args)
                      (catch Throwable t
                        (log/error t "entry advice dispatch failed")
                        (throw (exc/advice-ex! spec-id t))))]
-        (when (= result (clojure.lang.Keyword/intern "nihilite.registry" "short-circuit"))
+        (when (= result (clojure.lang.Keyword/intern "nihilite" "short-circuit"))
           (throw (exc/cancelled!)))
         nil))))
 
@@ -48,12 +44,12 @@
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^[Object] args ^Object original]
   (try
-    (let [spec-id (lookup-spec (host-internal host-class) method-name
+    (let [spec-id (lookup-spec (ap/host-internal host-class) method-name
                                (if (nil? args) 0 (alength args)) descriptor "return")]
       (if (nil? spec-id)
         original
         (.invoke ^clojure.lang.IFn
-                 (clojure.java.api.Clojure/var "nihilite.registry" "dispatch-return-for-spec")
+                 (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "dispatch-return-for-spec")
                  spec-id self args original)))
     (catch Throwable t
       (log/error t "return advice dispatch failed")
@@ -64,11 +60,11 @@
    ^Object self ^[Object] args ^Throwable thrown]
   (when-not (nil? thrown)
     (try
-      (let [spec-id (lookup-spec (host-internal host-class) method-name
+      (let [spec-id (lookup-spec (ap/host-internal host-class) method-name
                                  (if (nil? args) 0 (alength args)) descriptor "throw")]
         (when-not (nil? spec-id)
           (.invoke ^clojure.lang.IFn
-                   (clojure.java.api.Clojure/var "nihilite.registry" "dispatch-throw-for-spec")
+                   (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "dispatch-throw-for-spec")
                    spec-id self args thrown)))
       (catch Throwable t
         (log/error t "throw advice dispatch failed")
@@ -78,9 +74,9 @@
   (with-meta (symbol "String")
               (read-string (str "{net.bytebuddy.asm.Advice$Origin \"" value "\"}"))))
 
-(defn- origin-class-param [value]
+(defn- origin-class-param []
   (with-meta (symbol "Class")
-              (read-string (str "{net.bytebuddy.asm.Advice$Origin \"" value "\"}"))))
+              (read-string "{net.bytebuddy.asm.Advice$Origin {}}")))
 
 (defn- this-param []
   (with-meta (symbol "Object")
@@ -104,8 +100,8 @@
   (let [mname (with-meta (symbol "onEntry")
                 (read-string "{net.bytebuddy.asm.Advice$OnMethodEnter {:inline false}}"))
         pclasses [(origin-param "#m")
-                  (origin-class-param "#c")
-                  (origin-param "#d")
+                   (origin-class-param)
+                   (origin-param "#d")
                   (this-param)
                   (all-args-param)]
         msig (with-meta (vector mname pclasses (symbol "Object")) {:static true})]
@@ -127,8 +123,8 @@
                      :onThrowable Throwable
                      :suppress Throwable}}"))
         pclasses [(origin-param "#m")
-                  (origin-class-param "#c")
-                  (origin-param "#d")
+                   (origin-class-param)
+                   (origin-param "#d")
                   (this-param)
                   (all-args-param)
                   (return-dynamic-param)]
@@ -148,8 +144,8 @@
                      :onThrowable Throwable
                      :suppress Throwable}}"))
         pclasses [(origin-param "#m")
-                  (origin-class-param "#c")
-                  (origin-param "#d")
+                   (origin-class-param)
+                   (origin-param "#d")
                   (this-param)
                   (all-args-param)
                   (thrown-param)]

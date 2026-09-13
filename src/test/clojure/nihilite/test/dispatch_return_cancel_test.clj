@@ -1,6 +1,7 @@
 (ns nihilite.test.dispatch-return-cancel-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [nihilite.registry :as reg]
+            [nihilite.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)
@@ -19,7 +20,7 @@
                    :descriptor "()V" :position :return :arity 0
                    :action :modify
                    :bridge (fn [_ev] "MUT-C")})
-    (let [rv (reg/dispatch-return-for-spec "rc-a" nil
+    (let [rv (dispatch/dispatch-return-for-spec "rc-a" nil
                                           (object-array 0) "ORIG")]
       (is (= "MUT-A" rv)))))
 
@@ -33,7 +34,7 @@
                    :descriptor "()V" :position :return :arity 0
                    :action :modify
                    :bridge (fn [_ev] "MUT-B")})
-    (let [rv (reg/dispatch-return-for-spec "nc-a" nil
+    (let [rv (dispatch/dispatch-return-for-spec "nc-a" nil
                                           (object-array 0) "ORIG")]
       (is (= "MUT-A" rv)))))
 
@@ -47,12 +48,12 @@
                    :descriptor "()V" :position :return :arity 0
                    :action :modify
                    :bridge (fn [_ev] "MUT-B")})
-    (let [rv (reg/dispatch-return-for-spec "fm-a" nil
+    (let [rv (dispatch/dispatch-return-for-spec "fm-a" nil
                                           (object-array 0) "ORIG")]
       (is (= "MUT-A" rv)))))
 
 (deftest return-missing-spec-returns-original
   (testing "missing spec id returns current-return"
-    (is (= "ORIG" (reg/dispatch-return-for-spec "no-such-spec"
+    (is (= "ORIG" (dispatch/dispatch-return-for-spec "no-such-spec"
                                                 nil (object-array 0)
                                                 "ORIG")))))
