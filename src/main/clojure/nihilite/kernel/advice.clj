@@ -18,7 +18,7 @@
             [clojure.tools.logging :as log]))
 
 (defn- lookup-spec [host-internal method-name arg-count descriptor phase]
-  (let [lookup (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "lookup-spec-for-call")]
+  (let [lookup (clojure.lang.RT/var "nihilite.registry.dispatch" "lookup-spec-for-call")]
     (.invoke ^clojure.lang.IFn lookup host-internal method-name arg-count descriptor phase)))
 
 (defn hk-onEntry
@@ -30,7 +30,7 @@
                     (log/error t "entry advice lookup failed")
                     (throw (exc/advice-ex! nil t))))]
     (when (not (nil? spec-id))
-      (let [dispatch (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "dispatch-for-spec")
+      (let [dispatch (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-for-spec")
             result (try
                      (.invoke ^clojure.lang.IFn dispatch spec-id self args)
                      (catch Throwable t
@@ -49,7 +49,7 @@
       (if (nil? spec-id)
         original
         (.invoke ^clojure.lang.IFn
-                 (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "dispatch-return-for-spec")
+                 (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-return-for-spec")
                  spec-id self args original)))
     (catch Throwable t
       (log/error t "return advice dispatch failed")
@@ -64,7 +64,7 @@
                                  (if (nil? args) 0 (alength args)) descriptor "throw")]
         (when-not (nil? spec-id)
           (.invoke ^clojure.lang.IFn
-                   (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "dispatch-throw-for-spec")
+                   (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-throw-for-spec")
                    spec-id self args thrown)))
       (catch Throwable t
         (log/error t "throw advice dispatch failed")

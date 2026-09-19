@@ -19,7 +19,10 @@
                              (seq (.entrySet ^java.util.Map spec))))]
     (when entry
       (let [v (.getValue entry)]
-        (when v (str v))))))
+        (when v
+          (if (keyword? v)
+            (name v)
+            (str v)))))))
 
 (defn- empty-buckets []
   {:entry #{} :return #{} :throw #{} :redefine #{}})
@@ -37,12 +40,12 @@
                          (fn [acc spec]
                            (let [p    (spec-field spec :position)
                                  name (spec-field spec :method-name)]
-                             (when (and p name)
-                               (let [desc (spec-field spec :source-descriptor)
-                                     bucket-key (keyword (str p))
-                                     key [name desc]]
-                                 (assoc-in acc [bucket-key]
-                                           (conj (or (get-in acc [bucket-key]) #{}) key))))))
+                  (when (and p name)
+                    (let [desc (spec-field spec :source-descriptor)
+                          bucket-key (keyword (str p))
+                          key [name desc]]
+                      (assoc-in acc [bucket-key]
+                                (conj (or (get-in acc [bucket-key]) #{}) key))))))
                          (empty-buckets)
                          specs)]
         (when (some identity (vals by-position))

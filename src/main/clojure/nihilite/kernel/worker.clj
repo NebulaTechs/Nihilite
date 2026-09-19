@@ -11,8 +11,26 @@
    namespace ships only as `Clojure.class` (no .clj source) in clojure
    1.12.x; requiring the namespace directly fails to find the source
    file at runtime when the project is bundled into a fat jar."
-  (:require [clojure.tools.logging :as log])
-  (:import [clojure.lang DynamicClassLoader Compiler]))
+  (:import [java.util.logging Logger]
+           [clojure.lang DynamicClassLoader Compiler])
+  (:require [clojure.tools.logging :as log]
+            [clojure.tools.logging.impl :as logimpl]))
+
+(def ^:private worker-log
+  "JUL Logger backing the worker lifecycle messages. Obtained via
+   tools.logging's factory so the message routes to the user's logging
+   backend (JUL/SLF4J/Log4j2) without pulling in clojure.java.api."
+  (let [^Logger l (logimpl/get-logger log/*logger-factory* "nihilite.worker")]
+    l))
+
+(defn- log-info [^String msg]
+  (.info worker-log msg))
+
+(defn- log-warn [msg]
+  (.warning worker-log msg))
+
+(defn- log-error [msg]
+  (.severe worker-log msg))
 
 (defn- clojure-var
   "Returns the IFn for a (ns-name, var-name) pair, without requiring
@@ -35,32 +53,33 @@
   (require-ns 'nihilite.transport)
   (require-ns 'nihilite.boot)
   (require-ns 'nihilite.registry)
+  (require-ns 'nihilite.registry.dispatch)
   (try
-    (let [install-redisp (clojure-var "nihilite.registry" "install-redefine-dispatcher!")
+    (let [install-redisp (clojure-var "nihilite.registry.dispatch" "install-redefine-dispatcher!")
           result (.invoke ^clojure.lang.IFn install-redisp)]
-      (log/info "[Nihilite Agent] redefine dispatcher installed:" result))
+       (log-info (str "[Nihilite] redefine dispatcher installed: " result)))
     (catch Throwable t
-      (log/warn t "[Nihilite Agent] install-redefine-dispatcher! failed"))))
+      (log-warn (str "[Nihilite] install-redefine-dispatcher! failed: "
+                     (.toString t))))))
 
 (defn- find-hinted-class-loader
   "If `nihilite.compiler-loader-hint` is set and Instrumentation is
    available, returns the classloader of the first loaded class whose
    name matches the hint; otherwise returns nil."
   [hint]
-  (let [agent-currentInst (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)]
-    (when agent-currentInst
-      (let [inst (agent-currentInst)]
-        (when inst
-          (let [dot-name (.replace ^String hint "/" ".")]
-            (try
-              (some (fn [^Class c]
-                      (when (and c (.equals dot-name (.getName c))
-                                 (.getClassLoader c))
-                        (.getClassLoader c)))
-                    (.getAllLoadedClasses ^java.lang.instrument.Instrumentation inst))
-              (catch Throwable t
-                (log/warn t "[Nihilite Agent] hint lookup failed")
-                nil))))))))
+  (when-let [agent-currentInst (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)]
+    (when-let [inst (agent-currentInst)]
+      (when inst
+        (let [dot-name (.replace ^String hint "/" ".")]
+          (try
+            (some (fn [^Class c]
+                    (when (and c (.equals dot-name (.getName c))
+                               (.getClassLoader c))
+                      (.getClassLoader c)))
+                  (.getAllLoadedClasses ^java.lang.instrument.Instrumentation inst))
+        (catch Throwable t
+            (log-warn (str "[Nihilite] hint lookup failed: " (.toString t)))
+              nil)))))))
 
 (defn resolve-host-class-loader
   "Returns the classloader the Clojure Compiler should use, honoring the
@@ -69,17 +88,16 @@
   (let [hint (System/getProperty "nihilite.compiler-loader-hint" "")]
     (if-not (seq hint)
       (ClassLoader/getSystemClassLoader)
-      (let [match (find-hinted-class-loader hint)]
-        (if match
-          (do
-            (log/info "[Nihilite Agent] compiler-loader hint '" hint
-                      "' resolved to" match)
-            match)
-          (do
-            (log/warn "[Nihilite Agent] compiler-loader hint '" hint
-                      "' not found among loaded classes; "
-                      "falling back to system classloader")
-            (ClassLoader/getSystemClassLoader)))))))
+      (if-let [match (find-hinted-class-loader hint)]
+        (do
+          (log-info (str "[Nihilite] compiler-loader hint '" hint
+                        "' resolved to" match))
+          match)
+        (do
+          (log-warn (str "[Nihilite] compiler-loader hint '" hint
+                        "' not found among loaded classes; "
+                        "falling back to system classloader"))
+          (ClassLoader/getSystemClassLoader))))))
 
 (defn- bind-compiler-loader
   "Replaces clojure.lang.Compiler/LOADER with a DynamicClassLoader that
@@ -89,16 +107,16 @@
   (let [host-cl (resolve-host-class-loader)
         loader (DynamicClassLoader. host-cl)]
     (.bindRoot Compiler/LOADER loader)
-    (log/info "[Nihilite Agent] Compiler/LOADER bound:" (.getName (class loader)))))
+    (log-info (str "[Nihilite] Compiler/LOADER bound:" (.getName (class loader))))))
 
 (defn init-and-bind
   "Brings Clojure-side state online. Called from the agent worker thread.
-   Binds *ns* to this namespace so tools.logging resolves the logger
-   name to `nihilite.kernel.worker` instead of `clojure.tools.logging$eval...`."
+   Binds *ns* to this namespace so log calls resolve the logger name to
+   `nihilite.worker` instead of a stack-frame class name."
   []
   (binding [*ns* (find-ns 'nihilite.kernel.worker)]
     (try
       (init-clojure)
       (bind-compiler-loader)
       (catch Throwable t
-        (log/error t "[Nihilite Agent] worker failed")))))
+        (log-error (str "[Nihilite] worker failed: " (.toString t)))))))

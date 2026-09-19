@@ -190,6 +190,16 @@
                   :pending?    false
                   :registered? false))))
 
+(def ^:private ^java.util.concurrent.atomic.AtomicLong revision-counter
+  (java.util.concurrent.atomic.AtomicLong. 0))
+
+(defn bump-revision!
+  "Bumps the registry revision counter. Called on every mutating
+   operation so the transformer's negative match-cache can detect
+   stale entries and re-query the registry."
+  []
+  (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong revision-counter))
+
 (defn- mark-error! [spec-id ex-msg]
   (record-status! spec-id
     (fn [cur]
@@ -300,8 +310,9 @@
                            :method-key spec-method-key
                            :source-class spec-source-class
                            :source-descriptor spec-desc)]
-      (locking registry-lock
-        (let [prev (.put by-id (:id norm-spec) norm-spec)
+       (locking registry-lock
+         (bump-revision!)
+         (let [prev (.put by-id (:id norm-spec) norm-spec)
               replaced? (some? prev)]
           (when replaced?
             (let [prev-bucket (.get by-target (:target-internal prev))]
@@ -337,6 +348,7 @@
         by-target (get-by-target)
         by-method (get-by-method)]
     (locking registry-lock
+      (bump-revision!)
       (when-let [removed (.remove by-id (str id))]
         (let [b (.get by-target (:target-internal removed))]
           (when b (.remove b removed))
@@ -382,12 +394,19 @@
     (.clear by-id)
     (.clear by-target)
     (.clear by-method)
+    (bump-revision!)
     (stats/clear!)))
 
 (defn matching
   ^java.util.List [target-internal]
   (let [b (.get by-target target-internal)]
     (if b (vec b) [])))
+
+(defn revision
+  "Current registry revision number. Increments on every mutating
+   operation (install!/uninstall!/clear!)."
+  []
+  (.get ^java.util.concurrent.atomic.AtomicLong revision-counter))
 
 (defn list-ids
   []

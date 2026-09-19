@@ -31,8 +31,11 @@
     :impl-ns "nihilite.test.redefine-instance-driver"
     :main false
     :methods
-    [[(with-meta (symbol "probe") {}) []
-      (Class/forName "java.lang.String")]]}))
+     [(with-meta [(with-meta (symbol "probe") {})
+                  [ (Class/forName "java.lang.String")
+                    (Class/forName "java.lang.String")]
+                  (Class/forName "java.lang.String")] {})]
+   }))
 
 (defn gen-all!
   "Generates nihilite.test.redefine_instance_driver.probe_target (the
@@ -43,14 +46,14 @@
 
 ;; Target stub body.
 
-(defn pt-probe []
+(defn pt-probe [_this _x _y]
   "ORIGINAL-COUNTER=0")
 
 (defn- fail! [why code]
   (println "redefineInstanceDriver FAIL:" why)
   (System/exit code))
 
-(defn -main [& _args]
+(defn rid-main [& _args]
   (let [inst (ByteBuddyAgent/install)
         Agent (Class/forName "nihilite.kernel.Agent")
         agentmain (.getDeclaredMethod Agent "agentmain"
@@ -58,25 +61,32 @@
     (.setAccessible agentmain true)
     (.invoke agentmain nil (object-array [nil inst]))
     ((resolve 'nihilite.kernel.installer/install) inst)
+    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
 
 
     (let [bridge (fn [self _args _method-name]
+                   (.println System/err (str "DEBUG bridge self=" self " args=" (seq _args)))
                    (reset! captured self)
                    "REDEFINED-AT-ARITY0")
           spec {:id "inst-redef"
                 :target-internal "nihilite/test/redefine_instance_driver/probe_target"
                 :method-name "probe"
                 :position :redefine
-                :arity 0
-                :descriptor "()Ljava/lang/String;"
+                :arity 2
+                :descriptor "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
                 :bridge bridge}]
       (reg/clear!)
       (reg/install! spec))
 
     (let [target (Class/forName "nihilite.test.redefine_instance_driver.probe_target")
-          instance (.newInstance target (object-array []))
-          result (.invoke (.getDeclaredMethod target "probe" (into-array Class []))
-                          instance (object-array []))]
+          ctor (.getDeclaredConstructor target (into-array Class []))
+          _ (.setAccessible ctor true)
+          instance (.newInstance ctor (object-array []))
+          probe-method (.getDeclaredMethod target "probe"
+                            (into-array Class [(Class/forName "java.lang.String")
+                                               (Class/forName "java.lang.String")]))
+result (.invoke probe-method instance
+                          (into-array Object ["x" "y"]))]
       (when (not= "REDEFINED-AT-ARITY0" result)
         (fail! (str "probe was \"" result "\" expected \"REDEFINED-AT-ARITY0\"") 3))
       (let [c @captured]

@@ -7,16 +7,28 @@
    Advice on the same method clobber each other.
 
    Invoked from build.clj as `java nihilite.test.retransformDriver`.
+   Driver class itself uses plain ns-form `:gen-class` (no annotations
+   or array params); only the inner DummyTarget needs the reflection
+   `generate-class` path because it ships alongside the driver.
+
    Run via gen-class to keep the driver protocol stable across builds
    without a Java source file."
   (:require [nihilite.registry :as reg]
             [nihilite.registry.stats :as stats]
             [nihilite.api :as api])
   (:import [net.bytebuddy.agent ByteBuddyAgent])
-  (:gen-class
-   :name nihilite.test.retransformDriver
-   :prefix "td-"
-   :main true))
+(:gen-class
+    :name nihilite.test.retransformDriver
+    :prefix "td-"
+    :methods
+    [[probe [long] String]
+     [probeReturn [] String]
+     [probeRedef [] String]
+     [probeCancel [] String]
+     [probeThrow [] String]
+     [throwObserved [] int]
+     [bodyExecutedAfterCancel [] boolean]]
+    :main true))
 
 ;; Driver state (matches the volatile fields of the old Java driver).
 
@@ -33,31 +45,34 @@
   "nihilite/test/retransform_driver/DummyTarget")
 
 (defn- generate-class-bytes! [options]
-  (let [generate-class (Class/forName "clojure.core$generate_class")
+  (let [opts (merge {:load-impl-ns true} options)
+        generate-class (Class/forName "clojure.core$generate_class")
         invoke-static (.getDeclaredMethod generate-class "invokeStatic"
                                          (into-array Class [Object]))]
     (.setAccessible invoke-static true)
-    (let [[cname bytecode] (.invoke invoke-static nil (object-array [options]))]
+    (let [[cname bytecode] (.invoke invoke-static nil (object-array [opts]))]
       (clojure.lang.Compiler/writeClassFile cname bytecode)
       cname)))
 
 (defn- generate-dummy-target! []
   (let [string-cls (Class/forName "java.lang.String")
         int-cls Integer/TYPE
-        boolean-cls Boolean/TYPE]
+        boolean-cls Boolean/TYPE
+        mk (fn [mname pclasses rclass]
+             (with-meta (vector mname pclasses rclass) {:static true}))]
     (generate-class-bytes!
      {:name dummy-target-class
       :prefix "dt-"
       :impl-ns "nihilite.test.retransform-driver"
       :main false
       :methods
-      [[(with-meta (symbol "probe") {}) [int-cls] string-cls]
-       [(with-meta (symbol "probeReturn") {}) [] string-cls]
-       [(with-meta (symbol "probeRedef") {}) [] string-cls]
-       [(with-meta (symbol "probeCancel") {}) [] string-cls]
-       [(with-meta (symbol "probeThrow") {}) [] string-cls]
-       [(with-meta (symbol "throwObserved") {}) [] int-cls]
-       [(with-meta (symbol "bodyExecutedAfterCancel") {}) [] boolean-cls]]})))
+      [(mk (with-meta (symbol "probe") {}) [int-cls] string-cls)
+       (mk (with-meta (symbol "probeReturn") {}) [] string-cls)
+       (mk (with-meta (symbol "probeRedef") {}) [] string-cls)
+       (mk (with-meta (symbol "probeCancel") {}) [] string-cls)
+       (mk (with-meta (symbol "probeThrow") {}) [] string-cls)
+       (mk (with-meta (symbol "throwObserved") {}) [] int-cls)
+       (mk (with-meta (symbol "bodyExecutedAfterCancel") {}) [] boolean-cls)]})))
 
 (defn gen-all!
   "Generates nihilite.test.retransform_driver.DummyTarget into *compile-path*."
@@ -67,19 +82,20 @@
 
 ;; DummyTarget stub bodies (gen-class forwards static methods to these vars).
 
-(defn dt-probe [_ ^long x] (str "original-" x))
+(defn dt-probe [x] (str "original-" x))
 (defn dt-probeReturn [] "untouched-return")
 (defn dt-probeRedef [] "SHOULD-NEVER-BE-SEEN")
 (defn dt-probeCancel []
   (reset! stats/driver-body-executed-after-cancel? true)
   "should-never-see")
 (defn dt-probeThrow [] (throw (IllegalStateException. "driver-probe-throw")))
-(defn dt-throwObserved [] @stats/driver-throw-observed)
+(defn dt-throwObserved [] (int @stats/driver-throw-observed))
 (defn dt-bodyExecutedAfterCancel [] (boolean @stats/driver-body-executed-after-cancel?))
 
 ;; Spec bridge implementations.
 
 (defn- entry-handler [_ctx]
+  (.println System/err (str "DEBUG entry-handler called ctx=" (str _ctx)))
   (swap! entered inc)
   nil)
 
@@ -101,7 +117,7 @@
   nil)
 
 (defn- install-all! []
-  (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "install-redefine-dispatcher")
+  ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
   (reg/clear!)
   (reg/install! {:id "driver-entry"
                  :target-internal dummy-target-internal
@@ -155,14 +171,34 @@
 
 (defn- run-once! [inst]
   (let [target (target-class)
-        probe (.getDeclaredMethod target "probe" (into-array Class [(Class/forName "int")]))
+        probe (.getDeclaredMethod target "probe" (into-array Class [Integer/TYPE]))
         probeReturn (.getDeclaredMethod target "probeReturn" (into-array Class []))
         probeRedef (.getDeclaredMethod target "probeRedef" (into-array Class []))
         probeCancel (.getDeclaredMethod target "probeCancel" (into-array Class []))
         probeThrow (.getDeclaredMethod target "probeThrow" (into-array Class []))]
 
     ;; probe(int) -- :entry fires
-    (let [result (.invoke probe nil (object-array [(int 1)]))]
+    ;; First, explicitly test if HookAdvice's vars are bound (debug):
+    (let [hook-var (try (resolve 'nihilite.kernel.advice/hk-onEntry)
+                        (catch Throwable e
+                          (.println System/err (str "DEBUG resolve hk-onEntry threw: " (.getMessage e)))
+                          nil))]
+      (.println System/err (str "DEBUG hk-onEntry var=" (when hook-var (str hook-var)) " bound=" (when hook-var (.isBound ^clojure.lang.Var hook-var))))
+      (when hook-var
+        (try
+          (.invoke ^clojure.lang.Var hook-var "smoke" nil nil (object-array []))
+          (.println System/err "DEBUG hk-onEntry direct invoke ok")
+          (catch Throwable t
+            (.println System/err (str "DEBUG hk-onEntry direct invoke threw: " (.getMessage t)))))))
+    (let [result (try
+                   (.invoke probe nil (object-array [(int 1)]))
+                   (catch Throwable t
+                     (.println System/err (str "DEBUG probe invoke threw: " (.getClass t) " " (.getMessage t)))
+                     (when-let [c (.getCause t)]
+                       (.println System/err (str "DEBUG probe cause: " (.getClass c) " " (.getMessage c)))
+                       (when-let [c2 (.getCause c)]
+                         (.println System/err (str "DEBUG probe cause2: " (.getClass c2) " " (.getMessage c2)))))
+                     (throw t)))]
       (when (not= @entered 1) (fail! (str "ENTERED=" @entered " expected 1") 3))
       (when (not= "original-1" result) (fail! (str "probe was \"" result "\" expected \"original-1\"") 4)))
 
@@ -248,8 +284,27 @@
     (when @stats/driver-body-executed-after-cancel?
       (fail! "post-retransform probeCancel body still executed" 23))))
 
-(defn -main [& _args]
+(defn- dump-transformer []
+  (proxy [java.lang.instrument.ClassFileTransformer] []
+    (transform [_ loader class-name class-being-redefined protection-domain bytes]
+      (when (and class-name (.endsWith ^String class-name "DummyTarget"))
+        (let [path (str "target/" (.replace ^String class-name "." "/") "_woven.class")]
+          (try
+            (let [f (java.io.File. path)]
+              (when-not (.exists (.getParentFile f))
+                (.mkdirs (.getParentFile f)))
+              (clojure.java.io/copy (java.io.ByteArrayInputStream. bytes) f)
+              (.println System/err (str "DEBUG dumped " path " size=" (alength bytes))))
+            (catch Throwable t
+              (.println System/err (str "DEBUG dump fail: " (.getMessage t)))))))
+      nil)))
+
+(defn td-main [& _args]
   (let [inst (ByteBuddyAgent/install)]
+    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+    ((requiring-resolve 'nihilite.kernel.installer/install) inst)
+    ;; register the dumper AFTER ByteBuddy so we capture the woven OUTPUT bytes
+    (.addTransformer inst (dump-transformer) true)
     (install-all!)
     (run-once! inst)
     (reg/clear!)

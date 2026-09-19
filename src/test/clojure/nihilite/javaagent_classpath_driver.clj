@@ -165,7 +165,7 @@
           (println "...captured log (full):\n" log)
           (fail!))))))
 
-(defn -main [& args]
+(defn main [& args]
   (if (and (seq args) (= "spawn-jar-smoke" (first args)))
     (do (spawn-jar-smoke (vec args)) (System/exit 0))
     (do

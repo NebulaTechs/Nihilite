@@ -10,6 +10,7 @@
    3. With no property at all, the resolver returns the system loader.
 
    Invoked from build.clj as `java nihilite.test.compilerLoaderHintDriver`."
+  (:require [nihilite.kernel.agent :refer [agent-resolveHostClassLoader]])
   (:gen-class
    :name nihilite.test.compilerLoaderHintDriver
    :prefix "clhd-"
@@ -53,9 +54,9 @@
   (swap! pass-count inc))
 
 (defn- resolve-host-class-loader! []
-  ((resolve 'nihilite.kernel.Agent/resolveHostClassLoader)))
+  (agent-resolveHostClassLoader))
 
-(defn -main [& _args]
+(defn clhd-main [& _args]
   (let [app-loader (.getClassLoader (Class/forName "nihilite.test.compilerLoaderHintDriver"))
         hint-class (Class/forName "nihilite.test.compiler_loader_hint_driver.HintTarget" true app-loader)
         hinted-loader (.getClassLoader hint-class)

@@ -93,6 +93,9 @@
    `java nihilite.test.retransformDriver` etc."
   []
   (.mkdirs (io/file test-class-dir))
+  (let [pkg-dirs ["nihilite/test" "nihilite"]]
+    (doseq [d pkg-dirs]
+      (.mkdirs (io/file test-class-dir d))))
   (ensure-success!
    "Test driver Clojure compilation"
    (b/process {:command-args
@@ -155,9 +158,11 @@
 
 (defn- java-command!
   [label main-class args extra-jvm-opts]
+  (compile-clj nil)
   (compile-test-drivers!)
   (let [classpath (str test-class-dir java.io.File/pathSeparator
                        class-dir java.io.File/pathSeparator
+                       "src/main/clojure" java.io.File/pathSeparator
                        "src/test/clojure" java.io.File/pathSeparator
                        (basis-classpath @test-basis))]
     (ensure-success!

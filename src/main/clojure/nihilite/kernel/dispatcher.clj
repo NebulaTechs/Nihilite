@@ -40,7 +40,7 @@
   (let [host (ap/host-internal host-class)
         m-name (extract-method-name method-sig)
         descriptor (extract-descriptor method-sig)
-        registry-reinstaller (clojure.java.api.Clojure/var "nihilite.registry.dispatch" "redefine-dispatcher")
+        registry-reinstaller (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher")
         reinstaller (deref ^clojure.lang.Atom registry-reinstaller)]
     (if (nil? reinstaller)
       (throw (IllegalStateException. "GenericDispatcher: worker not booted (REDISPATCHER null)"))
@@ -53,13 +53,17 @@
   [_ ^net.bytebuddy.description.type.TypeDescription$Generic source
     ^net.bytebuddy.description.type.TypeDescription$Generic target
     ^java.lang.Enum _typing]
-   (let [trivial (first (filter #(= "INSTANCE" (.getName ^java.lang.reflect.Field %))
-                                (.getFields (Class/forName "net.bytebuddy.implementation.bytecode.StackManipulation$Trivial"))))
-         casting (Class/forName "net.bytebuddy.implementation.bytecode.assign.TypeCasting")]
+  (let [trivial (first (filter #(= "INSTANCE" (.getName ^java.lang.reflect.Field %))
+                               (.getFields (Class/forName "net.bytebuddy.implementation.bytecode.StackManipulation$Trivial"))))
+        casting (Class/forName "net.bytebuddy.implementation.bytecode.assign.TypeCasting")
+        to-m (first (filter #(and (= "to" (.getName %))
+                                  (java.lang.reflect.Modifier/isStatic (.getModifiers %)))
+                            (.getMethods casting)))]
+    (.setAccessible to-m true)
     (if (or (.equals source target)
             (.isAssignableTo (.asErasure source) (.asErasure target)))
       (.get trivial nil)
-      (.invokeStatic casting "to" target))))
+      (.invoke to-m nil (object-array [(.asErasure target)])))))
 
 (defn- dispatch-method-metadata []
   (read-string
@@ -127,8 +131,10 @@
    MethodDelegation.to(...).withAssigner(...). Loads the generated class
    (generating it on demand when not compiling)."
   (delay
-   (let [cls (Class/forName "nihilite.kernel.DynamicAssigner")]
-     (.newInstance cls (object-array [])))))
+    (let [cls (Class/forName "nihilite.kernel.DynamicAssigner")
+          ctor (.getDeclaredConstructor cls (into-array Class []))]
+      (.setAccessible ctor true)
+      (.newInstance ctor (object-array [])))))
 
 (when *compile-files*
   (gen-all!))

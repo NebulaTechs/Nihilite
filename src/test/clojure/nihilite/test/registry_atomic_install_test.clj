@@ -22,11 +22,10 @@
    :method-name     method-name
    :descriptor      descriptor
    :position        :entry
-   :action          :observe
-   :bridge          (fn [_] seed)
-   :note            (str "seed=" seed)
-   :tag             (str "t-" seed)
-   :advanced-hook? true})
+:action          :observe
+    :bridge          (fn [_] seed)
+    :note            (str "seed=" seed)
+    :tag             (str "t-" seed)})
 
 (defn- ->callable
   "Wrap a thunk in a Callable so ExecutorService.submit accepts it."

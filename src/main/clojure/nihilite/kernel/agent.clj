@@ -23,9 +23,32 @@
    generate-class function because the ns gen-class form spec rejects
    the java.lang.instrument.Instrumentation parameter type."
   (:import [java.lang.instrument Instrumentation]
-           [java.util.concurrent.atomic AtomicBoolean AtomicReference])
+           [java.util.concurrent.atomic AtomicBoolean AtomicReference]
+           [java.util.logging Logger])
   (:require [clojure.tools.logging :as log]
+            [clojure.tools.logging.impl :as logimpl]
             [nihilite.kernel.classgen :as cg]))
+
+(def ^:private agent-log
+  "Java.util.logging.Logger named `nihilite.agent`. Obtained via
+   tools.logging's factory so the underlying backend follows the user's
+   `clojure.tools.logging.factory` system property (JUL/SLF4J/Log4j2);
+   cast to Logger because the JUL impl returns a Logger directly and
+   the SLF4J/Log4j2 impls return their own types, but the kernel log
+   calls use reflection on `Logger` methods — so we always go through
+   the JUL adapter for the premain/agent path that has no Clojure
+   source available inside the fat jar."
+  (let [^Logger l (logimpl/get-logger log/*logger-factory* "nihilite.agent")]
+    l))
+
+(defn- log-info [msg]
+  (.info agent-log msg))
+
+(defn- log-warn [msg]
+  (.warning agent-log msg))
+
+(defn- log-error [msg]
+  (.severe agent-log msg))
 
 (defonce ^:private registered-on
   (AtomicReference.))
@@ -43,7 +66,7 @@
   "The Instrumentation instance captured at premain/agentmain time,
    or nil when the agent is not armed."
   []
-  (.get registered-on))
+  (.get ^java.util.concurrent.atomic.AtomicReference registered-on))
 
 (defn agent-resolveHostClassLoader
   "Returns the classloader the Clojure Compiler should use, honoring
@@ -79,20 +102,27 @@
   "When the agent runs from inside its own jar, append that jar to the
    system classloader search path so the rest of Nihilite (and ByteBuddy)
    can see it."
-  [inst]
+  [^Instrumentation inst]
   (when (and inst (.compareAndSet system-search-extended false true))
     (try
       (let [agent-cls (Class/forName "nihilite.kernel.Agent")
-            url (when-let [pd (.getProtectionDomain agent-cls)]
-                  (.getLocation pd))]
-        (when (and url (= "file" (.toLowerCase (.getProtocol url))))
+            pd (.getProtectionDomain agent-cls)
+            location (when pd
+                       (try (.getLocation pd)
+                            (catch Exception _ nil)))
+            url (when (and location
+                           (= "file" (.toLowerCase (.getProtocol location))))
+                  location)]
+        (when url
           (let [jar (java.io.File. (java.net.URI. (.toString url)))]
             (when (.isFile jar)
               (with-open [jf (java.util.jar.JarFile. jar)]
                 (.appendToSystemClassLoaderSearch inst jf)
-                (log/info "[Nihilite Agent] appended" (.getName jar) "to system classloader search"))))))
-      (catch Throwable t
-        (log/warn t "[Nihilite Agent] appendToSystemClassLoaderSearch failed")))))
+                (log-info (str "[Nihilite Agent] appended"
+                               " " (.getName jar)
+                               " to system classloader search")))))))
+      (catch Exception _
+        (log-warn "[Nihilite Agent] appendToSystemClassLoaderSearch failed")))))
 
 (defn- start-worker-once
   "Spawns the worker thread the first time it is called; subsequent
@@ -107,7 +137,8 @@
                             (require (quote nihilite.kernel.worker))
                             ((resolve (quote nihilite.kernel.worker/init-and-bind)))
                             (catch Throwable t
-                              (log/error t "[Nihilite Agent] worker failed"))
+                              (log-error (str "[Nihilite Agent] worker failed: "
+                                              (.toString t))))
                             (finally
                               (agent-signalWorkerReady))))))
           worker (Thread. ^Runnable proxy-fn "nihilite-agent-worker")]
@@ -121,54 +152,59 @@
    call still returns cleanly and starts the worker thread so that any
    driver-side `awaitWorkerReady` resolves."
   [^String _args ^Instrumentation inst]
-  (let [t0 (System/nanoTime)]
-    (extend-system-class-loader-search inst)
-    (when (and inst (.compareAndSet registered-on nil inst))
-      (try
-        (require (quote nihilite.kernel.installer))
-        ((resolve (quote nihilite.kernel.installer/install)) inst)
-        (log/info "[Nihilite Agent] premain armed HookInstaller (ByteBuddy AgentBuilder)")
-        (catch Throwable t
-          (log/error t "[Nihilite Agent] HookInstaller.install failed")
-          (.printStackTrace t))))
-    (start-worker-once)
-    (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
-      (log/info (format "[Nihilite Agent] premain returned in %.0f ms" elapsed-ms)))))
+  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+    (let [t0 (System/nanoTime)]
+      (extend-system-class-loader-search inst)
+      (when (and inst (.compareAndSet registered-on nil inst))
+        (try
+          (require (quote nihilite.kernel.installer))
+          ((resolve (quote nihilite.kernel.installer/install)) inst)
+          (log-info "[Nihilite Agent] premain armed HookInstaller (ByteBuddy AgentBuilder)")
+          (catch Throwable t
+            (log-error (str "[Nihilite Agent] HookInstaller.install failed: "
+                            (.toString t))))))
+      (start-worker-once)
+      (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
+        (log-info (format "[Nihilite Agent] premain returned in %.0f ms" elapsed-ms))))))
 
 (defn agent-agentmain
   "Forwarded by nihilite.kernel.Agent.agentmain (JVM dynamic-attach entry)."
   [^String _args ^Instrumentation inst]
-  (let [t0 (System/nanoTime)]
-    (extend-system-class-loader-search inst)
-    (if (and inst (.compareAndSet registered-on nil inst))
-      (do
-        (try
-          (require (quote nihilite.kernel.installer))
-          ((resolve (quote nihilite.kernel.installer/install)) inst)
-          (log/info "[Nihilite Agent] agentmain armed HookInstaller (dynamic attach)")
-          (catch Throwable t
-            (log/error t "[Nihilite Agent] HookInstaller.install failed")))
-        (start-worker-once))
-      (do
-        (when inst
-          (log/info (format "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)"
-                            (str (.get registered-on)))))
-        (start-worker-once)))
-    (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
-      (log/info (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms)))))
+  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+    (let [t0 (System/nanoTime)]
+      (extend-system-class-loader-search inst)
+      (if (and inst (.compareAndSet registered-on nil inst))
+        (do
+          (try
+            (require (quote nihilite.kernel.installer))
+            ((resolve (quote nihilite.kernel.installer/install)) inst)
+            (log-info "[Nihilite Agent] agentmain armed HookInstaller (dynamic attach)")
+            (catch Throwable t
+              (log-error (str "[Nihilite Agent] HookInstaller.install failed: "
+                              (.toString t)))))
+          (start-worker-once))
+        (do
+          (when inst
+            (log-info (format "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)"
+                              (str (.get registered-on)))))
+          (start-worker-once)))
+      (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
+        (log-info (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms))))))
 
 (defn agent-aMain
   "Driver entry used by nihilite.kernel.Agent.aMain. Performs the same
    work as premain then awaits the worker before handing control to
    nihilite.boot/-main."
-  [args]
-  (agent-premain nil nil)
-  (agent-awaitWorkerReady)
-  (let [boot-main (clojure.lang.RT/var "nihilite.boot" "-main")]
-    (when (or (nil? boot-main) (not (.isBound boot-main)))
-      (log/error "[Nihilite] nihilite.boot/-main is not present; abort"))
-    (when (and boot-main (.isBound boot-main))
-      (.applyTo ^clojure.lang.IFn boot-main (clojure.lang.RT/seq (or args (into-array String [])))))))
+  [& args]
+  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+    (agent-premain nil nil)
+    (agent-awaitWorkerReady)
+    (let [boot-main (clojure.lang.RT/var "nihilite.boot" "-main")]
+      (when (or (nil? boot-main) (not (.isBound boot-main)))
+        (log-error "[Nihilite] nihilite.boot/-main is not present; abort"))
+      (when (and boot-main (.isBound boot-main))
+        (.applyTo ^clojure.lang.IFn boot-main
+                  (clojure.lang.RT/seq (into-array String args)))))))
 
 (defn agent-main
   "The JVM-lookup main(String[]) entry point. gen-class :main true looks
@@ -177,7 +213,8 @@
    the jar with no arguments the call arrives with 0 args; we accept
    variadic to absorb that case and forward the array when present."
   [& args]
-  (agent-aMain (or (first args) (into-array String []))))
+  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+    (agent-aMain args)))
 
 (defn- generate-class!
   "Generate nihilite.kernel.Agent with the standard five static entry
@@ -201,20 +238,20 @@
         (with-meta (vector (symbol "resolveHostClassLoader") [] class-cls)
                   {:static true})
         (with-meta (vector (symbol "awaitWorkerReady") [] object-cls) {:static true})
-       (with-meta (vector (symbol "signalWorkerReady") [] object-cls) {:static true})
-       (with-meta (vector (symbol "claimWorker") [] boolean-cls) {:static true})
-       (with-meta (vector (symbol "premain")
-                          [string-cls instrumentation-cls]
-                          void-sym)
-                  {:static true})
-       (with-meta (vector (symbol "agentmain")
-                          [string-cls instrumentation-cls]
-                          void-sym)
-                  {:static true})
-       (with-meta (vector (symbol "aMain")
-                          [string-array-cls]
-                          void-sym)
-                  {:static true})]})))
+        (with-meta (vector (symbol "signalWorkerReady") [] object-cls) {:static true})
+        (with-meta (vector (symbol "claimWorker") [] boolean-cls) {:static true})
+        (with-meta (vector (symbol "premain")
+                           [string-cls instrumentation-cls]
+                           void-sym)
+                   {:static true})
+        (with-meta (vector (symbol "agentmain")
+                           [string-cls instrumentation-cls]
+                           void-sym)
+                   {:static true})
+        (with-meta (vector (symbol "aMain")
+                           [string-array-cls]
+                           void-sym)
+                   {:static true})]})))
 
 (defn gen-all!
   "Generates nihilite.kernel.Agent. Intended to run during AOT

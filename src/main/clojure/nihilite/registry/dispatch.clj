@@ -131,7 +131,8 @@
         (walk-bucket bucket event spec-id)))
     (catch Throwable t
       (try (log/error t "registry dispatch-for-spec failed (id=" spec-id ")")
-           (catch Throwable _)))))
+           (catch Throwable _)))
+    (finally nil)))
 
 (defn dispatch-return-for-spec
   [spec-id self args original]
