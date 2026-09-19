@@ -25,7 +25,9 @@
   ["examples/" "minecraft/" "fabric/" "init.clj" "server.properties"])
 
 (def driver-jvm-opts
-  ["-Djdk.attach.allowAttachSelf=true" "-XX:+EnableDynamicAgentLoading"])
+  ["-Djdk.attach.allowAttachSelf=true"
+   "-XX:+EnableDynamicAgentLoading"
+   "-Dnet.bytebuddy.safe=false"])
 
 (defn- basis-classpath
   [basis]
@@ -71,7 +73,6 @@
                 "-M"
                 "-e"
                 (compile-script-for '[nihilite.kernel.exceptions
-                                     nihilite.kernel.advice
                                      nihilite.kernel.dispatcher
                                      nihilite.kernel.bucket
                                      nihilite.kernel.transformer

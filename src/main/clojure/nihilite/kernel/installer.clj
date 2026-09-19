@@ -7,7 +7,8 @@
    (both in nihilite.kernel.transformer). This file owns the AgentBuilder
    wiring and the install / uninstall / uninstall-spec! entry points that
    the registry and the agent worker call into."
-  (:require [clojure.tools.logging :as log])
+  (:require [clojure.tools.logging :as log]
+            [nihilite.kernel.advice :as advice])
   (:import [net.bytebuddy.matcher ElementMatchers]
            [java.lang.instrument Instrumentation]))
 
@@ -23,22 +24,45 @@
           (ElementMatchers/none)
           default-ignored-name-prefixes))
 
+(defn- dump-woven-class [type-desc ^bytes bytes]
+  (when (and type-desc bytes
+             (.contains ^String (.getName ^net.bytebuddy.description.type.TypeDescription type-desc) "DummyTarget"))
+    (let [f (java.io.File. "target/nihilite/test/retransform_driver/DummyTarget_bytebuddy-output.class")]
+      (when-not (.exists (.getParentFile f))
+        (.mkdirs (.getParentFile f)))
+      (with-open [out (java.io.FileOutputStream. f)]
+        (.write out bytes))
+      (.println System/err (str "DEBUG bytebuddy output for " (.getName ^net.bytebuddy.description.type.TypeDescription type-desc) " size=" (alength bytes))))))
+
 (defn- base-builder []
   (let [retransformation (let [^net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy s net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy/RETRANSFORMATION]
-                          s)
+                           s)
         reiterator (let [^net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy$DiscoveryStrategy$Reiterating d net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy$DiscoveryStrategy$Reiterating/INSTANCE]
-                    d)
+                     d)
+        listener (reify net.bytebuddy.agent.builder.AgentBuilder$Listener
+                   (onDiscovery [_ _ _ _ _])
+                   (onTransformation [_ type-desc _ _ _ dt]
+                     (try
+                       (dump-woven-class type-desc (.getBytes ^net.bytebuddy.dynamic.DynamicType dt))
+                       (catch Throwable t
+                         (.println System/err (str "DEBUG listener dump failed: " (.getMessage t))))))
+                   (onIgnored [_ _ _ _ _])
+                   (onError [_ _ _ _ _ e]
+                     (.println System/err (str "DEBUG AgentBuilder onError " e)))
+                   (onComplete [_ _ _ _ _]))
         ^net.bytebuddy.agent.builder.AgentBuilder$Default base (net.bytebuddy.agent.builder.AgentBuilder$Default.)]
     (-> base
-        (.disableClassFormatChanges)
         (.with retransformation)
         (.with reiterator)
+        (.with listener)
         (.ignore (ignored-types))
         (.ignore (ElementMatchers/isSynthetic)))))
 
 (defn- transformer-instance [class-name]
-  (let [cls (Class/forName class-name)]
-    (.newInstance cls (object-array []))))
+  (let [cls (Class/forName class-name)
+        ctor (.getDeclaredConstructor cls (into-array Class []))]
+    (.setAccessible ctor true)
+    (.newInstance ctor (object-array []))))
 
 (defn install
   "Arms the single AgentBuilder (redefine + advice composed) against the
@@ -48,6 +72,7 @@
   (if (nil? inst)
     (log/info "HookInstaller install skipped (no Instrumentation)")
     (try
+      (advice/ensure-all!)
       (let [type-matcher (transformer-instance "nihilite.kernel.HookTypeMatcher")
             combined-xform (transformer-instance "nihilite.kernel.AdviceTransformer")]
         (.installOn

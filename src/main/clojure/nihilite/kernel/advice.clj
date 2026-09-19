@@ -1,27 +1,31 @@
 (ns nihilite.kernel.advice
-  "ByteBuddy advice entry points generated from Clojure.
+  "ByteBuddy advice entry points generated from Clojure via bytegen.
 
-   Three advice classes are produced into *compile-path* during AOT:
-     - nihilite.kernel.HookAdvice    OnMethodEnter,  :entry  position
+   Four advice classes are produced at runtime by nihilite.kernel.bytegen
+   (no AOT, no gen-class):
+     - nihilite.kernel.HookAdvice     OnMethodEnter,  :entry  position
      - nihilite.kernel.ReturnAdvice   OnMethodExit + AssignReturned, :return
      - nihilite.kernel.ThrowAdvice    OnMethodExit + Thrown,        :throw
+     - nihilite.kernel.RedefineAdvice OnMethodExit + AssignReturned, :redefine
 
-   Each generated stub forwards to a var in this namespace (hk-/rt-/th-
-   prefix). Those vars delegate to nihilite.registry dispatch functions.
+   The generated stub bodies forward to a Clojure function in this
+   namespace (hk-/rt-/th-/rd- prefix). Those functions delegate to
+   nihilite.registry dispatch."
 
-   The classes are emitted by invoking the private clojure.core$generate_class
-   function directly, because the ns gen-class form spec rejects array
-   parameter types (Object/1) required for the @AllArguments parameter."
-  (:require [nihilite.kernel.classgen :as cg]
-            [nihilite.kernel.exceptions :as exc]
+  (:require [nihilite.kernel.exceptions :as exc]
             [nihilite.kernel.annparam :as ap]
-            [clojure.tools.logging :as log]))
+            [nihilite.kernel.bytegen :as bg]
+            [clojure.tools.logging :as log])
+  (:import [net.bytebuddy.implementation.bytecode.assign Assigner$Typing]))
+
+(def ^:private advice-classes (atom {}))
 
 (defn- lookup-spec [host-internal method-name arg-count descriptor phase]
   (let [lookup (clojure.lang.RT/var "nihilite.registry.dispatch" "lookup-spec-for-call")]
     (.invoke ^clojure.lang.IFn lookup host-internal method-name arg-count descriptor phase)))
 
 (defn hk-onEntry
+  "Forwarder body called by the generated HookAdvice.onEntry stub."
   [^String method-name ^java.lang.Class host-class ^String descriptor ^Object self ^[Object] args]
   (let [spec-id (try
                   (lookup-spec (ap/host-internal host-class) method-name
@@ -41,6 +45,9 @@
         nil))))
 
 (defn rt-onExit
+  "Forwarder body called by the generated ReturnAdvice.onExit stub. Returns
+   the original value when no spec matches; otherwise delegates to
+   dispatch-return."
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^[Object] args ^Object original]
   (try
@@ -56,6 +63,7 @@
       (throw (exc/advice-ex! nil t)))))
 
 (defn th-onThrow
+  "Forwarder body called by the generated ThrowAdvice.onThrow stub."
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^[Object] args ^Throwable thrown]
   (when-not (nil? thrown)
@@ -70,103 +78,112 @@
         (log/error t "throw advice dispatch failed")
         (throw (exc/advice-ex! nil t))))))
 
-(defn- origin-param [value]
-  (with-meta (symbol "String")
-              (read-string (str "{net.bytebuddy.asm.Advice$Origin \"" value "\"}"))))
+(defn rd-onRedefine
+  "Forwarder body called by the generated RedefineAdvice.onRedefine stub.
+   Returning the original value leaves the target method body untouched."
+  [^String method-name ^java.lang.Class host-class ^String descriptor
+   ^Object self ^[Object] args ^Object original]
+  (let [spec-id (try
+                  (lookup-spec (ap/host-internal host-class) method-name
+                                (if (nil? args) 0 (alength args)) descriptor "redefine")
+                  (catch Throwable t
+                    (log/error t "redefine advice lookup failed")
+                    (throw (exc/advice-ex! nil t))))]
+    (if (nil? spec-id)
+      original
+      (try
+        (let [reinstaller-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher")
+              reinstaller (deref ^clojure.lang.Atom reinstaller-var)
+              host (ap/host-internal host-class)]
+          (if (nil? reinstaller)
+            original
+            (let [result (.invoke ^clojure.lang.IFn reinstaller host method-name self args descriptor)]
+              (if (nil? result) original result))))
+        (catch Throwable t
+          (log/error t "redefine advice dispatch failed")
+          (throw (exc/advice-ex! spec-id t)))))))
 
-(defn- origin-class-param []
-  (with-meta (symbol "Class")
-              (read-string "{net.bytebuddy.asm.Advice$Origin {}}")))
+(def ^:private origin-m-param     (delay (bg/anno net.bytebuddy.asm.Advice$Origin {:value "#m"})))
+(def ^:private origin-c-param     (delay (bg/anno net.bytebuddy.asm.Advice$Origin {})))
+(def ^:private origin-d-param     (delay (bg/anno net.bytebuddy.asm.Advice$Origin {:value "#d"})))
+(def ^:private this-param         (delay (bg/anno net.bytebuddy.asm.Advice$This {:optional true})))
+(def ^:private all-args-param     (delay (bg/anno net.bytebuddy.asm.Advice$AllArguments {})))
+(def ^:private return-dyn-param   (delay (bg/anno net.bytebuddy.asm.Advice$Return
+                                            {:typing Assigner$Typing/DYNAMIC})))
+(def ^:private thrown-param       (delay (bg/anno net.bytebuddy.asm.Advice$Thrown {})))
 
-(defn- this-param []
-  (with-meta (symbol "Object")
-              (read-string "{net.bytebuddy.asm.Advice$This {:optional true}}")))
+(def ^:private on-enter-anno      (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodEnter {})))
+(def ^:private on-exit-anno       (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodExit
+                                            {:onThrowable Throwable
+                                             :suppress Throwable})))
+(def ^:private on-exit-noop-anno  (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodExit {})))
+(def ^:private to-return-anno     (delay (bg/anno net.bytebuddy.asm.Advice$AssignReturned$ToReturned
+                                            {:typing Assigner$Typing/DYNAMIC})))
 
-(defn- all-args-param []
-  (with-meta (symbol "Object/1")
-              (read-string "{net.bytebuddy.asm.Advice$AllArguments {}}")))
+(def ^:private common-params
+  ["java.lang.String" "java.lang.Class" "java.lang.String"
+   "java.lang.Object" "[Ljava.lang.Object;"])
 
-(defn- return-dynamic-param []
-  (with-meta (symbol "Object")
-              (read-string
-               "{net.bytebuddy.asm.Advice$Return {:typing
-                                                   net.bytebuddy.implementation.bytecode.assign.Assigner$Typing/DYNAMIC}}")))
+(def ^:private common-param-annos
+  [@origin-m-param @origin-c-param @origin-d-param @this-param @all-args-param])
 
-(defn- thrown-param []
-  (with-meta (symbol "Throwable")
-              (read-string "{net.bytebuddy.asm.Advice$Thrown {}}")))
+(def ^:private hook-spec
+  {:methods
+   [{:name "onEntry"
+     :static? true
+     :return "void"
+     :params common-params
+     :param-annos common-param-annos
+     :method-annos [@on-enter-anno]}]})
 
-(defn- gen-hook-advice! []
-  (let [mname (with-meta (symbol "onEntry")
-                (read-string "{net.bytebuddy.asm.Advice$OnMethodEnter {:inline false}}"))
-        pclasses [(origin-param "#m")
-                   (origin-class-param)
-                   (origin-param "#d")
-                  (this-param)
-                  (all-args-param)]
-        msig (with-meta (vector mname pclasses (symbol "Object")) {:static true})]
-    (cg/generate-class-bytes!
-     {:name "nihilite.kernel.HookAdvice"
-      :prefix "hk-"
-      :impl-ns "nihilite.kernel.advice"
-      :main false
-      :methods [msig]})))
+(def ^:private return-spec
+  {:methods
+   [{:name "onExit"
+     :static? true
+     :return "java.lang.Object"
+     :params (conj (vec common-params) "java.lang.Object")
+     :param-annos (conj (vec common-param-annos) @return-dyn-param)
+     :method-annos [@to-return-anno @on-exit-anno]}]})
 
-(defn- gen-return-advice! []
-  (let [mname (with-meta (symbol "onExit")
-                (read-string
-                 "{net.bytebuddy.asm.Advice$AssignReturned/ToReturned
-                    {:typing
-                     net.bytebuddy.implementation.bytecode.assign.Assigner$Typing/DYNAMIC}
-                    net.bytebuddy.asm.Advice$OnMethodExit
-                    {:inline false
-                     :onThrowable Throwable
-                     :suppress Throwable}}"))
-        pclasses [(origin-param "#m")
-                   (origin-class-param)
-                   (origin-param "#d")
-                  (this-param)
-                  (all-args-param)
-                  (return-dynamic-param)]
-        msig (with-meta (vector mname pclasses (symbol "Object")) {:static true})]
-    (cg/generate-class-bytes!
-     {:name "nihilite.kernel.ReturnAdvice"
-      :prefix "rt-"
-      :impl-ns "nihilite.kernel.advice"
-      :main false
-      :methods [msig]})))
+(def ^:private throw-spec
+  {:methods
+   [{:name "onThrow"
+     :static? true
+     :return "void"
+     :params (conj (vec common-params) "java.lang.Throwable")
+     :param-annos (conj (vec common-param-annos) @thrown-param)
+     :method-annos [@on-exit-anno]
+     :throws ["java.lang.Throwable"]}]})
 
-(defn- gen-throw-advice! []
-  (let [mname (with-meta (symbol "onThrow")
-                (read-string
-                 "{net.bytebuddy.asm.Advice$OnMethodExit
-                    {:inline false
-                     :onThrowable Throwable
-                     :suppress Throwable}}"))
-        pclasses [(origin-param "#m")
-                   (origin-class-param)
-                   (origin-param "#d")
-                  (this-param)
-                  (all-args-param)
-                  (thrown-param)]
-        msig (with-meta (vector mname pclasses (symbol "void")) {:static true})]
-    (cg/generate-class-bytes!
-     {:name "nihilite.kernel.ThrowAdvice"
-      :prefix "th-"
-      :impl-ns "nihilite.kernel.advice"
-      :main false
-      :methods [msig]})))
+(def ^:private redefine-spec
+  {:methods
+   [{:name "onRedefine"
+     :static? true
+     :return "java.lang.Object"
+     :params (conj (vec common-params) "java.lang.Object")
+     :param-annos (conj (vec common-param-annos) @return-dyn-param)
+     :method-annos [@to-return-anno @on-exit-noop-anno]}]})
 
-(defn gen-all!
-  "Generates HookAdvice, ReturnAdvice and ThrowAdvice into *compile-path*.
-   Intended to run during AOT compilation of this namespace; it is a no-op
-   outside of a compile because writeClassFile only writes when
-   *compile-files* is set."
-  []
-  (gen-hook-advice!)
-  (gen-return-advice!)
-  (gen-throw-advice!)
-   nil)
+(defn- ensure-class! [class-name spec]
+  (or (@advice-classes class-name)
+      (let [loaded (bg/define-class! (assoc spec :name class-name))]
+        (swap! advice-classes assoc class-name loaded)
+        loaded)))
 
-(when *compile-files*
-  (gen-all!))
+(defn ensure-hook-advice! []
+  (ensure-class! "nihilite.kernel.HookAdvice" hook-spec))
+
+(defn ensure-return-advice! []
+  (ensure-class! "nihilite.kernel.ReturnAdvice" return-spec))
+
+(defn ensure-throw-advice! []
+  (ensure-class! "nihilite.kernel.ThrowAdvice" throw-spec))
+
+(defn ensure-redefine-advice! []
+  (ensure-class! "nihilite.kernel.RedefineAdvice" redefine-spec))
+
+(defn ensure-all! []
+  (ensure-hook-advice!)
+  (ensure-return-advice!)
+  (ensure-throw-advice!)
+  (ensure-redefine-advice!))

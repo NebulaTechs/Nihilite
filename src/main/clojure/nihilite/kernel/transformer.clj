@@ -63,27 +63,30 @@
           (prune-cache-if-full!)
           false)))))
 
-(defn- visit-advice [builder position-keys matcher-class-name]
-  (if (seq position-keys)
-    (let [matcher (bucket/matcher-for position-keys)]
-      (.visit builder (.on (.to (Advice/to (Class/forName matcher-class-name)) matcher))))
-    builder))
-
 (defn- post-processor-factory
   []
-  (let [cls (Class/forName "net.bytebuddy.asm.Advice$AssignReturned$Factory")]
-    (.newInstance cls (object-array []))))
+  (let [cls (Class/forName "net.bytebuddy.asm.Advice$AssignReturned$Factory")
+        ctor (.getDeclaredConstructor cls (into-array Class []))]
+    (.setAccessible ctor true)
+    (.newInstance ctor (object-array []))))
+
+(defn- visit-advice [builder position-keys matcher-class-name]
+  (if (seq position-keys)
+    (let [matcher (bucket/matcher-for position-keys)
+          wcm (Advice/withCustomMapping)
+          ppf (post-processor-factory)
+          advice (.to (.with wcm ppf) (Class/forName matcher-class-name))]
+      (.visit builder (.on advice matcher))
+      builder)
+    builder))
 
 (defn- visit-return-advice [builder position-keys]
   (if (seq position-keys)
-    (let [matcher (bucket/matcher-for position-keys)]
-      (.visit
-       builder
-       (.on
-        (.with
-         (.withCustomMapping (Advice/withCustomMapping))
-         (post-processor-factory))
-        matcher)))
+    (let [matcher (bucket/matcher-for position-keys)
+          advice (.to (.with (Advice/withCustomMapping) (post-processor-factory))
+                          (Class/forName "nihilite.kernel.ReturnAdvice"))]
+      (.visit builder (.on advice matcher))
+      builder)
     builder))
 
 
@@ -199,6 +202,14 @@
   []
   (gen-type-matcher!)
   (gen-transformer! "nihilite.kernel.AdviceTransformer" "at-")
+  nil)
+
+(defn ensure-all!
+  "Ensure the transformer classes exist. The gen-class-based writers
+   require *compile-path* which is only set during AOT — so this is a
+   no-op at runtime, the .class files are already on the classpath from
+   compile-time generation."
+  []
   nil)
 
 (when *compile-files*

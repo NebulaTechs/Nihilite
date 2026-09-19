@@ -5,28 +5,53 @@
    Used by advice/dispatcher/transformer to materialise ByteBuddy-facing
    classes at first-use time, with method bodies that forward to plain
    Clojure functions in their impl-ns."
+   (:require [clojure.java.io])
    (:import [net.bytebuddy ByteBuddy]
             [net.bytebuddy.dynamic.loading ClassLoadingStrategy$Default]
             [net.bytebuddy.description.annotation AnnotationDescription
                                                      AnnotationDescription$Builder]
             [net.bytebuddy.description.modifier ModifierContributor$ForMethod
                                                   Ownership]
-            [net.bytebuddy.jar.asm Type]))
+            [net.bytebuddy.description.type TypeDescription$ForLoadedType]
+            [net.bytebuddy.asm MemberAttributeExtension$ForMethod
+                     AsmVisitorWrapper AsmVisitorWrapper$Compound]
+            [net.bytebuddy.matcher ElementMatchers]))
+
+(defn- define-value
+  "Call `AnnotationDescription$Builder.define` for the value's runtime type
+   and return the NEW builder instance. ByteBuddy's AnnotationDescription$Builder
+   is immutable: every define call returns a new builder, so the loop must
+   thread the returned instance forward rather than mutating the original."
+  [^AnnotationDescription$Builder builder ^String key value]
+  (cond
+    (string? value)
+    (.define builder key value)
+    (instance? Boolean value)
+    (.define builder key ^boolean value)
+    (class? value)
+    (let [cls (Class/forName "net.bytebuddy.description.annotation.AnnotationDescription$Builder")
+          m (.getDeclaredMethod cls "define" (into-array Class [java.lang.String java.lang.Class]))]
+      (.setAccessible m true)
+      (.invoke m builder (object-array [key value])))
+    (instance? Enum value)
+    (.define builder key ^Enum value)
+    (instance? AnnotationDescription value)
+    (.define builder key ^AnnotationDescription value)
+    :else
+    (throw (ex-info "unsupported annotation value type" {:value value :class (class value)}))))
 
 (defn anno
   ([^Class anno-type]
    (anno anno-type {}))
   ([^Class anno-type attrs]
    (let [builder (AnnotationDescription$Builder/ofType anno-type)]
-     (doseq [[k v] attrs]
-       (cond
-         (string? v)        (.define builder (name k) v)
-         (instance? Boolean v) (.define builder (name k) v)
-         (class? v)         (.define builder (name k) v)
-         (instance? Enum v) (.define builder (name k) v)
-         (instance? AnnotationDescription v) (.define builder (name k) v)
-         :else (throw (ex-info "unsupported annotation value type" {:value v :class (class v)}))))
-     (.build builder))))
+     (loop [^AnnotationDescription$Builder b builder
+            [kv & rest] attrs]
+       (if (nil? kv)
+         (.build b)
+         (let [k (first kv)
+               v (second kv)]
+           (recur (define-value b (name k) v) rest)))))))
 
 (defn- class-for-type
   [t]
@@ -101,11 +126,18 @@
           (if (< i (count param-annos))
             (recur (annotate-parameter b2 (nth param-annos i)) (inc i))
             (recur b2 (inc i))))
-        (let [body (or (:body spec) (empty-implementation))]
+        (let [body (or (:body spec) (empty-implementation))
+              thrown (or (:throws spec) [])
+              b (if (seq thrown)
+                  (.throwing b (into-array Class (mapv class-for-type thrown)))
+                  b)]
           (.intercept ^net.bytebuddy.dynamic.DynamicType$Builder$MethodDefinition$ReceiverTypeDefinition
                        b body))))))
 
 (def ^:private method-annotation-spec
+  "Map from method name (string) → vector of AnnotationDescription. Populated
+   by define-class! from method specs and consumed by the AsmVisitorWrapper
+   pass that emits RuntimeVisibleAnnotations for matching methods."
   (atom {}))
 
 (defn- collect-method-annos! [spec]
@@ -114,96 +146,60 @@
     (when (seq annos)
       (swap! method-annotation-spec assoc name annos))))
 
-(defn- annotation-descriptor
-  [^AnnotationDescription ad]
-  (str (.getDescriptor (.-type ad))))
+(defn- build-method-extension-writer
+  "Build an AsmVisitorWrapper that adds the annotations in `spec-map`
+   to matching methods. Each entry is `method-name → [AnnotationDescription]`;
+   the wrapper is composed of MemberAttributeExtension.ForMethod wrappers,
+   one per method name, scoped by ElementMatchers.named(method-name)."
+  [spec-map]
+  (let [wrappers (for [[mname annos] spec-map]
+                   ^AsmVisitorWrapper
+                   (.on (.annotateMethod (MemberAttributeExtension$ForMethod.)
+                                         (into-array AnnotationDescription annos))
+                         (ElementMatchers/named mname)))]
+    (AsmVisitorWrapper$Compound. (into-array AsmVisitorWrapper wrappers))))
 
-(defn- annotation-attribute-value
-  [v]
-  (cond
-    (string? v) v
-    (instance? Boolean v) v
-    (class? v) (Type/getType (str "L" (.getName ^Class v) ";"))
-    (instance? Enum v) (str v)
-    (instance? AnnotationDescription v) (annotation-descriptor v)
-    :else (str v)))
-
-(defn- annotation-class-visitor [class-visitor spec-map]
-  (proxy [net.bytebuddy.jar.asm.ClassVisitor] [class-visitor]
-    (visit [api access name desc sig exceptions]
-      (.visit class-visitor api access name desc sig exceptions))
-    (visitSource [source debug]
-      (.visitSource class-visitor source debug))
-    (visitModule [name access version]
-      (.visitModule class-visitor name access version))
-    (visitNestHost [nestHost]
-      (.visitNestHost class-visitor nestHost))
-    (visitOuterClass [owner name desc]
-      (.visitOuterClass class-visitor owner name desc))
-    (visitNestMember [nestMember]
-      (.visitNestMember class-visitor nestMember))
-    (visitPermittedSubclass [permittedSubclass]
-      (.visitPermittedSubclass class-visitor permittedSubclass))
-    (visitInnerClass [name outerName innerName access]
-      (.visitInnerClass class-visitor name outerName innerName access))
-    (visitRecordComponent [name mdesc msig]
-      (.visitRecordComponent class-visitor name mdesc msig))
-    (visitField [access fname fdesc fsig fvalue]
-      (.visitField class-visitor access fname fdesc fsig fvalue))
-    (visitMethod [access mname mdesc msig mexcs]
-      (let [matched (get spec-map mname)
-            ^net.bytebuddy.jar.asm.MethodVisitor new-mv
-            (.visitMethod class-visitor access mname mdesc msig mexcs)]
-        (when (and matched new-mv)
-          (doseq [^AnnotationDescription ad matched]
-            (let [^net.bytebuddy.jar.asm.AnnotationVisitor av
-                  (.visitAnnotation new-mv (annotation-descriptor ad) true)]
-              (when-let [values (.-elementValues ad)]
-                (let [it (.iterator values)]
-                  (while (.hasNext it)
-                    (let [e (.next it)
-                          k (.getKey e)
-                          v (.getValue e)]
-                      (.visit av (name k) (annotation-attribute-value v))))))
-              (.visitEnd av))))
-        new-mv))
-    (visitAnnotation [desc visible]
-      (.visitAnnotation class-visitor desc visible))
-    (visitTypeAnnotation [typeRef typePath desc visible]
-      (.visitTypeAnnotation class-visitor typeRef typePath desc visible))
-    (visitAttribute [attribute]
-      (.visitAttribute class-visitor attribute))
-    (visitEnd []
-      (.visitEnd class-visitor))))
-
-(defn- build-annotation-visitor [spec-map]
-  (proxy [net.bytebuddy.asm.AsmVisitorWrapper$AbstractBase] []
-    (wrap [_type-desc class-visitor _impl-ctx _type-pool _fields _methods _writer-flags _reader-flags]
-      (annotation-class-visitor class-visitor spec-map))))
+(defn- pass-through-writer
+  "Pass-through AsmVisitorWrapper used when no method-level annotations
+   are required."
+  []
+  (reify AsmVisitorWrapper
+    (mergeWriter [_ flags] flags)
+    (mergeReader [_ flags] flags)
+    (wrap [_ _type-desc class-visitor _impl-ctx _type-pool _fields _methods _writer-flags _reader-flags]
+      class-visitor)))
 
 (defn define-class!
   [spec]
   (reset! method-annotation-spec {})
   (let [name ^String (:name spec)
         super ^Class (or (:super spec) Object)
+        interfaces (or (:interfaces spec) [])
         methods (or (:methods spec) [])
         loader ^ClassLoader (or (:loader spec) (ClassLoader/getSystemClassLoader))
-        builder (-> (ByteBuddy.)
-                    (.subclass super)
-                    (.name name))
+        save-dir (or (:save-dir spec) (clojure.java.io/file "target" "classes"))
+        builder (reduce (fn [b iface]
+                          (.implement b ^net.bytebuddy.description.type.TypeDefinition
+                                     (into-array net.bytebuddy.description.type.TypeDefinition
+                                                 [(TypeDescription$ForLoadedType/of ^Class iface)])))
+                        (-> (ByteBuddy.)
+                            (.subclass super)
+                            (.name name))
+                        interfaces)
         b (reduce (fn [b m]
                     (collect-method-annos! m)
                     (define-method b m))
                   builder
                   methods)
-        spec-map @method-annotation-spec]
-    (-> b
-        (.visit (if (seq spec-map)
-                  ^net.bytebuddy.asm.AsmVisitorWrapper (build-annotation-visitor spec-map)
-                  ^net.bytebuddy.asm.AsmVisitorWrapper (reify net.bytebuddy.asm.AsmVisitorWrapper
-                                                          (mergeWriter [_ f] f)
-                                                          (mergeReader [_ f] f)
-                                                          (wrap [_ _ _ cv _ _ _ _ _] cv))))
-        (.make)
+        spec-map @method-annotation-spec
+        dynamic-type (-> b
+                         (.visit ^AsmVisitorWrapper (if (seq spec-map)
+                                                      (build-method-extension-writer spec-map)
+                                                      (pass-through-writer)))
+                         (.make))]
+    (when save-dir
+      (.mkdirs save-dir)
+      (.saveIn dynamic-type ^java.io.File save-dir))
+    (-> dynamic-type
         (.load loader ClassLoadingStrategy$Default/INJECTION)
         (.getLoaded))))
