@@ -66,18 +66,15 @@
   [_]
   (.mkdirs (io/file class-dir))
   (ensure-success!
-   "Clojure compilation"
-   (b/process {:command-args
-               ["clojure" "-Sdeps" (str "{:deps {net.bytebuddy/byte-buddy {:mvn/version \"1.18.13\"}}"
-                                        " :paths [\"src/main/clojure\"]}")
-                "-M"
-                "-e"
-                (compile-script-for '[nihilite.kernel.exceptions
-                                     nihilite.kernel.dispatcher
-                                     nihilite.kernel.bucket
-                                     nihilite.kernel.transformer
-                                     nihilite.kernel.installer
-                                     nihilite.kernel.agent])]}))
+    "Clojure compilation"
+    (b/process {:command-args ["clojure" "-Sdeps"
+                                (str "{:deps {net.bytebuddy/byte-buddy {:mvn/version \"1.18.13\"}}"
+                                     " :paths [\"src/main/clojure\"]}")
+                                "-M" "-e"
+                                (compile-script-for '[nihilite.kernel.exceptions
+                                                     nihilite.kernel.bucket
+                                                     nihilite.kernel.installer
+                                                     nihilite.kernel.agent])]}))
   nil)
 
 (defn- compile-test-driver-script []

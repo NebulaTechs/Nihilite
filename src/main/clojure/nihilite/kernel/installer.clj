@@ -8,7 +8,9 @@
    wiring and the install / uninstall / uninstall-spec! entry points that
    the registry and the agent worker call into."
   (:require [clojure.tools.logging :as log]
-            [nihilite.kernel.advice :as advice])
+            [nihilite.kernel.advice :as advice]
+            [nihilite.kernel.dispatcher :as dispatcher]
+            [nihilite.kernel.transformer :as transformer])
   (:import [net.bytebuddy.matcher ElementMatchers]
            [java.lang.instrument Instrumentation]))
 
@@ -73,6 +75,8 @@
     (log/info "HookInstaller install skipped (no Instrumentation)")
     (try
       (advice/ensure-all!)
+      (dispatcher/ensure-all!)
+      (transformer/ensure-all!)
       (let [type-matcher (transformer-instance "nihilite.kernel.HookTypeMatcher")
             combined-xform (transformer-instance "nihilite.kernel.AdviceTransformer")]
         (.installOn

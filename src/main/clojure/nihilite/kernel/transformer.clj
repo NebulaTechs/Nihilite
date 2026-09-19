@@ -205,11 +205,14 @@
   nil)
 
 (defn ensure-all!
-  "Ensure the transformer classes exist. The gen-class-based writers
-   require *compile-path* which is only set during AOT — so this is a
-   no-op at runtime, the .class files are already on the classpath from
-   compile-time generation."
+  "Same as gen-all! but invoked at runtime (e.g. from the installer).
+   Binds *compile-files* true and *compile-path* to target/classes so the
+   reflection-driven clojure.core$generate_class path writes .class files
+   that the JVM can load via the existing classpath."
   []
+  (binding [*compile-files* true
+            *compile-path* "target/classes"]
+    (gen-all!))
   nil)
 
 (when *compile-files*

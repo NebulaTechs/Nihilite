@@ -126,6 +126,18 @@
   (gen-assigner!)
   nil)
 
+(defn ensure-all!
+  "Same as gen-all! but invoked at runtime (e.g. from the installer).
+   Binds *compile-files* true and *compile-path* to target/classes so the
+   reflection-driven clojure.core$generate_class path writes .class files
+   that the JVM can load via the existing classpath. Mirrors the runtime
+   path of nihilite.kernel.advice/ensure-all!."
+  []
+  (binding [*compile-files* true
+            *compile-path* "target/classes"]
+    (gen-all!))
+  nil)
+
 (def instance
   "Lazy accessor for a DynamicAssigner instance suitable for
    MethodDelegation.to(...).withAssigner(...). Loads the generated class
