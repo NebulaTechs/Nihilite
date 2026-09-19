@@ -11,7 +11,6 @@
                                                      AnnotationDescription$Builder]
             [net.bytebuddy.description.modifier ModifierContributor$ForMethod
                                                   Ownership]
-            [net.bytebuddy.description.type TypeDefinition]
             [net.bytebuddy.jar.asm Type]))
 
 (defn anno
@@ -187,22 +186,24 @@
   (reset! method-annotation-spec {})
   (let [name ^String (:name spec)
         super ^Class (or (:super spec) Object)
-        interfaces (or (:interfaces spec) [])
         methods (or (:methods spec) [])
         loader ^ClassLoader (or (:loader spec) (ClassLoader/getSystemClassLoader))
         builder (-> (ByteBuddy.)
                     (.subclass super)
-                    (.name name))]
-    (let [b (reduce (fn [b m]
-                      (collect-method-annos! m)
-                      (define-method b m))
-                    builder
-                    methods)
-          spec-map @method-annotation-spec]
-      (let [b (if (seq spec-map)
-                (.visit b ^net.bytebuddy.asm.AsmVisitorWrapper (build-annotation-visitor spec-map))
-                b)]
-        (-> b
-            (.make)
-            (.load loader ClassLoadingStrategy$Default/INJECTION)
-            (.getLoaded))))))
+                    (.name name))
+        b (reduce (fn [b m]
+                    (collect-method-annos! m)
+                    (define-method b m))
+                  builder
+                  methods)
+        spec-map @method-annotation-spec]
+    (-> b
+        (.visit (if (seq spec-map)
+                  ^net.bytebuddy.asm.AsmVisitorWrapper (build-annotation-visitor spec-map)
+                  ^net.bytebuddy.asm.AsmVisitorWrapper (reify net.bytebuddy.asm.AsmVisitorWrapper
+                                                          (mergeWriter [_ f] f)
+                                                          (mergeReader [_ f] f)
+                                                          (wrap [_ _ _ cv _ _ _ _ _] cv))))
+        (.make)
+        (.load loader ClassLoadingStrategy$Default/INJECTION)
+        (.getLoaded))))

@@ -293,7 +293,8 @@
             (let [f (java.io.File. path)]
               (when-not (.exists (.getParentFile f))
                 (.mkdirs (.getParentFile f)))
-              (clojure.java.io/copy (java.io.ByteArrayInputStream. bytes) f)
+              (with-open [out (java.io.FileOutputStream. f)]
+                (.write out bytes))
               (.println System/err (str "DEBUG dumped " path " size=" (alength bytes))))
             (catch Throwable t
               (.println System/err (str "DEBUG dump fail: " (.getMessage t)))))))
