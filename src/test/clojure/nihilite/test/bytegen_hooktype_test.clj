@@ -3,12 +3,10 @@
    ByteBuddy's ElementMatcher interface, with `@RuntimeType` method
    annotation, and that ByteBuddy's ElementMatcher.matches() then
    dispatches into our Clojure forwarding var."
-  (:require [clojure.test :refer [deftest is testing]]
-            [nihilite.kernel.bytegen :as bg])
-  (:import [net.bytebuddy.matcher ElementMatcher]
-           [net.bytebuddy.description.type TypeDescription]
-           [net.bytebuddy.description.annotation AnnotationDescription]
-           [net.bytebuddy.description.method MethodDescription]))
+   (:require [clojure.test :refer [deftest is]]
+             [nihilite.kernel.bytegen :as bg])
+   (:import [net.bytebuddy.matcher ElementMatcher]
+            [net.bytebuddy.description.type TypeDescription]))
 
 (def ^:private runtime-type
   (Class/forName "net.bytebuddy.asm.Advice$RuntimeType"))

@@ -1,0 +1,11 @@
+/*
+
+!.github/
+!examples/
+!src/
+
+!.gitignore
+!build.clj
+!deps.edn
+!LICENSE
+!README.md
