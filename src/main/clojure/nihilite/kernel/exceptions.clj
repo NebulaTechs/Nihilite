@@ -32,19 +32,22 @@
    spec-id is embedded in the exception message; cause is the underlying
    Throwable."
   [spec-id ^Throwable cause]
-  (let [cls (Class/forName "nihilite.kernel.NihiliteAdviceException")]
-    (.newInstance
-     (.getConstructor cls (into-array Class [java.lang.String java.lang.Throwable]))
-     (object-array [(if (nil? spec-id)
-                      "nihilite advice failed"
-                      (str "nihilite advice failed for spec=" spec-id))
-                    cause]))))
+  (let [cls    (Class/forName "nihilite.kernel.NihiliteAdviceException")
+        ctor   (.getConstructor ^Class cls
+                                 (into-array Class [java.lang.String java.lang.Throwable]))]
+    (.newInstance ctor (object-array
+                        [(if (nil? spec-id)
+                           "nihilite advice failed"
+                           (str "nihilite advice failed for spec=" spec-id))
+                         cause]))))
 
 (defn cancelled!
   "Returns an instance of the generated HookCancelledException."
   []
-  (let [cls (Class/forName "nihilite.kernel.HookCancelledException")]
-    (.newInstance (.getConstructor cls) (object-array []))))
+  (let [cls (Class/forName "nihilite.kernel.HookCancelledException")
+        ctor (.getDeclaredConstructor ^Class cls (into-array Class []))]
+    (.setAccessible ctor true)
+    (.newInstance ctor (object-array []))))
 
 (when *compile-files*
   (gen-all!))

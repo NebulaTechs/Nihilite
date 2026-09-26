@@ -1,28 +1,36 @@
 (ns nihilite.kernel.bucket
-  "Maps registry hook specs into the four ByteBuddy position buckets
-   (:entry / :return / :throw / :redefine) and builds the method
-   matchers each bucket needs.
-
-   Pure Clojure — no generated classes, no ByteBuddy AgentBuilder. The
-   installer's combined transformer and the registry retransform path
-   both call into here."
-  (:require [clojure.string :as str])
+  "Registry-to-position bucketing for the advice transformer. Pulls the
+   specs registered for a target class and partitions them into the four
+   ByteBuddy positions (:entry, :return, :throw, :redefine). Also builds
+   the per-position ElementMatcher.Junction the transformer applies to a
+   method description."
+  (:require [clojure.string :as str]
+            [nihilite.registry]
+            [nihilite.registry.dispatch])
   (:import [net.bytebuddy.matcher ElementMatchers]))
 
-(defn- lookup-matching []
-  (let [v (resolve 'nihilite.registry/matching)]
-    (when v ^clojure.lang.IFn v)))
+(defn- lookup-matching
+  "Returns the IFn behind `nihilite.registry/matching` if it is
+   resolvable, else nil. Used by ByteBuddy-generated transformer stubs
+   on threads where the registry namespace may not be loaded. Falls
+   back through (resolve) -> (Var/getRawRoot) -> (RT/var + deref) so
+   both AOT and driver/JAR deployments yield the IFn."
+  []
+  (try
+    (let [v (resolve 'nihilite.registry/matching)]
+      (cond
+        (instance? clojure.lang.IFn v) v
+        (instance? clojure.lang.Var v)
+        (let [val (.getRawRoot ^clojure.lang.Var v)]
+          (when (instance? clojure.lang.IFn val) val))
+        :else nil))
+    (catch Throwable _ nil)))
 
-(defn- spec-field [spec key]
-  (let [entry (first (filter (fn [^java.util.Map$Entry e]
-                               (= key (.getKey e)))
-                             (seq (.entrySet ^java.util.Map spec))))]
-    (when entry
-      (let [v (.getValue entry)]
-        (when v
-          (if (keyword? v)
-            (name v)
-            (str v)))))))
+(defn- spec-field
+  "Reads a keyword-keyed field from a spec (a Clojure map). Returns the
+   raw value (keyword stays keyword)."
+  [spec key]
+  (get ^clojure.lang.IMap spec key))
 
 (defn- empty-buckets []
   {:entry #{} :return #{} :throw #{} :redefine #{}})
@@ -40,12 +48,12 @@
                          (fn [acc spec]
                            (let [p    (spec-field spec :position)
                                  name (spec-field spec :method-name)]
-                  (when (and p name)
-                    (let [desc (spec-field spec :source-descriptor)
-                          bucket-key (keyword (str p))
-                          key [name desc]]
-                      (assoc-in acc [bucket-key]
-                                (conj (or (get-in acc [bucket-key]) #{}) key))))))
+                             (when (and p name)
+                               (let [desc (spec-field spec :source-descriptor)
+                                     bucket-key (if (keyword? p) p (keyword p))
+                                     key [name desc]]
+                                 (assoc-in acc [bucket-key]
+                                           (conj (or (get-in acc [bucket-key]) #{}) key))))))
                          (empty-buckets)
                          specs)]
         (when (some identity (vals by-position))

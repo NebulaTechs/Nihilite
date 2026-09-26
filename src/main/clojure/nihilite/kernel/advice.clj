@@ -37,6 +37,8 @@
       (let [dispatch (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-for-spec")
             result (try
                      (.invoke ^clojure.lang.IFn dispatch spec-id self args)
+                     (catch nihilite.kernel.HookCancelledException e
+                       (throw e))
                      (catch Throwable t
                        (log/error t "entry advice dispatch failed")
                        (throw (exc/advice-ex! spec-id t))))]
@@ -92,8 +94,9 @@
     (if (nil? spec-id)
       original
       (try
-        (let [reinstaller-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher")
-              reinstaller (deref ^clojure.lang.Atom reinstaller-var)
+        (let [ref-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher-ref")
+              ^clojure.lang.Atom redefiner-atom (deref ref-var)
+              reinstaller (deref redefiner-atom)
               host (ap/host-internal host-class)]
           (if (nil? reinstaller)
             original
@@ -112,11 +115,17 @@
                                             {:typing Assigner$Typing/DYNAMIC})))
 (def ^:private thrown-param       (delay (bg/anno net.bytebuddy.asm.Advice$Thrown {})))
 
-(def ^:private on-enter-anno      (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodEnter {})))
+(defn- enter-anno []
+  (let [exc-cls (Class/forName "nihilite.kernel.HookCancelledException")]
+    (bg/anno net.bytebuddy.asm.Advice$OnMethodEnter
+             {:inline false
+              :skipOn exc-cls})))
 (def ^:private on-exit-anno       (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodExit
-                                            {:onThrowable Throwable
-                                             :suppress Throwable})))
-(def ^:private on-exit-noop-anno  (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodExit {})))
+                                                  {:inline false
+                                                   :onThrowable Throwable
+                                                   :suppress Throwable})))
+(def ^:private on-exit-noop-anno  (delay (bg/anno net.bytebuddy.asm.Advice$OnMethodExit
+                                                  {:inline false})))
 (def ^:private to-return-anno     (delay (bg/anno net.bytebuddy.asm.Advice$AssignReturned$ToReturned
                                             {:typing Assigner$Typing/DYNAMIC})))
 
@@ -131,10 +140,11 @@
   {:methods
    [{:name "onEntry"
      :static? true
-     :return "void"
+     :return "java.lang.Object"
      :params common-params
      :param-annos common-param-annos
-     :method-annos [@on-enter-anno]}]})
+     :method-annos [(enter-anno)]
+     :forward-var 'nihilite.kernel.advice/hk-onEntry}]})
 
 (def ^:private return-spec
   {:methods
@@ -143,7 +153,8 @@
      :return "java.lang.Object"
      :params (conj (vec common-params) "java.lang.Object")
      :param-annos (conj (vec common-param-annos) @return-dyn-param)
-     :method-annos [@to-return-anno @on-exit-anno]}]})
+     :method-annos [@to-return-anno @on-exit-anno]
+     :forward-var 'nihilite.kernel.advice/rt-onExit}]})
 
 (def ^:private throw-spec
   {:methods
@@ -153,7 +164,8 @@
      :params (conj (vec common-params) "java.lang.Throwable")
      :param-annos (conj (vec common-param-annos) @thrown-param)
      :method-annos [@on-exit-anno]
-     :throws ["java.lang.Throwable"]}]})
+     :throws ["java.lang.Throwable"]
+     :forward-var 'nihilite.kernel.advice/th-onThrow}]})
 
 (def ^:private redefine-spec
   {:methods
@@ -162,28 +174,37 @@
      :return "java.lang.Object"
      :params (conj (vec common-params) "java.lang.Object")
      :param-annos (conj (vec common-param-annos) @return-dyn-param)
-     :method-annos [@to-return-anno @on-exit-noop-anno]}]})
+     :method-annos [@to-return-anno @on-exit-noop-anno]
+     :forward-var 'nihilite.kernel.advice/rd-onRedefine}]})
 
-(defn- ensure-class! [class-name spec]
+(defn- ensure-class! [class-name spec inst]
   (or (@advice-classes class-name)
-      (let [loaded (bg/define-class! (assoc spec :name class-name))]
+      (let [loaded (bg/define-class! (assoc spec :name class-name :instrumentation inst))]
         (swap! advice-classes assoc class-name loaded)
         loaded)))
 
-(defn ensure-hook-advice! []
-  (ensure-class! "nihilite.kernel.HookAdvice" hook-spec))
+(defn- ensure-hook-advice! [inst]
+  (ensure-class! "nihilite.kernel.HookAdvice" hook-spec inst))
 
-(defn ensure-return-advice! []
-  (ensure-class! "nihilite.kernel.ReturnAdvice" return-spec))
+(defn- ensure-return-advice! [inst]
+  (ensure-class! "nihilite.kernel.ReturnAdvice" return-spec inst))
 
-(defn ensure-throw-advice! []
-  (ensure-class! "nihilite.kernel.ThrowAdvice" throw-spec))
+(defn- ensure-throw-advice! [inst]
+  (ensure-class! "nihilite.kernel.ThrowAdvice" throw-spec inst))
 
-(defn ensure-redefine-advice! []
-  (ensure-class! "nihilite.kernel.RedefineAdvice" redefine-spec))
+(defn- ensure-redefine-advice! [inst]
+  (ensure-class! "nihilite.kernel.RedefineAdvice" redefine-spec inst))
 
-(defn ensure-all! []
-  (ensure-hook-advice!)
-  (ensure-return-advice!)
-  (ensure-throw-advice!)
-  (ensure-redefine-advice!))
+(defn ensure-all!
+  "Generates all four advice classes into the system classloader.
+   The 0-arg form resolves Instrumentation from the agent (premain/agentmain
+   or a dynamically-attached ByteBuddyAgent). The 1-arg form accepts an
+   explicit Instrumentation from the caller (e.g. the driver)."
+  ([] (ensure-all! (when-let [v (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)]
+                     (.invoke ^clojure.lang.IFn v))))
+  ([^java.lang.instrument.Instrumentation inst]
+   (ensure-hook-advice! inst)
+   (ensure-return-advice! inst)
+   (ensure-throw-advice! inst)
+   (ensure-redefine-advice! inst)
+   nil))

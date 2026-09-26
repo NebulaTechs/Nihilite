@@ -12,10 +12,9 @@
    ByteBuddy-recommended order when both apply to the same method
    (raphw/byte-buddy#1097)."
   (:require [nihilite.kernel.classgen :as cg]
-            [nihilite.kernel.dispatcher :as disp]
             [nihilite.kernel.bucket :as bucket])
   (:import [net.bytebuddy.asm Advice]
-           [net.bytebuddy.implementation MethodDelegation]))
+           [net.bytebuddy.dynamic ClassFileLocator$Simple]))
 
 (def ^:private ^java.util.concurrent.ConcurrentHashMap ^:no-doc match-cache
   "Negative-result cache for HookTypeMatcher.matches. Entries are
@@ -70,23 +69,45 @@
     (.setAccessible ctor true)
     (.newInstance ctor (object-array []))))
 
+(defn- advice-locator
+  "In-memory ClassFileLocator that resolves the bytegen-generated advice
+   classes by their dotted class name. Nihilite's advice classes are
+   written to target/classes by bytegen, so the classloader's
+   getResourceAsStream can find them."
+  []
+  (let [advice-names {"nihilite.kernel.HookAdvice"     "nihilite/kernel/HookAdvice.class"
+                      "nihilite.kernel.ReturnAdvice"   "nihilite/kernel/ReturnAdvice.class"
+                      "nihilite.kernel.ThrowAdvice"    "nihilite/kernel/ThrowAdvice.class"
+                      "nihilite.kernel.RedefineAdvice" "nihilite/kernel/RedefineAdvice.class"}
+        cl (ClassLoader/getSystemClassLoader)
+        pairs (into {}
+                    (for [[dotted resource] advice-names
+                          :let [is (when-let [u (.getResource cl resource)]
+                                     (.openStream u))]
+                          :when is]
+                       [dotted (with-open [in is]
+                                 (.readAllBytes in))]))]
+    (ClassFileLocator$Simple. pairs)))
+
 (defn- visit-advice [builder position-keys matcher-class-name]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
           wcm (Advice/withCustomMapping)
           ppf (post-processor-factory)
-          advice (.to (.with wcm ppf) (Class/forName matcher-class-name))]
-      (.visit builder (.on advice matcher))
-      builder)
+          loc (advice-locator)
+          advice (.to (.with wcm ppf)
+                      (Class/forName matcher-class-name)
+                      loc)]
+      (.visit builder (.on advice matcher)))
     builder))
 
 (defn- visit-return-advice [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
           advice (.to (.with (Advice/withCustomMapping) (post-processor-factory))
-                          (Class/forName "nihilite.kernel.ReturnAdvice"))]
-      (.visit builder (.on advice matcher))
-      builder)
+                        (Class/forName "nihilite.kernel.ReturnAdvice")
+                        (advice-locator))]
+      (.visit builder (.on advice matcher)))
     builder))
 
 
@@ -103,39 +124,31 @@
    ^java.lang.ClassLoader _class-loader
    ^net.bytebuddy.utility.JavaModule _module
    ^java.security.ProtectionDomain _protection-domain]
-  (if-let [buckets (bucket/collect-buckets type-description)]
-    (let [entry-b   (:entry buckets)
-          return-b  (:return buckets)
-          throw-b   (:throw buckets)
-          b (visit-advice builder entry-b "nihilite.kernel.HookAdvice")
-          b2 (visit-return-advice b return-b)]
-      (visit-advice b2 throw-b "nihilite.kernel.ThrowAdvice"))
-    builder))
+   (if-let [buckets (bucket/collect-buckets type-description)]
+     (let [entry-b   (:entry buckets)
+           return-b  (:return buckets)
+           throw-b   (:throw buckets)
+           b (visit-advice builder entry-b "nihilite.kernel.HookAdvice")
+           b2 (visit-return-advice b return-b)]
+       (visit-advice b2 throw-b "nihilite.kernel.ThrowAdvice"))
+     builder))
 
 (defn- apply-redefine-transformer
-  "Clojure body of the generated redefine-transformer stub. Delegates
-   matching :redefine methods to the generated GenericDispatcher with the
-   DynamicAssigner. Arity 6 because gen-class forwarding for instance
-   methods prepends `this`."
+  "Clojure body of the generated redefine-transformer stub. Uses Advice
+   (not MethodDelegation) for :redefine so it composes with retransform
+   mode. RedefineAdvice carries @OnMethodExit + @AssignReturned.ToReturned
+   that fully replace the target method body. Arity 6 because gen-class
+   forwarding for instance methods prepends `this`."
   [_this
    ^net.bytebuddy.dynamic.DynamicType$Builder builder
    ^net.bytebuddy.description.type.TypeDescription type-description
    ^java.lang.ClassLoader _class-loader
    ^net.bytebuddy.utility.JavaModule _module
    ^java.security.ProtectionDomain _protection-domain]
-  (if-let [buckets (bucket/collect-buckets type-description)]
-    (let [redefine-keys (:redefine buckets)]
-      (if (seq redefine-keys)
-        (let [matcher (bucket/matcher-for redefine-keys)
-              assigner (deref disp/instance)]
-          (.intercept
-           (.method builder matcher)
-           (.withAssigner
-            (MethodDelegation/to (Class/forName "nihilite.kernel.GenericDispatcher"))
-            assigner)))
-        builder))
-    builder))
-
+  (let [buckets (bucket/collect-buckets type-description)]
+    (if-let [_ buckets]
+      (visit-advice builder (:redefine buckets) "nihilite.kernel.RedefineAdvice")
+      builder)))
 
 (defn at-equals [self other] (identical? self other))
 (defn at-toString [_] "nihilite.kernel.AdviceTransformer")
@@ -163,7 +176,7 @@
    erased by redefinition: MethodDelegation (:redefine) replaces the
    method body first, then the entry/return/throw advice is visited onto
    the replaced body."
-  [this builder type-description class-loader module protection-domain]
+   [this builder type-description class-loader module protection-domain]
   (let [b1 (apply-redefine-transformer this builder type-description class-loader module protection-domain)
         b2 (apply-advice-transformer this b1 type-description class-loader module protection-domain)]
     b2))

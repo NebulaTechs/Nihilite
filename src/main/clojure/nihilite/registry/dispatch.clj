@@ -11,7 +11,8 @@
    nihilite.kernel.dispatcher reads it via Clojure/var."
   (:require [clojure.tools.logging :as log]
             [nihilite.registry :as reg]
-            [nihilite.registry.stats :as stats]))
+            [nihilite.registry.stats :as stats]
+            [nihilite.kernel.exceptions :as exc]))
 
 (defonce ^:private redefine-dispatcher-ref (atom nil))
 
@@ -86,7 +87,6 @@
     :else nil))
 
 (defn ctx-self        [x]          (when-some [c (->ctx x)] (:self c)))
-(defn ctx-return      [x]          (when-some [c (->ctx x)] (.-returnValue ^nihilite.registry.HookContext c)))
 (defn ctx-cancel!     [x value]    (cond
                                      (instance? nihilite.registry.HookContext x)
                                      (set! (.-cancelled ^nihilite.registry.HookContext x) (boolean value))
@@ -129,6 +129,8 @@
       (let [bucket (reg/spec-bucket spec)
             event  (->hook-event spec self args nil)]
         (walk-bucket bucket event spec-id)))
+    (catch nihilite.kernel.HookCancelledException _
+      (throw (exc/cancelled!)))
     (catch Throwable t
       (try (log/error t "registry dispatch-for-spec failed (id=" spec-id ")")
            (catch Throwable _)))

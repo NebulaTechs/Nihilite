@@ -15,6 +15,7 @@
    without a Java source file."
   (:require [nihilite.registry :as reg]
             [nihilite.registry.stats :as stats]
+            [nihilite.registry.dispatch]
             [nihilite.api :as api])
   (:import [net.bytebuddy.agent ByteBuddyAgent])
 (:gen-class
@@ -95,10 +96,9 @@
 ;; Spec bridge implementations.
 
 (defn- entry-handler [_ctx]
-  (.println System/err (str "DEBUG entry-handler called ctx=" (str _ctx)))
+  (.println System/err (str "DEBUG entry-handler fired entered=" @entered))
   (swap! entered inc)
   nil)
-
 (defn- return-handler [_ctx]
   (swap! return-mutated inc)
   "MUTATED-BY-DRIVER")
@@ -178,27 +178,7 @@
         probeThrow (.getDeclaredMethod target "probeThrow" (into-array Class []))]
 
     ;; probe(int) -- :entry fires
-    ;; First, explicitly test if HookAdvice's vars are bound (debug):
-    (let [hook-var (try (resolve 'nihilite.kernel.advice/hk-onEntry)
-                        (catch Throwable e
-                          (.println System/err (str "DEBUG resolve hk-onEntry threw: " (.getMessage e)))
-                          nil))]
-      (.println System/err (str "DEBUG hk-onEntry var=" (when hook-var (str hook-var)) " bound=" (when hook-var (.isBound ^clojure.lang.Var hook-var))))
-      (when hook-var
-        (try
-          (.invoke ^clojure.lang.Var hook-var "smoke" nil nil (object-array []))
-          (.println System/err "DEBUG hk-onEntry direct invoke ok")
-          (catch Throwable t
-            (.println System/err (str "DEBUG hk-onEntry direct invoke threw: " (.getMessage t)))))))
-    (let [result (try
-                   (.invoke probe nil (object-array [(int 1)]))
-                   (catch Throwable t
-                     (.println System/err (str "DEBUG probe invoke threw: " (.getClass t) " " (.getMessage t)))
-                     (when-let [c (.getCause t)]
-                       (.println System/err (str "DEBUG probe cause: " (.getClass c) " " (.getMessage c)))
-                       (when-let [c2 (.getCause c)]
-                         (.println System/err (str "DEBUG probe cause2: " (.getClass c2) " " (.getMessage c2)))))
-                     (throw t)))]
+    (let [result (.invoke probe nil (object-array [(int 1)]))]
       (when (not= @entered 1) (fail! (str "ENTERED=" @entered " expected 1") 3))
       (when (not= "original-1" result) (fail! (str "probe was \"" result "\" expected \"original-1\"") 4)))
 
@@ -271,7 +251,6 @@
         (when (not (instance? nihilite.kernel.HookCancelledException (.getCause ite)))
           (fail! (str "post-retransform cancel cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))) 19))))
-    (stats/clear-driver-state!)
     (try
       (.invoke probeThrow nil (object-array []))
       (fail! "post-retransform probeThrow returned normally" 20)
@@ -284,29 +263,19 @@
     (when @stats/driver-body-executed-after-cancel?
       (fail! "post-retransform probeCancel body still executed" 23))))
 
-(defn- dump-transformer []
-  (proxy [java.lang.instrument.ClassFileTransformer] []
-    (transform [_ loader class-name class-being-redefined protection-domain bytes]
-      (when (and class-name (.endsWith ^String class-name "DummyTarget"))
-        (let [path (str "target/" (.replace ^String class-name "." "/") "_woven.class")]
-          (try
-            (let [f (java.io.File. path)]
-              (when-not (.exists (.getParentFile f))
-                (.mkdirs (.getParentFile f)))
-              (with-open [out (java.io.FileOutputStream. f)]
-                (.write out bytes))
-              (.println System/err (str "DEBUG dumped " path " size=" (alength bytes))))
-            (catch Throwable t
-              (.println System/err (str "DEBUG dump fail: " (.getMessage t)))))))
-      nil)))
-
 (defn td-main [& _args]
   (let [inst (ByteBuddyAgent/install)]
     ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
     ((requiring-resolve 'nihilite.kernel.installer/install) inst)
-    ;; register the dumper AFTER ByteBuddy so we capture the woven OUTPUT bytes
-    (.addTransformer inst (dump-transformer) true)
+    ;; Register the driver's 5 hook specs so the transformer weaves them.
     (install-all!)
+    ;; Pre-load DummyTarget so retransform-loaded-matching! can find it
+    ;; via Instrumentation.getAllLoadedClasses.
+    (Class/forName dummy-target-class)
+    ;; retransform already-loaded classes so the new specs take effect on
+    ;; DummyTarget before run-once! invokes its methods.
+    ((requiring-resolve 'nihilite.registry/retransform-loaded-matching!)
+     "nihilite/test/retransform_driver/DummyTarget" inst)
     (run-once! inst)
     (reg/clear!)
     (when (not (empty? (reg/list-ids)))

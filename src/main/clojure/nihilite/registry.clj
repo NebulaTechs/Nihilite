@@ -46,6 +46,14 @@
   [class-internal method-name descriptor]
   (str class-internal "/" method-name "#" descriptor))
 
+(defn ctx-return
+  "Return value of a HookContext/HookEvent, or nil when absent."
+  [x]
+  (cond
+    (instance? HookContext x) (.getReturnValue ^HookContext x)
+    (instance? HookEvent x) (.getReturnValue ^HookEvent x)
+    :else nil))
+
 (defn normalize-position
   [p]
   (cond
@@ -129,27 +137,29 @@
     (some-> (.get by-target (:target-internal spec)) seq)))
 
 (defn retransform-loaded-matching!
-  [^String target-internal]
-  (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
-        inst (when lookup-fn (lookup-fn))]
-    (when inst
-      (let [^Instrumentation inst inst
-            dot-name (.replace ^String target-internal "/" ".")]
-        (try
-          (let [candidates (->> (.getAllLoadedClasses inst)
-                                (filter (fn [^Class c]
-                                          (and c (.equals dot-name (.getName c)))))
-                                (filter (fn [^Class c] (.isModifiableClass inst c))))]
-            (when (seq candidates)
-              (.retransformClasses inst (into-array Class (vec candidates)))
-              (log/debug "retransform-loaded-matching! retransformed"
-                         (count candidates) "class(es) for target=" target-internal)))
-          (catch java.lang.instrument.UnmodifiableClassException _
-            (log/warn "retransform-loaded-matching! could not retransform"
-                      target-internal " (UnmodifiableClassException)"))
-          (catch Throwable t
-            (log/warn t "retransform-loaded-matching! retransform failed for"
-                      target-internal)))))))
+  ([^String target-internal]
+   (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
+         inst (when lookup-fn (lookup-fn))]
+     (retransform-loaded-matching! target-internal inst)))
+  ([^String target-internal ^Instrumentation inst]
+   (when inst
+     (let [^Instrumentation inst inst
+           dot-name (.replace ^String target-internal "/" ".")]
+       (try
+         (let [candidates (->> (.getAllLoadedClasses inst)
+                               (filter (fn [^Class c]
+                                         (and c (.equals dot-name (.getName c)))))
+                               (filter (fn [^Class c] (.isModifiableClass inst c))))]
+           (when (seq candidates)
+             (.retransformClasses inst (into-array Class (vec candidates)))
+             (log/debug "retransform-loaded-matching! retransformed"
+                        (count candidates) "class(es) for target=" target-internal)))
+         (catch java.lang.instrument.UnmodifiableClassException _
+           (log/warn "retransform-loaded-matching! could not retransform"
+                     target-internal " (UnmodifiableClassException)"))
+         (catch Throwable t
+           (log/warn t "retransform-loaded-matching! retransform failed for"
+                     target-internal)))))))
 
 (defonce ^:private status-index
   (java.util.concurrent.ConcurrentHashMap.))

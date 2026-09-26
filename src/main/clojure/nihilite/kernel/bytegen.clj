@@ -5,16 +5,18 @@
    Used by advice/dispatcher/transformer to materialise ByteBuddy-facing
    classes at first-use time, with method bodies that forward to plain
    Clojure functions in their impl-ns."
-   (:require [clojure.java.io])
-   (:import [net.bytebuddy ByteBuddy]
-            [net.bytebuddy.dynamic.loading ClassLoadingStrategy$Default]
-            [net.bytebuddy.description.annotation AnnotationDescription
-                                                     AnnotationDescription$Builder]
+(:require [clojure.java.io])
+    (:import [net.bytebuddy ByteBuddy]
+             [net.bytebuddy.description.annotation AnnotationDescription
+                                                      AnnotationDescription$Builder]
             [net.bytebuddy.description.modifier ModifierContributor$ForMethod
-                                                  Ownership]
+                                                  Ownership Visibility]
             [net.bytebuddy.description.type TypeDescription$ForLoadedType]
             [net.bytebuddy.asm MemberAttributeExtension$ForMethod
                      AsmVisitorWrapper AsmVisitorWrapper$Compound]
+            [net.bytebuddy.implementation.bytecode ByteCodeAppender
+                                                    ByteCodeAppender$Size]
+            [net.bytebuddy.jar.asm Label MethodVisitor Opcodes]
             [net.bytebuddy.matcher ElementMatchers]))
 
 (defn- define-value
@@ -104,6 +106,114 @@
 (defn- empty-implementation []
   net.bytebuddy.implementation.StubMethod/INSTANCE)
 
+(defn- invoke-desc-for
+  [param-classes]
+  (let [n (count param-classes)
+        objs (apply str (repeat n "Ljava/lang/Object;"))]
+    (str "(" objs ")Ljava/lang/Object;")))
+
+(defn- forwarder-implementation
+  "Returns an `Implementation` (reify of Implementation) that emits a
+   gen-class-style forwarder body. The bytecode it produces:
+
+     Var v = Var.intern nsName, varName
+     if v.isBound, Object impl = v.get
+       if impl instanceof IFn,
+         return ((IFn) impl).invoke args..., void: just RETURN
+     throw new UnsupportedOperationException methodName nsName varName
+
+   This is byte-buddy's low-level escape: a `ByteCodeAppender` that drives
+   an ASM `MethodVisitor` (repackaged under `net.bytebuddy.jar.asm.*`).
+   The `StackManipulation` combinators in `bytecode/` only model linear
+   sequences with no branching. forwarder needs `ifeq` jumps, so it
+   lives at the appender layer, which is byte-buddy's documented way to
+   express control flow.
+
+   The appender's `apply(MethodVisitor, Context, MethodDescription)` is
+   the entry point byte-buddy invokes during class definition; the third
+   arg is the method being woven, used to size locals and stack."
+  [^clojure.lang.Symbol forward-var param-classes ^Class return-type ^String method-name]
+  (let [ns-name  (str (symbol (namespace forward-var)))
+        var-name (str (name forward-var))
+        is-void  (identical? return-type Void/TYPE)
+        invoke-desc (invoke-desc-for param-classes)
+        n-args (count param-classes)
+        msg (str method-name " " ns-name "/" var-name " not defined")
+        load-local (fn [^MethodVisitor mv i]
+                     (.visitVarInsn mv Opcodes/ALOAD i))
+        call-method (fn [^MethodVisitor mv op ^String owner ^String name ^String desc iface?]
+                     (let [^MethodVisitor mv mv
+                           m (.getMethod MethodVisitor "visitMethodInsn"
+                                         (into-array Class
+                                                     [Integer/TYPE
+                                                      String
+                                                      String
+                                                      String
+                                                      Boolean/TYPE]))]
+                       (.setAccessible m true)
+                       (.invoke m mv (object-array [(int op) owner name desc (boolean iface?)]))))
+        size (ByteCodeAppender$Size. (inc n-args) (inc n-args))]
+    (reify net.bytebuddy.implementation.Implementation
+      (prepare [_ inst-type] inst-type)
+      (appender [_ _target]
+        (proxy [ByteCodeAppender] []
+          (apply [^MethodVisitor mv _ctx _method]
+            (let [^MethodVisitor mv mv
+                  l-unbound (Label.)
+                  l-throw   (Label.)]
+              (.visitLdcInsn mv ^Object ns-name)
+              (call-method mv Opcodes/INVOKESTATIC "clojure/lang/Symbol"
+                           "intern"
+                           "(Ljava/lang/String;)Lclojure/lang/Symbol;" false)
+              (.visitLdcInsn mv ^Object var-name)
+              (call-method mv Opcodes/INVOKESTATIC "clojure/lang/Symbol"
+                           "intern"
+                           "(Ljava/lang/String;)Lclojure/lang/Symbol;" false)
+              (call-method mv Opcodes/INVOKESTATIC "clojure/lang/Var"
+                           "intern"
+                           "(Lclojure/lang/Symbol;Lclojure/lang/Symbol;)Lclojure/lang/Var;"
+                           false)
+              (.visitInsn mv Opcodes/DUP)
+              (call-method mv Opcodes/INVOKEVIRTUAL "clojure/lang/Var"
+                           "isBound"
+                           "()Z" false)
+              (.visitJumpInsn mv Opcodes/IFEQ l-unbound)
+              (call-method mv Opcodes/INVOKEVIRTUAL "clojure/lang/Var"
+                           "get"
+                           "()Ljava/lang/Object;" false)
+              (.visitInsn mv Opcodes/DUP)
+              (.visitTypeInsn mv Opcodes/INSTANCEOF "clojure/lang/IFn")
+              (.visitJumpInsn mv Opcodes/IFEQ l-throw)
+              (.visitTypeInsn mv Opcodes/CHECKCAST "clojure/lang/IFn")
+              (dotimes [i n-args] (load-local mv i))
+              (call-method mv Opcodes/INVOKEINTERFACE "clojure/lang/IFn"
+                           "invoke"
+                           invoke-desc true)
+              (if is-void
+                (.visitInsn mv Opcodes/RETURN)
+                (.visitInsn mv Opcodes/ARETURN))
+              (.visitFrame mv Opcodes/F_SAME1 0 nil 1 (into-array Object ["clojure/lang/Var"]))
+              (.visitLabel mv l-unbound)
+              (.visitInsn mv Opcodes/POP)
+              (.visitTypeInsn mv Opcodes/NEW "java/lang/UnsupportedOperationException")
+              (.visitInsn mv Opcodes/DUP)
+              (.visitLdcInsn mv ^Object msg)
+              (call-method mv Opcodes/INVOKESPECIAL "java/lang/UnsupportedOperationException"
+                           "<init>"
+                           "(Ljava/lang/String;)V" false)
+              (.visitInsn mv Opcodes/ATHROW)
+              (.visitFrame mv Opcodes/F_SAME1 0 nil 1 (into-array Object ["java/lang/Object"]))
+              (.visitLabel mv l-throw)
+              (.visitInsn mv Opcodes/POP)
+              (.visitTypeInsn mv Opcodes/NEW "java/lang/UnsupportedOperationException")
+              (.visitInsn mv Opcodes/DUP)
+              (.visitLdcInsn mv ^Object msg)
+              (call-method mv Opcodes/INVOKESPECIAL "java/lang/UnsupportedOperationException"
+                           "<init>"
+                           "(Ljava/lang/String;)V" false)
+              (.visitInsn mv Opcodes/ATHROW))
+            size))))))
+
 (defn define-method
   "Define a single method on a ByteBuddy builder and return the result.
    intercept() on the MethodDefinition sub-builder does NOT mutate the
@@ -115,8 +225,10 @@
         return-type (class-for-type (:return spec))
         params (or (:params spec) [])
         param-annos (or (:param-annos spec) [])
+        forward-var (:forward-var spec)
         modifiers (into-array ModifierContributor$ForMethod
-                              (if static? [Ownership/STATIC] []))
+                              (cond-> [Visibility/PUBLIC]
+                                static? (conj Ownership/STATIC)))
         mdb (.defineMethod builder name ^Class return-type modifiers)]
     (loop [b mdb
            i 0]
@@ -126,7 +238,11 @@
           (if (< i (count param-annos))
             (recur (annotate-parameter b2 (nth param-annos i)) (inc i))
             (recur b2 (inc i))))
-        (let [body (or (:body spec) (empty-implementation))
+        (let [param-classes (mapv class-for-type params)
+              body (or (:body spec)
+                       (if forward-var
+                         (forwarder-implementation forward-var param-classes return-type name)
+                         (empty-implementation)))
               thrown (or (:throws spec) [])
               b (if (seq thrown)
                   (.throwing b (into-array Class (mapv class-for-type thrown)))
@@ -176,7 +292,7 @@
         super ^Class (or (:super spec) Object)
         interfaces (or (:interfaces spec) [])
         methods (or (:methods spec) [])
-        loader ^ClassLoader (or (:loader spec) (ClassLoader/getSystemClassLoader))
+        inst ^java.lang.instrument.Instrumentation (:instrumentation spec)
         save-dir (or (:save-dir spec) (clojure.java.io/file "target" "classes"))
         builder (reduce (fn [b iface]
                           (.implement b ^net.bytebuddy.description.type.TypeDefinition
@@ -200,6 +316,22 @@
     (when save-dir
       (.mkdirs save-dir)
       (.saveIn dynamic-type ^java.io.File save-dir))
-    (-> dynamic-type
-        (.load loader ClassLoadingStrategy$Default/INJECTION)
-        (.getLoaded))))
+    (if inst
+      (let [^net.bytebuddy.dynamic.loading.ClassInjector injector
+              (net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation/of
+                (java.io.File. (str (clojure.java.io/file "target") "/nihilite-classes"))
+                net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation$Target/SYSTEM
+                inst)
+            target-loader (ClassLoader/getSystemClassLoader)
+          strategy (reify net.bytebuddy.dynamic.loading.ClassLoadingStrategy
+                     (load [_ _cl types]
+                       (.inject ^net.bytebuddy.dynamic.loading.ClassInjector injector types)))]
+        (.mkdirs (java.io.File. (str (clojure.java.io/file "target") "/nihilite-classes")))
+        (let [^net.bytebuddy.dynamic.DynamicType$Loaded loaded
+                (.load ^net.bytebuddy.dynamic.DynamicType$Unloaded dynamic-type target-loader strategy)]
+          (.getLoaded loaded)))
+      (throw (IllegalStateException.
+               (str "bytegen/define-class! cannot inject " name
+                    " into the system classloader without an Instrumentation. "
+                    "Ensure Nihilite is installed via -javaagent or agentmain "
+                    "(premain/agentmain must capture the Instrumentation)."))))))

@@ -27,7 +27,8 @@
 (def driver-jvm-opts
   ["-Djdk.attach.allowAttachSelf=true"
    "-XX:+EnableDynamicAgentLoading"
-   "-Dnet.bytebuddy.safe=false"])
+   "-Dnet.bytebuddy.safe=false"
+   "-Xint"])
 
 (defn- basis-classpath
   [basis]
@@ -69,7 +70,7 @@
     "Clojure compilation"
     (b/process {:command-args ["clojure" "-Sdeps"
                                 (str "{:deps {net.bytebuddy/byte-buddy {:mvn/version \"1.18.13\"}}"
-                                     " :paths [\"src/main/clojure\"]}")
+                                     " :paths [\"src/main/clojure\" \"target/classes\"]}")
                                 "-M" "-e"
                                 (compile-script-for '[nihilite.kernel.exceptions
                                                      nihilite.kernel.bucket
