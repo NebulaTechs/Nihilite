@@ -24,11 +24,30 @@
 (def forbidden-entries
   ["examples/" "minecraft/" "fabric/" "init.clj" "server.properties"])
 
-(def driver-jvm-opts
+(def ^:private base-driver-opts
   ["-Djdk.attach.allowAttachSelf=true"
-   "-XX:+EnableDynamicAgentLoading"
-   "-Dnet.bytebuddy.safe=false"
-   "-Xint"])
+   "-Dnet.bytebuddy.safe=false"])
+
+(def ^:private dynamic-agent-loading-opts
+  ["-XX:+EnableDynamicAgentLoading"])
+
+(defn- java-major-version
+  "Returns the JDK feature version (21, 25, ...). Accepts both
+   '21.0.4' (legacy) and '21' (JEP 223+ short form)."
+  []
+  (some-> (System/getProperty "java.version")
+          (str/split #"[\.\-]")
+          first
+          Integer/parseInt))
+
+(defn driver-jvm-opts
+  "JVM opts for driver processes. -XX:+EnableDynamicAgentLoading is
+   only meaningful on JDK 22+; on JDK 21 it is silently ignored, but
+   we omit it explicitly so the intent is visible and the flag surface
+   matches the running host."
+  []
+  (cond-> base-driver-opts
+    (>= (java-major-version) 22) (into dynamic-agent-loading-opts)))
 
 (defn- basis-classpath
   [basis]
@@ -184,13 +203,13 @@
 (defn retransform-driver
   [_]
   (java-command! "Retransform driver"
-                 "nihilite.test.retransformDriver" [] driver-jvm-opts)
+                 "nihilite.test.retransformDriver" [] (driver-jvm-opts))
   nil)
 
 (defn compiler-loader-driver
   [_]
   (java-command! "Compiler loader driver"
-                 "nihilite.test.compilerLoaderHintDriver" [] driver-jvm-opts)
+                 "nihilite.test.compilerLoaderHintDriver" [] (driver-jvm-opts))
   nil)
 
 (defn javaagent-driver
@@ -201,13 +220,13 @@
                  "nihilite.javaagentClasspathDriver"
                  ["spawn-jar-smoke" (.getAbsolutePath (io/file uber-file))
                   "examples/jdkstdlib/init.clj"]
-                 (conj driver-jvm-opts "-Dnihilite.compiler-loader-hint="))
+                 (conj (driver-jvm-opts) "-Dnihilite.compiler-loader-hint="))
   nil)
 
 (defn redefine-instance-driver
   [_]
   (java-command! "Redefine instance driver"
-                 "nihilite.test.redefineInstanceDriver" [] driver-jvm-opts)
+                 "nihilite.test.redefineInstanceDriver" [] (driver-jvm-opts))
   nil)
 
 (defn check

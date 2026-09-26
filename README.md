@@ -2,6 +2,8 @@
 
 Clojure nREPL agent for running JVM.
 
+Requires JDK 21 or later.
+
 ## Build
 
 ```sh
@@ -58,7 +60,16 @@ Other verbs:
 - `(api/swap-bridge! id new-fn)` — replace the bridge in place
 - `(api/register-action! :kw)` — register a custom `:action`
 
-See `examples/jdkstdlib/init.clj` for a complete hook.
+### Examples
+
+| Example | What it shows |
+|---------|---------------|
+| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | Hook `java.io.FileInputStream.read` to count bytes read across the JVM (`:return` + `:observe`). |
+| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` rewires a live hook without a restart (`:entry` + `:observe`). |
+| [`examples/minecraft/init.clj`](examples/minecraft/init.clj) | Vanilla Minecraft `MinecraftServer.sendSystemMessage` observer hook. |
+| [`examples/fabric/init.clj`](examples/fabric/init.clj) | Fabric mod-loader hooks (`runServer` entry + `sendSystemMessage` return-override). |
+
+Load any example via `-Dnihilite.init=examples/<name>/init.clj`.
 
 ## Tests
 
