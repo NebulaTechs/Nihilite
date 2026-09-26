@@ -5,12 +5,14 @@
    plain-Clojure bodies their stubs forward to. The installer wires these
    into an AgentBuilder; position-bucketing lives in nihilite.kernel.bucket.
 
-   The transformer composes both hook kinds on the same builder so advice
-   is not erased by redefinition: :redefine specs are delegated to the
-   generated GenericDispatcher first (replacing the method body), then
-   entry/return/throw advice is visited onto the replaced body. This is the
-   ByteBuddy-recommended order when both apply to the same method
-   (raphw/byte-buddy#1097)."
+   The transformer composes both hook kinds on the same builder so
+   entry/return/throw advice is not erased by redefinition: :redefine
+   specs are visited via nihilite.kernel.RedefineAdvice (ByteBuddy Advice
+   with @OnMethodExit + @AssignReturned) first, then the entry/return/
+   throw advice is visited onto the replaced body. MethodDelegation
+   (:redefine) is incompatible with RETRANSFORMATION mode under
+   disableClassFormatChanges (ByteBuddy issue #1097), so this ns no
+   longer uses the generic dispatcher."
   (:require [nihilite.kernel.classgen :as cg]
             [nihilite.kernel.bucket :as bucket])
   (:import [net.bytebuddy.asm Advice]
@@ -173,9 +175,9 @@
    because gen-class prepends `this`.
 
    Composes redefine + advice in a single transformer so advice is not
-   erased by redefinition: MethodDelegation (:redefine) replaces the
-   method body first, then the entry/return/throw advice is visited onto
-   the replaced body."
+   erased by redefinition: :redefine is visited via nihilite.kernel.
+   RedefineAdvice (ByteBuddy Advice) first, then the entry/return/throw
+   advice is visited onto the replaced body."
    [this builder type-description class-loader module protection-domain]
   (let [b1 (apply-redefine-transformer this builder type-description class-loader module protection-domain)
         b2 (apply-advice-transformer this b1 type-description class-loader module protection-domain)]
