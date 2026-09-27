@@ -2,7 +2,7 @@
 
 Clojure nREPL agent for running JVM.
 
-Requires JDK 21 or later.
+Tested on JDK 21 and 25.
 
 ## Build
 
