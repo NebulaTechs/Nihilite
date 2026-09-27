@@ -49,17 +49,21 @@
 
 (defn eval-init!
   "Read the system property `nihilite.init` as a Clojure form string and eval it in
-   the current namespace. The default is (require 'clojure.repl) so the connected
-   nREPL client has familiar REPL bindings."
+    the current namespace. The default is (require 'clojure.repl) so the connected
+    nREPL client has familiar REPL bindings. Returns `true` when the form was
+    evaluated without throwing, `false` when it threw (the error is logged at
+    WARNING and swallowed so the nREPL server still comes up)."
   []
   (let [form (or (System/getProperty init-property-name) init-default-form)]
     (try
       (let [forms (read-string (str "[" form "]"))]
         (doseq [f forms]
-          (clojure.lang.Compiler/eval f)))
+          (clojure.lang.Compiler/eval f))
+        true)
       (catch Throwable t
         (.log ^Logger log Level/WARNING
-              (str "[Nihilite] init failed: " (.getMessage t)) t)))))
+              (str "[Nihilite] init failed: " (.getMessage t)) t)
+        false))))
 
 (defn -main
   "Entry point invoked by java -jar nihilite.jar. Ensures bind / port
@@ -72,12 +76,18 @@
   (try
     (ensure-defaults!)
     (start!)
-    (eval-init!)
-    (println (str "[Nihilite] server " runtime-version " ready on "
-                  (System/getProperty "nihilite.bind") ":"
-                  (System/getProperty "nihilite.port")))
+    (println "nihilite:server-ready")
     (flush)
-    @(.await (java.util.concurrent.CountDownLatch. 1))
+    (let [init-ok? (eval-init!)]
+      (if init-ok?
+        (println "nihilite:init-done")
+        (println "nihilite:init-failed"))
+      (flush)
+      (println (str "[Nihilite] server " runtime-version " ready on "
+                    (System/getProperty "nihilite.bind") ":"
+                    (System/getProperty "nihilite.port")))
+      (flush)
+      @(.await (java.util.concurrent.CountDownLatch. 1)))
     (catch InterruptedException _ nil)
     (catch Throwable t
       (.log ^Logger log Level/SEVERE (str "[Nihilite] FATAL: " (.getMessage t)) t)
