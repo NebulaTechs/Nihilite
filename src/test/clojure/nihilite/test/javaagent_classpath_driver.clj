@@ -1,11 +1,11 @@
-(ns nihilite.javaagent-classpath-driver
+(ns nihilite.test.javaagent-classpath-driver
   "Replaces src/test/java/nihilite/javaagentClasspathDriver.java.
 
    Runs four probes against the agent classpath, and a fifth jar-smoke
    path that spawns `java -javaagent:<jar>` and verifies the embedded
    nREPL server boots within the timeout.
 
-   Invoked from build.clj as `java nihilite.javaagentClasspathDriver`."
+   Invoked from build.clj as `java nihilite.test.javaagentClasspathDriver`."
   (:require [nihilite.boot :as boot]
             [clojure.string :as str]
             [nrepl.server :as nrepl.server])
@@ -13,8 +13,8 @@
            [java.net URLClassLoader]
            [java.util.concurrent TimeUnit])
   (:gen-class
-   :name nihilite.javaagentClasspathDriver
-   :main true))
+    :name nihilite.test.javaagentClasspathDriver
+    :main true))
 
 (def pass-count (atom 0))
 (def fail-count (atom 0))
@@ -102,15 +102,13 @@
       (log-cause-chain t)
       (fail!))))
 
-(defn- read-pipe-into [pipe is buf]
-  (let [n (.read is buf)]
-    (when (pos? n)
-      (locking pipe (.write pipe buf 0 n)))))
-
 (defn- check-markers [state snapshot-string]
-  (when (and (not (:init-done? @state)) (.contains snapshot-string "init eval done"))
+  (when (and (not (:init-done? @state))
+             (or (.contains snapshot-string "nihilite:init-done")
+                 (.contains snapshot-string "nihilite:init-failed")))
     (swap! state assoc :init-done? true))
-  (when (and (not (:bound? @state)) (.contains snapshot-string "nREPL bencode clients may connect"))
+  (when (and (not (:bound? @state))
+             (.contains snapshot-string "nihilite:server-ready"))
     (swap! state assoc :bound? true)))
 
 (defn spawn-jar-smoke [argv]
@@ -137,9 +135,10 @@
                 (fn []
                   (try
                     (loop []
-                      (read-pipe-into pipe is buf)
-                      (when (not= -1 (try (.read is buf) (catch Throwable _ -1)))
-                        (recur)))
+                      (let [n (try (.read is buf) (catch Throwable _ -1))]
+                        (when (not= -1 n)
+                          (locking pipe (.write pipe buf 0 n))
+                          (recur))))
                     (catch Throwable _)))
                 "jar-smoke-reader")
         deadline (+ (System/nanoTime) (.toNanos TimeUnit/SECONDS 45))
@@ -168,7 +167,15 @@
 
 (defn -main [& args]
   (if (and (seq args) (= "spawn-jar-smoke" (first args)))
-    (do (spawn-jar-smoke (vec args)) (System/exit 0))
+    (do
+      (spawn-jar-smoke (vec args))
+      (if (and (zero? @fail-count) (pos? @pass-count))
+        (do
+          (println "DRIVER_PASS jar-smoke: nrepl server bound + init ran")
+          (System/exit 0))
+        (do
+          (println "DRIVER_FAIL jar-smoke: pass=" @pass-count " fail=" @fail-count)
+          (System/exit 1))))
     (do
       (run-nrepl-misc-probe)
       (run-require-nrepl-server-probe)
