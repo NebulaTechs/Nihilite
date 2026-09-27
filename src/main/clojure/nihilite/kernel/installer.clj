@@ -91,26 +91,6 @@
                              " (loader=" (.getClassLoader loaded) ")"))))))
       @count)))
 
-(defn uninstall-spec!
-  "Used by registry/uninstall! to retransform the spec's target class.
-   Looks up the spec's :target-internal from the registry (the spec id is
-   NOT the class name) and retransforms that class. Returns the number
-   of classes retransformed; 0 when no Instrumentation is registered."
-  [^String spec-id]
-  (let [inst-fn (requiring-resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
-        inst (when inst-fn (inst-fn))]
-    (if inst
-      (let [lookup-fn (requiring-resolve 'nihilite.registry/lookup)
-            target (some-> (lookup-fn spec-id)
-                           :target-internal
-                           str)]
-        (if target
-          (uninstall inst target)
-          (do (log-warn "HookInstaller uninstall-spec: spec id=" spec-id " not found in registry")
-              0)))
-      (do (log-warn "HookInstaller uninstall-spec: no Instrumentation for spec id=" spec-id)
-          0))))
-
 (defn uninstall-spec-with-target!
   "Variant of uninstall-spec! that accepts the target-internal directly,
    so registry/uninstall! can call it BEFORE removing the spec (the

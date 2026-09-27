@@ -101,8 +101,8 @@
   (str "(binding [*compile-path* \"target/test-classes\"]"
        " (doseq [n '[nihilite.test.retransform-driver"
        "               nihilite.test.redefine-instance-driver"
-       "               nihilite.test.compiler-loader-hint-driver"
-       "               nihilite.javaagent-classpath-driver]]"
+        "               nihilite.test.compiler-loader-hint-driver"
+        "               nihilite.test.javaagent-classpath-driver]]"
        "   (require n) (compile n)))"))
 
 (defn- compile-test-drivers!
@@ -111,9 +111,8 @@
    `java nihilite.test.retransformDriver` etc."
   []
   (.mkdirs (io/file test-class-dir))
-  (let [pkg-dirs ["nihilite/test" "nihilite"]]
-    (doseq [d pkg-dirs]
-      (.mkdirs (io/file test-class-dir d))))
+  (doseq [d ["nihilite/test"]]
+    (.mkdirs (io/file test-class-dir d)))
   (ensure-success!
    "Test driver Clojure compilation"
    (b/process {:command-args
@@ -217,7 +216,7 @@
   (when-not (.exists (io/file uber-file))
     (uberjar nil))
   (java-command! "Java agent classpath driver"
-                 "nihilite.javaagentClasspathDriver"
+                 "nihilite.test.javaagentClasspathDriver"
                  ["spawn-jar-smoke" (.getAbsolutePath (io/file uber-file))
                   "examples/jdkstdlib/init.clj"]
                  (conj (driver-jvm-opts) "-Dnihilite.compiler-loader-hint="))

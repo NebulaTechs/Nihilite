@@ -359,32 +359,34 @@
         by-method (get-by-method)]
     (locking registry-lock
       (bump-revision!)
-      (when-let [removed (.remove by-id (str id))]
-        (let [b (.get by-target (:target-internal removed))]
-          (when b (.remove b removed))
-          (when (and b (.isEmpty b))
-            (.remove by-target (:target-internal removed) b))
-          (when-let [mk (:method-key removed)]
-            (let [mb (.get by-method mk)]
-              (when mb (.remove mb removed))
-              (when (and mb (.isEmpty mb))
-                (.remove by-method mk mb))))
-          (stats/remove-stats (:id removed))
-          (let [count (try
-                        ((resolve 'nihilite.kernel.installer/uninstall-spec!) (str id))
-                        (catch Throwable t
-                          (mark-error! (:id removed) (.getMessage t))
-                          (throw (ex-info (str "uninstall retransform failed for id=" id)
-                                          {:nihilite/kind :nihilite/uninstall-failed
-                                           :nihilite/id   id
-                                           :nihilite/cause (.getMessage t)}
-                                          t))))]
-            (mark-uninstalled! (:id removed) count)
-            (if (zero? count)
-              (log/warn "hook removed from registry but 0 classes retransformed"
-                        "(agent not armed or class not loaded):" (:id removed))
-              (log/info "hook removed:" (:id removed) "retransformed=" count "class(es)"))
-            true))))))
+       (when-let [removed (.remove by-id (str id))]
+         (let [target (:target-internal removed)
+               b (.get by-target (:target-internal removed))]
+           (when b (.remove b removed))
+           (when (and b (.isEmpty b))
+             (.remove by-target (:target-internal removed) b))
+           (when-let [mk (:method-key removed)]
+             (let [mb (.get by-method mk)]
+               (when mb (.remove mb removed))
+               (when (and mb (.isEmpty mb))
+                 (.remove by-method mk mb))))
+           (stats/remove-stats (:id removed))
+           (let [count (try
+                         ((resolve 'nihilite.kernel.installer/uninstall-spec-with-target!)
+                          (str id) target)
+                         (catch Throwable t
+                           (mark-error! (:id removed) (.getMessage t))
+                           (throw (ex-info (str "uninstall retransform failed for id=" id)
+                                           {:nihilite/kind :nihilite/uninstall-failed
+                                            :nihilite/id   id
+                                            :nihilite/cause (.getMessage t)}
+                                           t))))]
+             (mark-uninstalled! (:id removed) count)
+             (if (zero? count)
+               (log/warn "hook removed from registry but 0 classes retransformed"
+                         "(agent not armed or class not loaded):" (:id removed))
+               (log/info "hook removed:" (:id removed) "retransformed=" count "class(es)"))
+             true))))))
 
 (defn install-fresh!
   [spec]

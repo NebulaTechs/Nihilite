@@ -8,7 +8,4 @@
 
 (def version
   (or (System/getProperty "nihilite.runtime.version")
-      (let [pkg (Package/getPackage "nihilite.server")]
-        (when pkg
-          (.getImplementationVersion pkg)))
       (str "dev-" timestamp)))
