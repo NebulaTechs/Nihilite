@@ -8,12 +8,10 @@ on:
   push:
     branches: [master]
     tags:
-      - '0.*'
-      - '0.*.*'
+      - 'nightly'
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
-  workflow_dispatch:
 
 concurrency:
   group: nihilite-${{ github.workflow }}-${{ github.ref }}
@@ -74,6 +72,33 @@ jobs:
         if: matrix.java-version == '25'
         run: clojure -T:build verify-jar
 
+      - name: Smoke test jar startup
+        if: matrix.java-version == '25'
+        run: |
+          set -euo pipefail
+          PORT=$((10000 + RANDOM % 5000))
+          java -jar target/nihilite.jar --port=$PORT --bind=127.0.0.1 > /tmp/nihilite-startup.log 2>&1 &
+          PID=$!
+          for _ in $(seq 1 30); do
+            sleep 1
+            if grep -q '^\[Nihilite\] server .* ready on' /tmp/nihilite-startup.log; then
+              echo "startup OK: $(grep '\[Nihilite\] server .* ready on' /tmp/nihilite-startup.log)"
+              kill -9 $PID 2>/dev/null || true
+              wait $PID 2>/dev/null || true
+              exit 0
+            fi
+            if ! kill -0 $PID 2>/dev/null; then
+              echo "::error::jar exited before startup banner"
+              cat /tmp/nihilite-startup.log
+              exit 1
+            fi
+          done
+          echo "::error::startup banner not seen within 30s"
+          cat /tmp/nihilite-startup.log
+          kill -9 $PID 2>/dev/null || true
+          wait $PID 2>/dev/null || true
+          exit 1
+
       - uses: actions/upload-artifact@v7
         if: success() && matrix.java-version == '25'
         with:
@@ -81,24 +106,30 @@ jobs:
           path: target/nihilite.jar
           retention-days: 14
 
-      - name: Set dev tag
-        if: github.event_name == 'workflow_dispatch' && matrix.java-version == '25'
-        id: tag
-        run: echo "name=dev-$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+      - name: Update nightly tag
+        if: github.event_name == 'push' && matrix.java-version == '25'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly ${{ github.sha }}
+          git push -f origin nightly
 
-      - name: Publish dev snapshot release
-        if: github.event_name == 'workflow_dispatch' && matrix.java-version == '25'
+      - name: Publish nightly release
+        if: github.event_name == 'push' && matrix.java-version == '25'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          files: target/nihilite.jar
-          generate_release_notes: true
-
-      - name: Publish prerelease (from tag push)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && matrix.java-version == '25'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: nightly
           files: target/nihilite.jar
           prerelease: true
-          generate_release_notes: true
+          generate_release_notes: false
+          body: |
+            This is the upload-based build of the current `${{ github.ref_name }}`.
+
+            This is **not** a release. It is a continuous build artifact that
+            gets overwritten on every CI run.
+
+            Build metadata:
+            - commit: ${{ github.sha }}
+            - ref: ${{ github.ref_name }}
+            - run: ${{ github.run_id }}
+            - actor: ${{ github.actor }}
