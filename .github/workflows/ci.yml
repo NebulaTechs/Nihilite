@@ -77,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           PORT=$((10000 + RANDOM % 5000))
-          java -jar target/nihilite.jar --port=$PORT --bind=127.0.0.1 > /tmp/nihilite-startup.log 2>&1 &
+          java -Dnihilite.bind=127.0.0.1 -Dnihilite.port=$PORT -jar target/nihilite.jar > /tmp/nihilite-startup.log 2>&1 &
           PID=$!
           for _ in $(seq 1 30); do
             sleep 1

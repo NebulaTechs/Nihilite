@@ -16,42 +16,16 @@
 
 (defonce ^:private runtime-server (atom nil))
 
-(defonce ^:private positional-args (atom []))
-
-(defn parse-args
-  "Parse CLI args for port (integer) and bind (host)."
-  [args]
-  (let [positional (atom 0)
-        port-prop "nihilite.port"
-        bind-prop "nihilite.bind"
-        port-arg-prefix "--port="
-        bind-arg-prefix "--bind="]
-    (when (nil? (System/getProperty port-prop))
-      (System/setProperty port-prop "7888"))
-    (when (nil? (System/getProperty bind-prop))
-      (System/setProperty bind-prop "127.0.0.1"))
-    (when (some? args)
-      (doseq [^String a args]
-        (when (and a (pos? (.length a)))
-          (cond
-            (.startsWith a port-arg-prefix)
-            (System/setProperty port-prop (.substring a (count port-arg-prefix)))
-
-            (.startsWith a bind-arg-prefix)
-            (System/setProperty bind-prop (.substring a (count bind-arg-prefix)))
-
-            (zero? @positional)
-            (try
-              (let [p (Integer/parseInt a)]
-                (when (<= 1 p 65535)
-                  (System/setProperty port-prop a)
-                  (swap! positional inc)))
-              (catch NumberFormatException _
-                (System/setProperty bind-prop a)
-                (swap! positional inc)))
-
-            :else
-            (reset! positional-args (conj @positional-args a))))))))
+(defn ensure-defaults!
+  "Populate the nihilite.bind / nihilite.port / nihilite.init system
+   properties with the canonical defaults if the caller has not set
+   them. Reads only from System/getProperty so callers always supply
+   configuration via -D on the java command line."
+  []
+  (when (nil? (System/getProperty "nihilite.port"))
+    (System/setProperty "nihilite.port" "7888"))
+  (when (nil? (System/getProperty "nihilite.bind"))
+    (System/setProperty "nihilite.bind" "127.0.0.1")))
 
 (defn middleware-stack
   "No-op middleware stack; replace with custom middlewares in user init if needed."
@@ -88,12 +62,15 @@
               (str "[Nihilite] init failed: " (.getMessage t)) t)))))
 
 (defn -main
-  "Entry point invoked by java -jar nihilite.jar. Parses args, starts the
-   canonical nrepl server, runs the init form, then blocks the main thread
-   forever so the JVM stays alive until killed."
-  [& args]
+  "Entry point invoked by java -jar nihilite.jar. Ensures bind / port
+   system properties have defaults, starts the canonical nrepl server,
+   runs the init form, then blocks the main thread forever so the JVM
+   stays alive until killed. Configuration is read exclusively from
+   System/getProperty so callers must supply -D on the java command
+   line; --bind / --port CLI flags are not recognized."
+  [& _args]
   (try
-    (parse-args args)
+    (ensure-defaults!)
     (start!)
     (eval-init!)
     (println (str "[Nihilite] server " runtime-version " ready on "

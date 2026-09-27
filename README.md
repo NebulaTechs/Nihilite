@@ -19,7 +19,7 @@ java -javaagent:target/nihilite.jar -jar target/nihilite.jar
 
 Connect to `127.0.0.1:7888` with any bencode nREPL client.
 
-Configuration via `-D` system property or `--key=value` CLI arg:
+Configuration via `-D` system property (placed before `-javaagent` and `-jar` on the java command line):
 
 - `nihilite.bind` (default `127.0.0.1`)
 - `nihilite.port` (default `7888`)
