@@ -88,10 +88,9 @@
   (ensure-success!
     "Clojure compilation"
     (b/process {:command-args ["clojure" "-Sdeps"
-                                (str "{:deps {net.bytebuddy/byte-buddy {:mvn/version \"1.18.13\"}}"
-                                     " :paths [\"src/main/clojure\" \"target/classes\"]}")
-                                "-M" "-e"
-                                (compile-script-for '[nihilite.kernel.exceptions
+                               (str "{:paths [\"src/main/clojure\" \"target/classes\"]}")
+                               "-M" "-e"
+                               (compile-script-for '[nihilite.kernel.exceptions
                                                      nihilite.kernel.bucket
                                                      nihilite.kernel.installer
                                                      nihilite.kernel.agent])]}))
@@ -116,8 +115,8 @@
   (ensure-success!
    "Test driver Clojure compilation"
    (b/process {:command-args
-               ["clojure" "-Sdeps" (str "{:deps {net.bytebuddy/byte-buddy {:mvn/version \"1.18.13\"}}"
-                                        " :paths [\"src/main/clojure\" \"src/test/clojure\" \"target/classes\"]}")
+               ["clojure" "-Sdeps"
+                (str "{:paths [\"src/main/clojure\" \"src/test/clojure\" \"target/classes\"]}")
                 "-M"
                 "-e"
                 (compile-test-driver-script)]}))
