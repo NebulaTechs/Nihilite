@@ -17,23 +17,29 @@ concurrency:
   group: nihilite-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Shared step blocks (kept inline per job so each job is self-contained;
+# a template step file is not worth it for three jobs).
+#
+# Structure:
+#   test-21 / test-25  — compile + contract tests + all driver probes, in
+#                        parallel. Each JDK is an independent quality gate.
+#   publish            — build uberjar + verify + smoke + upload + nightly
+#                        release. Needs BOTH test jobs to pass (two-JDK
+#                        gate before shipping), runs on JDK 25 only, and is
+#                        skipped on pull_request (PRs get the test gate,
+#                        only pushes to master / nightly tags publish).
+
 jobs:
-  build:
+  test-21:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        java-version: ['21', '25']
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: ${{ matrix.java-version }}
+          java-version: '21'
 
       - name: Install Clojure CLI
         run: |
@@ -48,8 +54,8 @@ jobs:
             ~/.gitlibs
             ~/.deps.clj
             .cpcache
-          key: cljdeps-${{ matrix.java-version }}-${{ hashFiles('deps.edn') }}
-          restore-keys: cljdeps-${{ matrix.java-version }}-
+          key: cljdeps-21-${{ hashFiles('deps.edn') }}
+          restore-keys: cljdeps-21-
 
       - name: AOT compile
         run: clojure -T:build compile-clj
@@ -64,16 +70,84 @@ jobs:
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
 
+  test-25:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Install Clojure CLI
+        run: |
+          curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x linux-install.sh
+          sudo ./linux-install.sh
+
+      - name: Cache Clojure deps
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gitlibs
+            ~/.deps.clj
+            .cpcache
+          key: cljdeps-25-${{ hashFiles('deps.edn') }}
+          restore-keys: cljdeps-25-
+
+      - name: AOT compile
+        run: clojure -T:build compile-clj
+
+      - name: Contract tests
+        run: clojure -T:build clojure-contract-test
+
+      - name: Driver probes
+        run: |
+          clojure -T:build retransform-driver
+          clojure -T:build compiler-loader-driver
+          clojure -T:build redefine-instance-driver
+          clojure -T:build javaagent-driver
+
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [test-21, test-25]
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Install Clojure CLI
+        run: |
+          curl -L -O https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x linux-install.sh
+          sudo ./linux-install.sh
+
+      - name: Cache Clojure deps
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gitlibs
+            ~/.deps.clj
+            .cpcache
+          key: cljdeps-25-${{ hashFiles('deps.edn') }}
+          restore-keys: cljdeps-25-
+
       - name: Build uberjar
-        if: matrix.java-version == '25'
         run: clojure -T:build uberjar
 
       - name: Verify jar contents
-        if: matrix.java-version == '25'
         run: clojure -T:build verify-jar
 
       - name: Smoke test jar startup
-        if: matrix.java-version == '25'
         run: |
           set -euo pipefail
           PORT=$((10000 + RANDOM % 5000))
@@ -100,14 +174,14 @@ jobs:
           exit 1
 
       - uses: actions/upload-artifact@v7
-        if: success() && matrix.java-version == '25'
+        if: success()
         with:
           name: nihilite.jar
           path: target/nihilite.jar
           retention-days: 14
 
       - name: Update nightly tag
-        if: github.event_name == 'push' && matrix.java-version == '25'
+        if: github.event_name == 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -115,7 +189,7 @@ jobs:
           git push -f origin nightly
 
       - name: Publish nightly release
-        if: github.event_name == 'push' && matrix.java-version == '25'
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
