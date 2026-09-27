@@ -191,20 +191,45 @@
       (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
         (log-info (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms))))))
 
+(defn- flatten-args
+  "Normalize the variadic `args` of agent-aMain so `into-array String`
+   always sees a flat ISeq of String. Two calling conventions exist:
+
+     1. Via the gen-class `:main true` forwarder (Agent.main) →
+        IFn.applyTo(ISeq<String>) — each String is unpacked, so args is
+        an ISeq<String>.
+     2. Via the gen-class `:methods` forwarder (Agent.aMain) →
+        IFn.invoke(Object) — the whole String[] arrives as a single arg,
+        so args is a 1-element ISeq wrapping String[].
+
+   If args has exactly one element that is itself a String[], unwrap
+   it. Otherwise pass args through unchanged."
+  [args]
+  (let [a (seq args)]
+    (if (and a (nil? (next a))
+             (instance? (Class/forName "[Ljava.lang.String;") (first a)))
+      (seq (first a))
+      a)))
+
 (defn agent-aMain
   "Driver entry used by nihilite.kernel.Agent.aMain. Performs the same
    work as premain then awaits the worker before handing control to
-   nihilite.boot/-main. `args` is an ISeq<String> (possibly empty)."
+   nihilite.boot/-main. Accepts `args` in either calling convention
+   (see flatten-args): a flat ISeq<String> from the :main forwarder, or
+   a 1-element ISeq wrapping the raw String[] from the :methods
+   forwarder. Always coerces to a flat ISeq<String> before building
+   the boot-main argv."
   [& args]
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
     (agent-premain nil nil)
     (agent-awaitWorkerReady)
-    (let [boot-main (clojure.lang.RT/var "nihilite.boot" "-main")]
+    (let [flat-args (flatten-args args)
+          boot-main (clojure.lang.RT/var "nihilite.boot" "-main")]
       (when (or (nil? boot-main) (not (.isBound boot-main)))
         (log-error "[Nihilite] nihilite.boot/-main is not present; abort"))
       (when (and boot-main (.isBound boot-main))
         (.applyTo ^clojure.lang.IFn boot-main
-                  (clojure.lang.RT/seq (into-array String args)))))))
+                  (clojure.lang.RT/seq (into-array String flat-args)))))))
 
 (defn agent-main
   "The JVM-lookup main(String[]) entry point. gen-class :main true looks
