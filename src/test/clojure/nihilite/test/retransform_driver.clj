@@ -28,7 +28,8 @@
      [probeCancel [] String]
      [probeThrow [] String]
      [throwObserved [] int]
-     [bodyExecutedAfterCancel [] boolean]]
+     [bodyExecutedAfterCancel [] boolean]
+     [redefineBodyExecuted [] boolean]]
     :main true))
 
 ;; Driver state (matches the volatile fields of the old Java driver).
@@ -72,8 +73,9 @@
        (mk (with-meta (symbol "probeRedef") {}) [] string-cls)
        (mk (with-meta (symbol "probeCancel") {}) [] string-cls)
        (mk (with-meta (symbol "probeThrow") {}) [] string-cls)
-       (mk (with-meta (symbol "throwObserved") {}) [] int-cls)
-       (mk (with-meta (symbol "bodyExecutedAfterCancel") {}) [] boolean-cls)]})))
+        (mk (with-meta (symbol "throwObserved") {}) [] int-cls)
+        (mk (with-meta (symbol "bodyExecutedAfterCancel") {}) [] boolean-cls)
+        (mk (with-meta (symbol "redefineBodyExecuted") {}) [] boolean-cls)]})))
 
 (defn gen-all!
   "Generates nihilite.test.retransform_driver.DummyTarget into *compile-path*."
@@ -85,13 +87,20 @@
 
 (defn dt-probe [x] (str "original-" x))
 (defn dt-probeReturn [] "untouched-return")
-(defn dt-probeRedef [] "SHOULD-NEVER-BE-SEEN")
+(defn dt-probeRedef []
+  ;; Records that the ORIGINAL body ran. A :redefine hook WRAPS the method,
+  ;; so the original body must never execute; returning a distinct string
+  ;; alone cannot prove that (the bridge could have produced the same
+  ;; value), hence the explicit flag.
+  (reset! stats/driver-redefine-body-executed? true)
+  "ORIGINAL-BODY-RAN")
 (defn dt-probeCancel []
   (reset! stats/driver-body-executed-after-cancel? true)
   "should-never-see")
 (defn dt-probeThrow [] (throw (IllegalStateException. "driver-probe-throw")))
 (defn dt-throwObserved [] (int @stats/driver-throw-observed))
 (defn dt-bodyExecutedAfterCancel [] (boolean @stats/driver-body-executed-after-cancel?))
+(defn dt-redefineBodyExecuted [] (boolean @stats/driver-redefine-body-executed?))
 
 ;; Spec bridge implementations.
 
@@ -175,22 +184,40 @@
         probeReturn (.getDeclaredMethod target "probeReturn" (into-array Class []))
         probeRedef (.getDeclaredMethod target "probeRedef" (into-array Class []))
         probeCancel (.getDeclaredMethod target "probeCancel" (into-array Class []))
-        probeThrow (.getDeclaredMethod target "probeThrow" (into-array Class []))]
+        probeThrow (.getDeclaredMethod target "probeThrow" (into-array Class []))
+        redefineBodyExecuted (.getDeclaredMethod target "redefineBodyExecuted"
+                                              (into-array Class []))]
 
     ;; probe(int) -- :entry fires
     (let [result (.invoke probe nil (object-array [(int 1)]))]
       (when (not= @entered 1) (fail! (str "ENTERED=" @entered " expected 1") 3))
       (when (not= "original-1" result) (fail! (str "probe was \"" result "\" expected \"original-1\"") 4)))
 
+    ;; install-status! :woven-count must report the real retransform count
+    ;; (DummyTarget is loaded and modifiable here, so every one of the 5
+    ;; driver specs must report 1 and :pending? must be false).
+    (doseq [id ["driver-entry" "driver-return" "driver-redefine"
+                "driver-entry-cancel" "driver-throw"]
+            :let [st (reg/install-status! id)]]
+      (when-not (= 1 (:woven-count st))
+        (fail! (str "install-status! " id " :woven-count=" (:woven-count st)
+                    " expected 1 (DummyTarget is loaded + modifiable)") 26))
+      (when (:pending? st)
+        (fail! (str "install-status! " id " :pending? true but 1 class woven") 27)))
+
     ;; probeReturn() -- :return mutates
     (let [r (.invoke probeReturn nil (object-array []))]
       (when (not= @return-mutated 1) (fail! (str "RETURN_MUTATED=" @return-mutated " expected 1") 5))
       (when (not= "MUTATED-BY-DRIVER" r) (fail! (str "probeReturn was \"" r "\" expected \"MUTATED-BY-DRIVER\"") 6)))
 
-    ;; probeRedef() -- body replaced
-    (let [r (.invoke probeRedef nil (object-array []))]
+    ;; probeRedef() -- body REPLACED: the original body must not run
+    (let [r (.invoke probeRedef nil (object-array []))
+          body-ran (.invoke redefineBodyExecuted nil (object-array []))]
       (when (not= @redefined 1) (fail! (str "REDEFINED=" @redefined " expected 1") 7))
-      (when (not= "REDEFINED-BY-DRIVER" r) (fail! (str "probeRedef was \"" r "\" expected \"REDEFINED-BY-DRIVER\"") 8)))
+      (when (not= "REDEFINED-BY-DRIVER" r) (fail! (str "probeRedef was \"" r "\" expected \"REDEFINED-BY-DRIVER\"") 8))
+      (when body-ran
+        (fail! "probeRedef: the ORIGINAL method body executed; :redefine must wrap, not instrument" 28)))
+    (stats/clear-driver-state!)
 
     ;; probeCancel() -- :entry :cancel short-circuits
     (try
@@ -261,26 +288,80 @@
     (when (not= @stats/driver-throw-observed 2)
       (fail! (str "post-retransform THROW_OBSERVED=" @stats/driver-throw-observed " expected 2") 22))
     (when @stats/driver-body-executed-after-cancel?
-      (fail! "post-retransform probeCancel body still executed" 23))))
+      (fail! "post-retransform probeCancel body still executed" 23))
+
+    (let [mixed-entry (atom 0)
+          mixed-redef (fn [_self _args _mname]
+                        (str "redefine-saw-entry-" @mixed-entry))]
+      ;; Two :redefine specs on one method are indistinguishable, so
+      ;; remove the standalone one before installing the mixed pair.
+      (api/uninstall! "driver-redefine")
+      (reg/install! {:id "driver-mixed-entry"
+                     :target-internal dummy-target-internal
+                     :method-name "probeRedef"
+                     :descriptor "()Ljava/lang/String;"
+                     :position :entry
+                     :action :observe
+                     :bridge (fn [_ctx] (swap! mixed-entry inc) nil)
+                     :note "entry hook sharing the method with :redefine"})
+      (reg/install! {:id "driver-mixed-redefine"
+                     :target-internal dummy-target-internal
+                     :method-name "probeRedef"
+                     :descriptor "()Ljava/lang/String;"
+                     :position :redefine
+                     :action :observe
+                     :bridge mixed-redef
+                     :note "redefine observing the entry hook's counter"})
+      (stats/clear-driver-state!)
+      (let [r (.invoke probeRedef nil (object-array []))]
+        (when (not= 1 @mixed-entry)
+          (fail! (str "co-located :entry hook fired " @mixed-entry
+                      " time(s), expected 1; the :redefine wrap discarded the"
+                      " entry instrumentation") 32))
+        (when (not= "redefine-saw-entry-1" r)
+          (fail! (str "redefine bridge saw \"" r "\" but expected"
+                      " \"redefine-saw-entry-1\"; advice was not woven onto"
+                      " the replacement body") 33)))
+      ;; Uninstall the redefine hook: JVM reset strips the whole class, so
+      ;; the surviving :entry hook proves the AgentBuilder re-woven it,
+      ;; and the original body must be back.
+      (api/uninstall! "driver-mixed-redefine")
+      (reset! mixed-entry 0)
+      (stats/clear-driver-state!)
+      (let [r2 (.invoke probeRedef nil (object-array []))
+            body-ran (.invoke redefineBodyExecuted nil (object-array []))]
+        (when (not= 1 @mixed-entry)
+          (fail! (str "after uninstalling :redefine, the surviving :entry hook"
+                      " fired " @mixed-entry " time(s), expected 1; the class"
+                      " was reset but remaining hooks were not re-woven") 29))
+        (when (not= "ORIGINAL-BODY-RAN" r2)
+          (fail! (str "after uninstalling :redefine, probeRedef returned \"" r2
+                      "\" expected \"ORIGINAL-BODY-RAN\"; the original body was"
+                      " not restored") 30))
+        (when (not body-ran)
+          (fail! "after uninstalling :redefine the original body is still skipped" 31)))
+      (api/uninstall! "driver-mixed-entry"))))
 
 (defn td-main [& _args]
   (let [inst (ByteBuddyAgent/install)]
     ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
     ((requiring-resolve 'nihilite.kernel.installer/install) inst)
-    ;; Register the driver's 5 hook specs so the transformer weaves them.
-    (install-all!)
-    ;; Pre-load DummyTarget so retransform-loaded-matching! can find it
-    ;; via Instrumentation.getAllLoadedClasses.
+    ;; Pre-load DummyTarget BEFORE registering the specs: install!
+    ;; retransforms already-loaded matching classes, so the target has to
+    ;; be loaded for the weave (and therefore install-status!'s
+    ;; :woven-count) to be non-zero.
     (Class/forName dummy-target-class)
-    ;; retransform already-loaded classes so the new specs take effect on
-    ;; DummyTarget before run-once! invokes its methods.
-    ((requiring-resolve 'nihilite.registry/retransform-loaded-matching!)
-     "nihilite/test/retransform_driver/DummyTarget" inst)
+    ;; Register the driver's 5 hook specs so the transformer weaves them.
+    ;; install! itself retransforms DummyTarget, so no separate
+    ;; retransform-loaded-matching! call is needed here.
+    (install-all!)
+    (when (not= 1 (:woven-count (reg/install-status! "driver-entry")))
+      (fail! "install-all! did not weave DummyTarget" 28))
     (run-once! inst)
     (reg/clear!)
     (when (not (empty? (reg/list-ids)))
       (fail! "list-ids not empty after clear" 11))
-    (println "DRIVER_PASS retransform + :return-mutation + :redefine-substitution + :entry-cancel + :throw-observation + swap-bridge all proven")
+    (println "DRIVER_PASS retransform + :return-mutation + :redefine-substitution + :entry-cancel + :throw-observation + swap-bridge + install-status-woven-count all proven")
     (System/exit 0)))
 
 (when *compile-files*

@@ -68,6 +68,24 @@
   []
   (.get ^java.util.concurrent.atomic.AtomicReference registered-on))
 
+(defn agent-registerInstrumentation
+  "Publishes `inst` as the live Instrumentation, first-writer-wins. Returns
+   true when this call installed it, false when another Instrumentation was
+   already registered.
+
+   nil.kernel.installer/install calls this so that any path which arms the
+   AgentBuilder — premain, agentmain, or a driver calling install directly
+   with a ByteBuddyAgent-obtained Instrumentation — makes the same
+   Instrumentation visible to registry/retransform-loaded-matching! and the
+   advice classes. Without it, install! could never report a non-zero
+   :woven-count on the driver path, and hooks installed through the public
+   api would silently skip retransforming already-loaded classes."
+  [^Instrumentation inst]
+  (boolean
+   (and inst
+        (.compareAndSet ^java.util.concurrent.atomic.AtomicReference
+                        registered-on nil inst))))
+
 (defn agent-resolveHostClassLoader
   "Returns the classloader the Clojure Compiler should use, honoring
    the `nihilite.compiler-loader-hint` system property. Exposed as a
@@ -155,7 +173,7 @@
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
     (let [t0 (System/nanoTime)]
       (extend-system-class-loader-search inst)
-      (when (and inst (.compareAndSet registered-on nil inst))
+      (when (agent-registerInstrumentation inst)
         (try
           (require (quote nihilite.kernel.installer))
           ((resolve (quote nihilite.kernel.installer/install)) inst)
@@ -173,7 +191,7 @@
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
     (let [t0 (System/nanoTime)]
       (extend-system-class-loader-search inst)
-      (if (and inst (.compareAndSet registered-on nil inst))
+      (if (agent-registerInstrumentation inst)
         (do
           (try
             (require (quote nihilite.kernel.installer))

@@ -14,6 +14,7 @@
    disableClassFormatChanges (ByteBuddy issue #1097), so this ns no
    longer uses the generic dispatcher."
   (:require [nihilite.kernel.classgen :as cg]
+            [nihilite.kernel.bytegen :as bg]
             [nihilite.kernel.bucket :as bucket])
   (:import [net.bytebuddy.asm Advice]
            [net.bytebuddy.dynamic ClassFileLocator$Simple]))
@@ -72,23 +73,28 @@
     (.newInstance ctor (object-array []))))
 
 (defn- advice-locator
-  "In-memory ClassFileLocator that resolves the bytegen-generated advice
-   classes by their dotted class name. Nihilite's advice classes are
-   written to target/classes by bytegen, so the classloader's
-   getResourceAsStream can find them."
+  "ClassFileLocator that serves the bytegen-generated advice classes from
+   the bytes captured at injection time.
+
+   It deliberately does NOT read them off the classpath: the advice
+   classes are injected with
+   ClassInjector$UsingInstrumentation/Target/SYSTEM, which packs them
+   into a temporary jar, appends it, then closes and deletes it. A
+   getResource lookup therefore fails with NoSuchFileException once the
+   agent runs from the uberjar (no classpath entry exists at all) and
+   even on the classpath path it would re-read four files on every
+   weave. nil.kernel.kernel.bytegen/generated-class-bytes hands back the
+   exact bytes that were injected."
   []
-  (let [advice-names {"nihilite.kernel.HookAdvice"     "nihilite/kernel/HookAdvice.class"
-                      "nihilite.kernel.ReturnAdvice"   "nihilite/kernel/ReturnAdvice.class"
-                      "nihilite.kernel.ThrowAdvice"    "nihilite/kernel/ThrowAdvice.class"
-                      "nihilite.kernel.RedefineAdvice" "nihilite/kernel/RedefineAdvice.class"}
-        cl (ClassLoader/getSystemClassLoader)
+  (let [advice-names ["nihilite.kernel.HookAdvice"
+                      "nihilite.kernel.ReturnAdvice"
+                      "nihilite.kernel.ThrowAdvice"
+                      "nihilite.kernel.RedefineAdvice"]
         pairs (into {}
-                    (for [[dotted resource] advice-names
-                          :let [is (when-let [u (.getResource cl resource)]
-                                     (.openStream u))]
-                          :when is]
-                       [dotted (with-open [in is]
-                                 (.readAllBytes in))]))]
+                    (for [n advice-names
+                          :let [bs (bg/generated-class-bytes n)]
+                          :when bs]
+                      [n bs]))]
     (ClassFileLocator$Simple. pairs)))
 
 (defn- visit-advice [builder position-keys matcher-class-name]
@@ -135,12 +141,44 @@
        (visit-advice b2 throw-b "nihilite.kernel.ThrowAdvice"))
      builder))
 
+(defn- wrap-redefine
+  "True method-body replacement for the :redefine position.
+
+   `Advice.wrap(Implementation)` returns an Implementation whose body is
+   only the advice; applying it with `.method(matcher).intercept(...)`
+   REPLACES the matched methods rather than instrumenting them, so the
+   original body does not run. The delegation target is StubMethod, i.e.
+   the original code simply ceases to exist.
+
+   This is deliberately different from `visit-advice`, which instruments
+   the existing body in place — :entry / :return / :throw all need the
+   original body to run.
+
+   Ordering: AgentBuilder applies visitors in registration order and
+   `at-transform` registers this one first, so a :redefine spec replaces
+   the body before the entry/return/throw advice is instrumented onto the
+   replacement."
+  [builder position-keys]
+  (if (seq position-keys)
+    (let [matcher (bucket/matcher-for position-keys)
+          wcm (Advice/withCustomMapping)
+          ppf (post-processor-factory)
+          loc (advice-locator)
+          advice (.to (.with wcm ppf)
+                      (Class/forName "nihilite.kernel.RedefineAdvice")
+                      loc)
+          replacement (.wrap advice
+                             ^net.bytebuddy.implementation.Implementation
+                             net.bytebuddy.implementation.StubMethod/INSTANCE)]
+      (.intercept (.method builder matcher) replacement))
+    builder))
+
 (defn- apply-redefine-transformer
   "Clojure body of the generated redefine-transformer stub. Uses Advice
    (not MethodDelegation) for :redefine so it composes with retransform
-   mode. RedefineAdvice carries @OnMethodExit + @AssignReturned.ToReturned
-   that fully replace the target method body. Arity 6 because gen-class
-   forwarding for instance methods prepends `this`."
+   mode, and wraps rather than visits so the original method body is
+   genuinely replaced. Arity 6 because gen-class forwarding for instance
+   methods prepends `this`."
   [_this
    ^net.bytebuddy.dynamic.DynamicType$Builder builder
    ^net.bytebuddy.description.type.TypeDescription type-description
@@ -148,8 +186,8 @@
    ^net.bytebuddy.utility.JavaModule _module
    ^java.security.ProtectionDomain _protection-domain]
   (let [buckets (bucket/collect-buckets type-description)]
-    (if-let [_ buckets]
-      (visit-advice builder (:redefine buckets) "nihilite.kernel.RedefineAdvice")
+    (if-let [b buckets]
+      (wrap-redefine builder (:redefine b))
       builder)))
 
 (defn at-equals [self other] (identical? self other))
@@ -174,11 +212,18 @@
   "gen-class forwarding stub for AdviceTransformer.transform. Arity 6
    because gen-class prepends `this`.
 
-   Composes redefine + advice in a single transformer so advice is not
-   erased by redefinition: :redefine is visited via nihilite.kernel.
-   RedefineAdvice (ByteBuddy Advice) first, then the entry/return/throw
-   advice is visited onto the replaced body."
-   [this builder type-description class-loader module protection-domain]
+   Composes redefine + advice in a single transformer. The :redefine
+   position WRAPS the method (Advice.wrap + StubMethod) so the original
+   body is replaced outright, and the entry/return/throw advice is then
+   instrumented onto whatever body remains.
+
+   The redefine call comes first deliberately. Reversing the two calls was
+   measured to produce identical results, so the order here is not what
+   makes the co-located hooks work — ByteBuddy applies
+   `method(...).intercept(...)` and `visit(...)` in its own fixed order.
+   Keeping redefine first simply mirrors the intended semantics and avoids
+   depending on that detail."
+  [this builder type-description class-loader module protection-domain]
   (let [b1 (apply-redefine-transformer this builder type-description class-loader module protection-domain)
         b2 (apply-advice-transformer this b1 type-description class-loader module protection-domain)]
     b2))

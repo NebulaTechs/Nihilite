@@ -285,6 +285,13 @@
     (wrap [_ _type-desc class-visitor _impl-ctx _type-pool _fields _methods _writer-flags _reader-flags]
       class-visitor)))
 
+(def ^:private generated-bytes
+  "class-name → byte[] for every class define-class! injected. The
+   injected class leaves no classpath entry behind (ByteBuddy's injector
+   deletes its temporary jar), so this map is the only reliable way for
+   the transformer to obtain the advice bytecode later."
+  (atom {}))
+
 (defn define-class!
   [spec]
   (reset! method-annotation-spec {})
@@ -312,26 +319,46 @@
                          (.visit ^AsmVisitorWrapper (if (seq spec-map)
                                                       (build-method-extension-writer spec-map)
                                                       (pass-through-writer)))
-                         (.make))]
+                         (.make))
+        class-bytes (.getBytes dynamic-type)]
     (when save-dir
       (.mkdirs save-dir)
       (.saveIn dynamic-type ^java.io.File save-dir))
+    ;; Keep the bytes reachable: the injected class leaves no classpath
+    ;; entry behind (the injector deletes its temp jar), so the
+    ;; transformer cannot read the advice class off the classpath later.
+    (swap! generated-bytes assoc name class-bytes)
     (if inst
-      (let [^net.bytebuddy.dynamic.loading.ClassInjector injector
-              (net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation/of
-                (java.io.File. (str (clojure.java.io/file "target") "/nihilite-classes"))
-                net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation$Target/SYSTEM
-                inst)
+      (let [;; ClassInjector$UsingInstrumentation writes a temporary jar into
+            ;; this directory the moment `of` is called, so the directory must
+            ;; exist BEFORE the injector is constructed — creating it
+            ;; afterwards loses the race and surfaces as
+            ;; java.nio.file.NoSuchFileException on the temp jar.
+            ;;
+            ;; A fresh temp dir is used rather than a hard-coded target/
+            ;; path: the agent also runs from a single uberjar where the
+            ;; process CWD has no target/ directory.
+            inject-dir (.toFile (java.nio.file.Files/createTempDirectory
+                                  "nihilite-classes" (make-array java.nio.file.attribute.FileAttribute 0)))
+            ^net.bytebuddy.dynamic.loading.ClassInjector injector
+            (net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation/of
+              ^java.io.File inject-dir
+              net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation$Target/SYSTEM
+              inst)
             target-loader (ClassLoader/getSystemClassLoader)
           strategy (reify net.bytebuddy.dynamic.loading.ClassLoadingStrategy
                      (load [_ _cl types]
                        (.inject ^net.bytebuddy.dynamic.loading.ClassInjector injector types)))]
-        (.mkdirs (java.io.File. (str (clojure.java.io/file "target") "/nihilite-classes")))
-        (let [^net.bytebuddy.dynamic.DynamicType$Loaded loaded
-                (.load ^net.bytebuddy.dynamic.DynamicType$Unloaded dynamic-type target-loader strategy)]
-          (.getLoaded loaded)))
+        (.getLoaded (.load ^net.bytebuddy.dynamic.DynamicType$Unloaded
+                            dynamic-type target-loader strategy)))
       (throw (IllegalStateException.
                (str "bytegen/define-class! cannot inject " name
                     " into the system classloader without an Instrumentation. "
                     "Ensure Nihilite is installed via -javaagent or agentmain "
                     "(premain/agentmain must capture the Instrumentation)."))))))
+
+(defn generated-class-bytes
+  "Bytecode of an already-injected class, or nil when it was never
+   generated in this JVM."
+  [class-name]
+  (get @generated-bytes class-name))

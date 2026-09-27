@@ -82,9 +82,15 @@
 
 (defn rd-onRedefine
   "Forwarder body called by the generated RedefineAdvice.onRedefine stub.
-   Returning the original value leaves the target method body untouched."
+
+   The :redefine position WRAPS the target method, so the original body
+   does not exist at runtime: there is no ctx event, and the only way to
+   influence the call is to return a value. The bridge is therefore called
+   as (self, args, method-name) and its return value becomes the method's
+   return value. With no spec installed, or no dispatcher yet, the method
+   returns null."
   [^String method-name ^java.lang.Class host-class ^String descriptor
-   ^Object self ^[Object] args ^Object original]
+   ^Object self ^[Object] args _return-slot]
   (let [spec-id (try
                   (lookup-spec (ap/host-internal host-class) method-name
                                 (if (nil? args) 0 (alength args)) descriptor "redefine")
@@ -92,16 +98,14 @@
                     (log/error t "redefine advice lookup failed")
                     (throw (exc/advice-ex! nil t))))]
     (if (nil? spec-id)
-      original
+      nil
       (try
         (let [ref-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher-ref")
               ^clojure.lang.Atom redefiner-atom (deref ref-var)
               reinstaller (deref redefiner-atom)
               host (ap/host-internal host-class)]
-          (if (nil? reinstaller)
-            original
-            (let [result (.invoke ^clojure.lang.IFn reinstaller host method-name self args descriptor)]
-              (if (nil? result) original result))))
+          (when reinstaller
+            (.invoke ^clojure.lang.IFn reinstaller host method-name self args descriptor)))
         (catch Throwable t
           (log/error t "redefine advice dispatch failed")
           (throw (exc/advice-ex! spec-id t)))))))
@@ -168,6 +172,17 @@
      :forward-var 'nihilite.kernel.advice/th-onThrow}]})
 
 (def ^:private redefine-spec
+  "The :redefine advice.
+
+   Woven via Advice.wrap, which REPLACES the method body rather than
+   instrumenting it — the original body does not run at all.
+
+   Because the body is gone there is no ORIGINAL return value to inspect,
+   but @Advice.Return is a PARAMETER-targeted annotation (its @Target is
+   PARAMETER, so it cannot be applied to the method), so the advice binds
+   the return slot as its own value and @Advice.AssignReturned.ToReturned
+   writes that value into the target method's return slot. Net effect: the
+   bridge's return value becomes the method's return value."
   {:methods
    [{:name "onRedefine"
      :static? true

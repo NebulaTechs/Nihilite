@@ -5,6 +5,12 @@
    path that spawns `java -javaagent:<jar>` and verifies the embedded
    nREPL server boots within the timeout.
 
+   The jar-smoke path gates on two markers: the server bound
+   (`nihilite:server-ready`) and the init form evaluated
+   (`nihilite:init-done`). It verifies the agent deploys and the nREPL
+   server comes up in a jar deployment; proving a hook actually fires
+   under a real JVM is the retransform driver's job, not this one.
+
    Invoked from build.clj as `java nihilite.test.javaagentClasspathDriver`."
   (:require [nihilite.boot :as boot]
             [clojure.string :as str]
@@ -141,8 +147,8 @@
                           (recur))))
                     (catch Throwable _)))
                 "jar-smoke-reader")
-        deadline (+ (System/nanoTime) (.toNanos TimeUnit/SECONDS 45))
-        state (atom {:bound? false :init-done? false})]
+         deadline (+ (System/nanoTime) (.toNanos TimeUnit/SECONDS 45))
+         state (atom {:bound? false :init-done? false})]
     (.setDaemon reader true)
     (.start reader)
     (loop []
@@ -157,7 +163,8 @@
     (let [log (locking pipe (.toString pipe))]
       (if (and (:bound? @state) (:init-done? @state))
         (do
-          (println "javaagentClasspathDriver: jar-smoke (nrepl server bound + init ran) OK")
+          (println "javaagentClasspathDriver: jar-smoke OK"
+                   "(server bound, init evaluated)")
           (pass!))
         (do
           (println "javaagentClasspathDriver: jar-smoke incomplete (bound=" (:bound? @state)

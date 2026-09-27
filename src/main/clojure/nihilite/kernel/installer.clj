@@ -34,6 +34,14 @@
                     (onComplete [_ _ _ _ _]))
         ^net.bytebuddy.agent.builder.AgentBuilder$Default base (net.bytebuddy.agent.builder.AgentBuilder$Default.)]
     (-> base
+        ;; Without this, ByteBuddy is free to add members the transformer
+        ;; introduces, and the JVM rejects the resulting retransform with
+        ;; "class redefinition failed: attempted to add a method" — the
+        ;; retransform contract forbids schema changes. Isolated repro
+        ;; (no Nihilite code, same target class, same advice shape):
+        ;;   with    disableClassFormatChanges -> retransform OK, advice fires
+        ;;   without disableClassFormatChanges -> attempted to add a method
+        (.disableClassFormatChanges)
         (.with retransformation)
         (.with reiterator)
         (.with listener))))
@@ -46,50 +54,57 @@
 
 (defn install
   "Arms the single AgentBuilder (redefine + advice composed) against the
-   live JVM. No-op when inst is nil (e.g. driver/test paths without
-   instrumentation)."
-   [^Instrumentation inst]
-   (if (nil? inst)
-     (log-info "HookInstaller install skipped (no Instrumentation)")
-     (try
-       (advice/ensure-all! inst)
-       (transformer/ensure-all!)
+   live JVM. Also publishes `inst` through
+   nihilite.kernel.agent/agent-registerInstrumentation so the registry and
+   the advice classes resolve the same Instrumentation regardless of
+   whether arming came from premain, agentmain, or a direct caller such as
+   a test driver.
+
+   No-op when inst is nil (e.g. driver/test paths without
+   instrumentation). A failure to arm propagates: swallowing it leaves the
+   agent silently inert, which is far worse than a loud startup failure."
+  [^Instrumentation inst]
+  (if (nil? inst)
+    (log-info "HookInstaller install skipped (no Instrumentation)")
+    (do
+      (let [register-fn (requiring-resolve
+                          'nihilite.kernel.agent/agent-registerInstrumentation)]
+        (register-fn inst))
+      (advice/ensure-all! inst)
+      (transformer/ensure-all!)
       (let [type-matcher (transformer-instance "nihilite.kernel.HookTypeMatcher")
             combined-xform (transformer-instance "nihilite.kernel.AdviceTransformer")]
         (.installOn
          (.transform
           (.type (base-builder) type-matcher)
           combined-xform)
-         inst)
-        (log-info "HookInstaller armed (byte-buddy AgentBuilder, RETRANSFORMATION, Reiterating)"))
-      (catch Throwable t
-        (log-error t "HookInstaller install failed")
-        (.printStackTrace t)))))
+         inst))
+      (log-info "HookInstaller armed (byte-buddy AgentBuilder, RETRANSFORMATION, Reiterating)")
+      nil)))
 
 (defn uninstall
   "Retransforms all loaded classes whose name matches target-internal
    (slash-separated) so that ByteBuddy drops the instrumentation.
-   Returns the number of classes actually retransformed."
+   Returns the number of classes actually retransformed.
+
+   Same classloader boundary as retransform-loaded-matching!: only classes
+   the app classloader loaded can drop the advice, because the advice is
+   woven as an external reference to a system-loader class.
+
+   A retransform failure propagates; it is not logged and swallowed."
   [^Instrumentation inst ^java.lang.String target-internal]
   (if (or (nil? inst) (nil? target-internal))
     0
     (let [dot-name (.replace target-internal "/" ".")
-          count (atom 0)]
-      (doseq [^java.lang.Class loaded (.getAllLoadedClasses inst)]
-        (when (and loaded
-                   (= dot-name (.getName loaded))
-                   (.isModifiableClass inst loaded))
-          (try
-            (.retransformClasses inst (into-array Class [loaded]))
-            (swap! count inc)
-            (log-info "HookInstaller uninstall: retransformed" dot-name)
-            (catch java.lang.instrument.UnmodifiableClassException _
-              (log-warn (str "HookInstaller uninstall: cannot retransform " dot-name
-                             " (loader=" (.getClassLoader loaded) ")")))
-            (catch Throwable _
-              (log-warn (str "HookInstaller uninstall: retransform failed for " dot-name
-                             " (loader=" (.getClassLoader loaded) ")"))))))
-      @count)))
+          candidates (filterv (fn [^java.lang.Class loaded]
+                                (and loaded
+                                     (= dot-name (.getName loaded))
+                                     (.isModifiableClass inst loaded)))
+                              (.getAllLoadedClasses inst))]
+      (when (seq candidates)
+        (.retransformClasses inst (into-array Class candidates))
+        (log-info "HookInstaller uninstall: retransformed" dot-name))
+      (count candidates))))
 
 (defn uninstall-spec-with-target!
   "Variant of uninstall-spec! that accepts the target-internal directly,

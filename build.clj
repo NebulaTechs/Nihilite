@@ -125,7 +125,7 @@
 
 (defn- copy-main-resources!
   []
-  (b/copy-dir {:src-dirs ["src/main/clojure" "resources"]
+  (b/copy-dir {:src-dirs ["src/main/clojure"]
                :target-dir class-dir})
   nil)
 
@@ -217,8 +217,8 @@
     (uberjar nil))
   (java-command! "Java agent classpath driver"
                  "nihilite.test.javaagentClasspathDriver"
-                 ["spawn-jar-smoke" (.getAbsolutePath (io/file uber-file))
-                  "examples/jdkstdlib/init.clj"]
+                  ["spawn-jar-smoke" (.getAbsolutePath (io/file uber-file))
+                   "examples/jdkstdlib/init.clj"]
                  (conj (driver-jvm-opts) "-Dnihilite.compiler-loader-hint="))
   nil)
 

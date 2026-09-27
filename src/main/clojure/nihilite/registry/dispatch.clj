@@ -16,13 +16,6 @@
 
 (defonce ^:private redefine-dispatcher-ref (atom nil))
 
-(defn redefine-dispatcher
-  "Returns the redefine dispatcher fn installed by
-   install-redefine-dispatcher!, or nil when the worker has not yet
-   booted. Used by nihilite.kernel.dispatcher."
-  []
-  @redefine-dispatcher-ref)
-
 (defn ->hook-event
   "Construct HookEvent. :cancelled? / :cancel! are closures over AtomicBoolean."
   [spec self args return-value]
@@ -86,7 +79,6 @@
          :cancelled   ((.-cancelled? ev))}))
     :else nil))
 
-(defn ctx-self        [x]          (when-some [c (->ctx x)] (:self c)))
 (defn ctx-cancel!     [x value]    (cond
                                      (instance? nihilite.registry.HookContext x)
                                      (set! (.-cancelled ^nihilite.registry.HookContext x) (boolean value))
@@ -136,6 +128,25 @@
            (catch Throwable _)))
     (finally nil)))
 
+(defn- modify-value-compatible?
+  "Whether `rv` can legally replace `original` as the target method's
+   return value.
+
+   The advice is woven with @Advice.Return(typing = DYNAMIC), so whatever
+   the bridge returns is cast by the JVM to the target method's return
+   type. A bridge that returns the wrong shape (the common slip is
+   returning `ctx` itself) would otherwise surface as a bare
+   ClassCastException from inside the woven method, with no hint about
+   which hook or which spec caused it. Checked here instead so the error
+   names the spec.
+
+   Null and primitives-unboxing cases: a primitive target is only
+   compatible when the value is a boxed instance of the wrapper."
+  [rv original]
+  (or (nil? rv)
+      (nil? original)
+      (instance? (class original) rv)))
+
 (defn dispatch-return-for-spec
   [spec-id self args original]
   (try
@@ -154,9 +165,23 @@
             (stats/bump-fired! (:id s))
             (cond
               (and (= action :modify) (some? rv))
-              (do (reset! result rv)
-                  (reset! modified? true)
-                  (reset! decided? true))
+              (do
+                (when-not (modify-value-compatible? rv original)
+                  (throw (ex-info
+                           (str ":modify bridge for spec " (:id s) " returned "
+                                (.getName (class rv))
+                                ", which cannot replace the target's "
+                                (.getName (class original))
+                                ". A :modify bridge must RETURN the"
+                                " replacement value (it may take ctx as its"
+                                " single argument, but must not return it).")
+                           {:nihilite/kind :nihilite/invalid-modify-value
+                            :nihilite/id (:id s)
+                            :nihilite/returned (class rv)
+                            :nihilite/original (class original)})))
+                (reset! result rv)
+                (reset! modified? true)
+                (reset! decided? true))
 
               (= action :cancel)
               (do (call-cancel! event) (reset! decided? true))
@@ -169,6 +194,14 @@
             (swap! (:modified r) inc)))
         @result)
       original)
+    ;; An invalid :modify value is a programming error the user must see;
+    ;; do not degrade to the original value, which would hide it.
+    (catch clojure.lang.ExceptionInfo e
+      (if (= :nihilite/invalid-modify-value (:nihilite/kind (ex-data e)))
+        (throw e)
+        (do (try (log/error e "registry dispatch-return-for-spec failed (id=" spec-id ")")
+                 (catch Throwable _))
+            original)))
     (catch Throwable t
       (try (log/error t "registry dispatch-return-for-spec failed (id=" spec-id ")")
            (catch Throwable _))
@@ -186,6 +219,17 @@
            (catch Throwable _)))))
 
 (defn lookup-spec-for-call
+  "Find the spec id that should handle a call to
+   `class-internal`/`method-name` with `parameter-count` arguments.
+
+   `position` selects which hook serves the call. It is REQUIRED for
+   correctness whenever more than one spec targets the same method:
+   without it an :entry lookup can return a :redefine spec on the same
+   method, and the :redefine bridge — which takes (self args method-name)
+   — then gets invoked with the 1-argument ctx and throws ArityException.
+
+   The 4-argument form keeps `position` nil for callers that genuinely do
+   not know it, matching the first spec whose method and arity agree."
   ([^String class-internal ^String method-name parameter-count
     ^String descriptor position]
    (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
@@ -203,23 +247,34 @@
                      (:id s))))
                mb))
        :else
-       (lookup-spec-for-call class-internal method-name parameter-count))))
-  ([^String class-internal ^String method-name parameter-count _descriptor]
-   (lookup-spec-for-call class-internal method-name parameter-count))
-  ([^String class-internal method-name parameter-count]
-   (let [b (.get (reg/get-by-target) class-internal)]
+       (lookup-spec-for-call class-internal method-name parameter-count position))))
+  ([^String class-internal method-name parameter-count position]
+   (let [b (.get (reg/get-by-target) class-internal)
+         pos-kw (when position (reg/normalize-position position))]
      (when b
        (let [iname (str method-name)
              pcnt  (int parameter-count)]
          (some (fn [s]
                  (let [mn (:method-name s)
-                       ar (:arity s)]
+                       ar (:arity s)
+                       sp (:position s)]
                    (when (and (= mn iname)
-                              (or (nil? ar) (= ar pcnt)))
+                              (or (nil? ar) (= ar pcnt))
+                              (or (nil? pos-kw) (= sp pos-kw)))
                      (:id s))))
                b))))))
 
 (defn dispatch-redefine
+  "Runs the :redefine bridge and returns its value.
+
+   The bridge takes three arguments — (self, args, method-name) — not the
+   1-argument ctx the other positions receive, because a :redefine hook
+   REPLACES the method body: it has no event to observe, only the call
+   itself and whatever it chooses to return.
+
+   The return value is what the woven method returns. Returning nil keeps
+   the advice's own fallback (the method returns null), so a :redefine
+   bridge that wants a value must return one."
   [host-internal method-name self args descriptor]
   (try
     (let [param-count (count args)
@@ -227,6 +282,7 @@
       (if-let [spec (and spec-id (reg/lookup spec-id))]
         (if-let [bridge-fn (safe-bridge spec)]
           (try
+            (stats/bump-fired! spec-id)
             (bridge-fn self args method-name)
             (catch Throwable t
               (log/error t "bridge redefine-fire failed (id=" spec-id ")")

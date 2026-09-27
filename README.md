@@ -1,8 +1,12 @@
 # Nihilite
 
-Clojure nREPL agent for running JVM.
+Clojure nREPL agent for running JVMs. Attach with `-javaagent`, or
+dynamic-attach into a running process. You get a bencode nREPL on
+`127.0.0.1` where `nihilite.api/install!` weaves a hook into any
+already-loaded class method.
 
-Tested on JDK 21 and 25.
+All bytecode classes are generated from Clojure at runtime / AOT (zero
+`.java` source in the repo).
 
 ## Build
 
@@ -17,13 +21,22 @@ java -jar target/nihilite.jar
 java -javaagent:target/nihilite.jar -jar target/nihilite.jar
 ```
 
+Or dynamic-attach into an already-running JVM from a Clojure REPL:
+
+```clojure
+(nihilite.attach/attach-to! 12345)  ; attach by PID, wait for the worker
+```
+
 Connect to `127.0.0.1:7888` with any bencode nREPL client.
 
-Configuration via `-D` system property (placed before `-javaagent` and `-jar` on the java command line):
+Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 
 - `nihilite.bind` (default `127.0.0.1`)
 - `nihilite.port` (default `7888`)
-- `nihilite.init` — a Clojure form run at startup
+- `nihilite.init` — a Clojure file evaluated at startup
+- `nihilite.compiler-loader-hint` — a class name; when set, the agent
+  re-arms its transformer onto that classloader so hooks also reach
+  classes on it
 
 ## Hooks API
 
@@ -42,41 +55,74 @@ Configuration via `-D` system property (placed before `-javaagent` and `-jar` on
 ```
 
 | key | meaning |
-|-----|---------|
+| --- | --- |
 | `:id` | unique hook identifier (string) |
 | `:target-internal` | JVM internal class name (`"java/io/FileInputStream"`) |
 | `:method-name` | method name |
-| `:descriptor` | JVM method descriptor (use when the method has overloads) |
+| `:descriptor` | JVM method descriptor, required. Without it `install!` throws `:nihilite/missing-descriptor`. |
 | `:position` | `:entry` / `:return` / `:throw` / `:redefine` |
 | `:action` | `:observe` (default), `:modify`, `:cancel`, `:subscriber` |
-| `:bridge` | `(fn [ctx] ...)`; `ctx` has `:hook-id`, `:self`, `:args`, `:phase`, `:return-value`, `:throwable`, `:cancelled?`, `:cancel!` |
+| `:bridge` | a Clojure function; see `ctx` shape below |
 
-Other verbs:
+### `ctx` shape by position
 
-- `(api/uninstall! id)` — remove hook and retransform
+- **`:entry` / `:throw`** — a `HookEvent` record with `:spec-id`, `:source`,
+  `:phase`, `:self`, `:args`, `:return-value`, `:throwable`, `:cancelled?`,
+  `:cancel!`, `:thread-name`, `:timestamp-ns`, `:sequence`, `:note`,
+  `:stack`. Use `nihilite.registry/ctx-return` to read the target method's
+  return value.
+- **`:return`** — a `HookEvent`. When `:action` is `:modify`, the bridge's
+  return value replaces the method's return value.
+- **`:redefine`** — three arguments `(self, args, method-name)`, not a `ctx`.
+  A `:redefine` hook WRAPS the method so the original body does not run at
+  all; the bridge's return value becomes the method's return value.
+  Deliberately different from the other positions, which instrument the
+  body in place.
+
+### Other verbs
+
+- `(api/uninstall! id)` — remove the hook and retransform
 - `(api/lookup id)` — the registered `HookSpec`, or `nil`
 - `(api/list-specs)` — all registered ids, sorted
-- `(api/install-status! id)` — last install/uninstall event
+- `(api/install-status! id)` — the most recent install/uninstall event,
+  including `:woven-count` and `:target-loader`
 - `(api/swap-bridge! id new-fn)` — replace the bridge in place
 - `(api/register-action! :kw)` — register a custom `:action`
 
-### Examples
+### Loader boundary
+
+A hook only fires for classes loaded by the **application classloader**.
+Nihilite injects its generated advice code into the app loader. Classes
+loaded by the bootstrap or platform classloader (`java.base` / `java.*`
+JDK internals) cannot resolve that code, so hooks on them register and
+report a `:woven-count` but never fire. The `minecraft` / `fabric`
+examples target app-loader classes and work; `jdkstdlib` (`FileInputStream`)
+and `hotrewrite` (`String`) target bootstrap classes and do not fire.
+
+## Examples
 
 | Example | What it shows |
-|---------|---------------|
-| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | Hook `java.io.FileInputStream.read` to count bytes read across the JVM (`:return` + `:observe`). |
-| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` rewires a live hook without a restart (`:entry` + `:observe`). |
-| [`examples/minecraft/init.clj`](examples/minecraft/init.clj) | Vanilla Minecraft `MinecraftServer.sendSystemMessage` observer hook. |
-| [`examples/fabric/init.clj`](examples/fabric/init.clj) | Fabric mod-loader hooks (`runServer` entry + `sendSystemMessage` return-override). |
+| --- | --- |
+| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | Spec shape against a JDK stdlib method. **Teaching only** — bootstrap target, will not fire. |
+| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` hot rewrite. **Teaching only** — `String` is a bootstrap class, will not fire. |
+| [`examples/minecraft/init.clj`](examples/minecraft/init.clj) | Vanilla Minecraft `MinecraftServer.sendSystemMessage` observer. App-loader target — actually fires. |
+| [`examples/fabric/init.clj`](examples/fabric/init.clj) | Fabric mod-loader hooks. App-loader target — actually fires. |
 
 Load any example via `-Dnihilite.init=examples/<name>/init.clj`.
 
 ## Tests
 
 ```sh
-clojure -T:build clojure-contract-test   # 115 cases
+clojure -T:build clojure-contract-test   # 131 cases
 clojure -T:build check                   # build + verify + all drivers
 ```
+
+`check` runs four drivers that exercise the real `Instrumentation` path
+the contract tests cannot reach: `retransform` (all four positions on an
+already-loaded app-loader class, including a co-located `:entry`
+surviving a `:redefine` uninstall), `jar-smoke` (agent deploys and the
+nREPL server comes up in a spawned `java -jar` process),
+`redefine-instance`, and `compiler-loader-hint`.
 
 ## License
 

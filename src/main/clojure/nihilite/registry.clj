@@ -74,35 +74,6 @@
     (string? a)  (keyword (.toLowerCase ^String a))
     :else        a))
 
-(defn spec
-  ([id target-internal method-name position arity bridge note]
-   (spec id target-internal method-name position arity bridge note nil :observe nil))
-  ([id target-internal method-name position arity bridge note descriptor]
-   (spec id target-internal method-name position arity bridge note descriptor :observe nil))
-  ([id target-internal method-name position arity bridge note descriptor action]
-   (spec id target-internal method-name position arity bridge note descriptor action nil))
-  ([id target-internal method-name position arity bridge note descriptor action tag]
-   (let [tid  (str target-internal)
-         mn   (str method-name)
-         desc (when descriptor (str descriptor))
-         mk   (when (and desc (not (empty? desc)))
-                (method-key tid mn desc))
-         sc   (when mk (.replace ^String tid "/" "."))
-         pos  (normalize-position position)
-         act  (normalize-action action)]
-     (map->HookSpec {:id                (str id)
-                     :target-internal   tid
-                     :method-name       mn
-                     :position          pos
-                     :arity             (when arity (int arity))
-                     :bridge            bridge
-                     :note              (str note)
-                     :action            act
-                     :method-key        mk
-                     :source-class      sc
-                     :source-descriptor desc
-                     :tag               tag}))))
-
 (defonce ^:private by-id
   (ConcurrentHashMap.))
 (defonce ^:private by-target
@@ -131,38 +102,84 @@
 (defn method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
 
 (defn spec-bucket
+  "The specs sharing `spec`'s target/method, restricted to specs at the
+   SAME position.
+
+   Without the position filter a dispatch for one position would walk the
+   other positions' specs too, and since :redefine bridges take
+   (self args method-name) while every other position's bridge takes a
+   single ctx, such a call throws ArityException."
   [spec]
-  (if-let [mk (:method-key spec)]
-    (some-> (.get by-method mk) seq)
-    (some-> (.get by-target (:target-internal spec)) seq)))
+  (let [pos (:position spec)
+        bucket (if-let [mk (:method-key spec)]
+                 (some-> (.get by-method mk) seq)
+                 (some-> (.get by-target (:target-internal spec)) seq))]
+    (when (seq bucket)
+      (seq (filter #(= pos (:position %)) bucket)))))
 
 (defn retransform-loaded-matching!
+  "Retransforms every already-loaded, modifiable class whose name matches
+   `target-internal` (slash-separated) so the armed AgentBuilder re-visits
+   it against the current registry. Returns the number of classes
+   retransformed — 0 when there is no Instrumentation or no matching class
+   is loaded.
+
+   Note the support boundary: advice is woven with inline=false, so the
+   woven body holds an INVOKESTATIC to a class injected into the system
+   (app) classloader. Classes loaded by the bootstrap or platform
+   classloader therefore cannot resolve it and the hook never fires, even
+   though retransformClasses succeeds and this function reports 1. Hook
+   targets must be loaded by the application classloader.
+
+   Failures propagate: a retransform that throws must surface, not be
+   logged and forgotten."
   ([^String target-internal]
    (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
          inst (when lookup-fn (lookup-fn))]
      (retransform-loaded-matching! target-internal inst)))
   ([^String target-internal ^Instrumentation inst]
-   (when inst
+   (if (or (nil? inst) (nil? target-internal))
+     0
      (let [^Instrumentation inst inst
-           dot-name (.replace ^String target-internal "/" ".")]
-       (try
-         (let [candidates (->> (.getAllLoadedClasses inst)
-                               (filter (fn [^Class c]
-                                         (and c (.equals dot-name (.getName c)))))
-                               (filter (fn [^Class c] (.isModifiableClass inst c))))]
-           (when (seq candidates)
-             (.retransformClasses inst (into-array Class (vec candidates)))
-             (log/debug "retransform-loaded-matching! retransformed"
-                        (count candidates) "class(es) for target=" target-internal)))
-         (catch java.lang.instrument.UnmodifiableClassException _
-           (log/warn "retransform-loaded-matching! could not retransform"
-                     target-internal " (UnmodifiableClassException)"))
-         (catch Throwable t
-           (log/warn t "retransform-loaded-matching! retransform failed for"
-                     target-internal)))))))
+           dot-name (.replace ^String target-internal "/" ".")
+           candidates (->> (.getAllLoadedClasses inst)
+                           (filter (fn [^Class c]
+                                     (and c (.equals dot-name (.getName c)))))
+                           (filter (fn [^Class c] (.isModifiableClass inst c))))]
+       (when (seq candidates)
+         (.retransformClasses inst (into-array Class (vec candidates)))
+         (log/debug "retransform-loaded-matching! retransformed"
+                    (count candidates) "class(es) for target=" target-internal))
+       (count candidates)))))
 
 (defonce ^:private status-index
   (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- target-loader
+  "Which classloader the loaded target class is defined by, as a keyword:
+    :bootstrap  -- JDK core (java.*), loader is nil
+    :platform   -- JDK platform modules, Clojure/ByteBuddy's own classes
+    :app        -- application classpath (-cp / -jar), the supported target
+    :unloaded   -- no matching class is currently loaded
+    :unknown    -- the class is loaded but its loader cannot be determined
+
+   Advice is woven with inline=false, so the woven body references a class
+   injected into the system (app) classloader. Only :app targets can
+   resolve it, so this is the field that actually predicts whether a hook
+   will fire."
+  [^String target-internal]
+  (let [dot-name (.replace target-internal "/" ".")
+        klass (try
+                (Class/forName dot-name false (ClassLoader/getSystemClassLoader))
+                (catch ClassNotFoundException _ nil)
+                (catch Throwable _ nil))]
+    (cond
+      (nil? klass) :unloaded
+      :else (let [l (.getClassLoader ^Class klass)]
+              (cond
+                (nil? l) :bootstrap
+                (= l (ClassLoader/getPlatformClassLoader)) :platform
+                :else :app)))))
 
 (defn- status-record
   ^java.util.concurrent.atomic.AtomicReference [spec-id]
@@ -170,11 +187,12 @@
         existing (.get status-index id)]
     (if (nil? existing)
       (let [created (java.util.concurrent.atomic.AtomicReference.
-                      {:spec-id     id
-                       :registered? true
-                       :woven-count 0
-                       :pending?    true
-                       :last-error  nil})]
+                      {:spec-id       id
+                       :registered?   true
+                       :woven-count   0
+                       :pending?      true
+                       :target-loader :unknown
+                       :last-error    nil})]
         (if (nil? (.putIfAbsent status-index id created))
           created
           (.get status-index id)))
@@ -186,11 +204,12 @@
     (.set ref (f (.get ref)))
     nil))
 
-(defn- mark-installed! [spec-id count]
+(defn- mark-installed! [spec-id target-internal count]
   (record-status! spec-id
     (fn [cur]
       (assoc cur :woven-count (long count)
                   :pending?    (zero? (long count))
+                  :target-loader (target-loader target-internal)
                   :registered? true))))
 
 (defn- mark-uninstalled! [spec-id count]
@@ -335,22 +354,25 @@
             (.add (method-bucket mk) norm-spec))
           (when-not replaced?
             (stats/ensure-stats spec-id))
-          (if replaced?
-            (do (log/info "hook replaced:" (:id norm-spec)
-                          "target=" (:target-internal norm-spec)
-                          "method=" (:method-name norm-spec))
-                (mark-installed! (:id norm-spec) 0)
-                false)
-            (do (log/info "hook registered:" (:id norm-spec)
-                          "target=" (:target-internal norm-spec)
-                          "method=" (:method-name norm-spec)
-                          "@" (:position norm-spec)
-                          "action=" (:action norm-spec)
-                          (when-let [t (:tag norm-spec)] (str " tag=" t))
-                          (when-let [n (:note norm-spec)] (str "// " n)))
-                (mark-installed! (:id norm-spec) 0)
-                (retransform-loaded-matching! spec-target)
-                true)))))))
+          ;; A replaced spec changes the registry contents, so the armed
+          ;; AgentBuilder must re-visit already-loaded matching classes —
+          ;; otherwise the new bridge/position never reaches the JVM.
+          (let [woven (int (retransform-loaded-matching! spec-target))]
+            (if replaced?
+              (do (log/info "hook replaced:" (:id norm-spec)
+                            "target=" (:target-internal norm-spec)
+                            "method=" (:method-name norm-spec))
+                  (mark-installed! (:id norm-spec) spec-target woven)
+                  false)
+              (do (log/info "hook registered:" (:id norm-spec)
+                            "target=" (:target-internal norm-spec)
+                            "method=" (:method-name norm-spec)
+                            "@" (:position norm-spec)
+                            "action=" (:action norm-spec)
+                            (when-let [t (:tag norm-spec)] (str " tag=" t))
+                            (when-let [n (:note norm-spec)] (str "// " n)))
+                  (mark-installed! (:id norm-spec) spec-target woven)
+                  true))))))))
 
 (defn uninstall!
   [id]

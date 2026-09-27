@@ -1,5 +1,5 @@
 (ns nihilite.test.dispatch-modified-test
-  (:require [clojure.test :refer [deftest is use-fixtures]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.stats :as stats]
             [nihilite.registry.dispatch :as dispatch]
@@ -33,3 +33,40 @@
     (dispatch/dispatch-return-for-spec id nil (object-array 0) "original")
     (is (= 0 (modified-of id))
         ":modify returning nil does NOT bump :modified")))
+
+(deftest dispatch-return-modify-accepts-compatible-value
+  (let [id "mod-ok"
+        _  (install-modify id (fn [_] "replacement"))]
+    (is (= "replacement"
+           (dispatch/dispatch-return-for-spec id nil (object-array 0) "original"))
+        "a same-typed replacement value is used as the return value")))
+
+(deftest dispatch-return-modify-rejects-incompatible-value
+  (testing "A :modify bridge that returns ctx (a HookEvent) instead of the
+            replacement value cannot legally replace a String return. The
+            advice is woven with @Advice.Return(typing=DYNAMIC), so the JVM
+            would cast it and fail with a bare ClassCastException that names
+            neither the hook nor the spec. dispatch must reject it first with
+            a diagnosable error."
+    (let [id "mod-bad"
+          _  (install-modify id (fn [ctx] ctx))]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"cannot replace the target's"
+                            (dispatch/dispatch-return-for-spec
+                              id nil (object-array 0) "original"))
+          "incompatible :modify value throws a named error")
+      (is (= 0 (modified-of id))
+          "a rejected value does not count as :modified"))))
+
+(deftest dispatch-return-modify-rejection-names-the-spec
+  (let [id "mod-bad-named"
+        _  (install-modify id (fn [ctx] ctx))]
+    (try
+      (dispatch/dispatch-return-for-spec id nil (object-array 0) "original")
+      (is false "expected the incompatible :modify value to throw")
+      (catch clojure.lang.ExceptionInfo e
+        (is (= :nihilite/invalid-modify-value (:nihilite/kind (ex-data e))))
+        (is (= id (:nihilite/id (ex-data e)))
+            "the error carries the offending spec id")
+        (is (re-find (re-pattern id) (ex-message e))
+            "the message names the spec")))))
