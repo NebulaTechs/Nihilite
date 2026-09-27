@@ -1,14 +1,11 @@
 (ns nihilite.boot
-  (:require [nihilite.version :as v]
-            [nrepl.middleware]
+  (:require [nrepl.middleware]
             [nrepl.server :as nrepl.server])
   (:import [java.util.logging Logger Level]))
 
 (defonce ^:private log
   (doto (Logger/getLogger "Nihilite.Boot")
     (.setLevel Level/WARNING)))
-
-(defonce ^:private runtime-version v/version)
 
 (def ^:private init-property-name "nihilite.init")
 
@@ -96,7 +93,7 @@
     (parse-args args)
     (start!)
     (eval-init!)
-    (println (str "[Nihilite] server " runtime-version " ready on "
+    (println (str "[Nihilite] ready on "
                   (System/getProperty "nihilite.bind") ":"
                   (System/getProperty "nihilite.port")))
     (flush)

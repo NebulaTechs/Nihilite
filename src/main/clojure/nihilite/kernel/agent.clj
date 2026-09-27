@@ -194,7 +194,7 @@
 (defn agent-aMain
   "Driver entry used by nihilite.kernel.Agent.aMain. Performs the same
    work as premain then awaits the worker before handing control to
-   nihilite.boot/-main."
+   nihilite.boot/-main. `args` is an ISeq<String> (possibly empty)."
   [& args]
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
     (agent-premain nil nil)
@@ -209,12 +209,13 @@
 (defn agent-main
   "The JVM-lookup main(String[]) entry point. gen-class :main true looks
    up `(str prefix main)` which equals `agent-main`. The gen-class
-   forwarder calls this via `applyTo(seq args)`, so when the user runs
-   the jar with no arguments the call arrives with 0 args; we accept
-   variadic to absorb that case and forward the array when present."
+   forwarder invokes `IFn.applyTo(ISeq<String>)` on this var — variadic
+   args receive each String from String[] as a separate parameter, so
+   `args` here is an ISeq<String>. Forward to aMain which expects the
+   same shape."
   [& args]
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
-    (agent-aMain args)))
+    (apply agent-aMain args)))
 
 (defn- generate-class!
   "Generate nihilite.kernel.Agent with the standard five static entry
