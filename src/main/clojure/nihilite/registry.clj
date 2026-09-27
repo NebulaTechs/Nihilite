@@ -155,6 +155,18 @@
 (defonce ^:private status-index
   (java.util.concurrent.ConcurrentHashMap.))
 
+;; The platform classloader exists only on JDK 9+. The call is resolved
+;; reflectively so the namespace still compiles on JDK 8, where the
+;; static method is absent; on JDK 8 this returns nil and every
+;; non-bootstrap loader is simply :app. Computed once at ns load.
+(defonce ^:private platform-class-loader
+  (try
+    (let [m (.getDeclaredMethod (Class/forName "java.lang.ClassLoader")
+                               "getPlatformClassLoader"
+                               (into-array Class []))]
+      (.invoke m nil (object-array [])))
+    (catch Exception _ nil)))
+
 (defn- target-loader
   "Which classloader the loaded target class is defined by, as a keyword:
     :bootstrap  -- JDK core (java.*), loader is nil
@@ -178,7 +190,7 @@
       :else (let [l (.getClassLoader ^Class klass)]
               (cond
                 (nil? l) :bootstrap
-                (= l (ClassLoader/getPlatformClassLoader)) :platform
+                (and (some? platform-class-loader) (= platform-class-loader l)) :platform
                 :else :app)))))
 
 (defn- status-record

@@ -212,7 +212,9 @@
 
     ;; probeRedef() -- body REPLACED: the original body must not run
     (let [r (.invoke probeRedef nil (object-array []))
-          body-ran (.invoke redefineBodyExecuted nil (object-array []))]
+          ;; .invoke on a boolean-returning method yields a java.lang.Boolean,
+          ;; which Clojure treats as truthy even when FALSE, so unwrap it.
+          body-ran (boolean (.invoke redefineBodyExecuted nil (object-array [])))]
       (when (not= @redefined 1) (fail! (str "REDEFINED=" @redefined " expected 1") 7))
       (when (not= "REDEFINED-BY-DRIVER" r) (fail! (str "probeRedef was \"" r "\" expected \"REDEFINED-BY-DRIVER\"") 8))
       (when body-ran
@@ -329,7 +331,7 @@
       (reset! mixed-entry 0)
       (stats/clear-driver-state!)
       (let [r2 (.invoke probeRedef nil (object-array []))
-            body-ran (.invoke redefineBodyExecuted nil (object-array []))]
+            body-ran (boolean (.invoke redefineBodyExecuted nil (object-array [])))]
         (when (not= 1 @mixed-entry)
           (fail! (str "after uninstalling :redefine, the surviving :entry hook"
                       " fired " @mixed-entry " time(s), expected 1; the class"

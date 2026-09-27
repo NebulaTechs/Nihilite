@@ -117,21 +117,25 @@
              (.contains snapshot-string "nihilite:server-ready"))
     (swap! state assoc :bound? true)))
 
+(defn- host-java-major []
+  (Integer/parseInt (first (re-seq #"\d+" (System/getProperty "java.version")))))
+
 (defn spawn-jar-smoke [argv]
   (let [nihilite-jar (nth argv 1)
         init-script (when (> (count argv) 2) (nth argv 2))
         init-form (if (or (nil? init-script) (str/blank? init-script))
-                   "(do (require 'clojure.repl) (in-ns 'user))"
-                   (str "(load-file \"" (.replace init-script "\\" "\\\\") "\")"))
-        cmd ["java"
-             "-Djdk.attach.allowAttachSelf=true"
-             "-XX:+EnableDynamicAgentLoading"
-             "-Dnet.bytebuddy.safe=false"
-             (str "-javaagent:" nihilite-jar)
-             (str "-Dnihilite.init=" init-form)
-             "-Dnihilite.port=0"
-             "-Dnihilite.bind=127.0.0.1"
-             "-jar" nihilite-jar]
+                    "(do (require 'clojure.repl) (in-ns 'user))"
+                    (str "(load-file \"" (.replace init-script "\\" "\\\\") "\")"))
+        cmd (vec (concat ["java"
+                          "-Djdk.attach.allowAttachSelf=true"
+                          "-Dnet.bytebuddy.safe=false"]
+                         ;; JEP 451, JDK 21+ only; older JVMs refuse to start with it.
+                         (when (>= (host-java-major) 21) ["-XX:+EnableDynamicAgentLoading"])
+                         [(str "-javaagent:" nihilite-jar)
+                          (str "-Dnihilite.init=" init-form)
+                          "-Dnihilite.port=0"
+                          "-Dnihilite.bind=127.0.0.1"
+                          "-jar" nihilite-jar]))
         pb (doto (ProcessBuilder. cmd) (.redirectErrorStream true))
         proc (.start pb)
         is (.getInputStream proc)
