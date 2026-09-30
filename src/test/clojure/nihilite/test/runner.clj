@@ -34,7 +34,8 @@
    "nihilite.test.install-status-test"
     "nihilite.test.compiler-loader-hint-test"
     "nihilite.test.uninstall-warn-test"
-    "nihilite.test.redefine-advice-composition-test"])
+   "nihilite.test.redefine-advice-composition-test"
+   "nihilite.test.retransform-batch-atomicity-test"])
 
 (defn- safe-deref
   [r]

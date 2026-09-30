@@ -117,6 +117,11 @@
     (when (seq bucket)
       (seq (filter #(= pos (:position %)) bucket)))))
 
+(defn- retransform-one!
+  [^Instrumentation inst ^Class c]
+  (.retransformClasses inst (into-array Class [c]))
+  c)
+
 (defn retransform-loaded-matching!
   "Retransforms every already-loaded, modifiable class whose name matches
    `target-internal` (slash-separated) so the armed AgentBuilder re-visits
@@ -131,8 +136,11 @@
    though retransformClasses succeeds and this function reports 1. Hook
    targets must be loaded by the application classloader.
 
-   Failures propagate: a retransform that throws must surface, not be
-   logged and forgotten."
+   Each class is retransformed in its own call because retransform is
+   batch-atomic: a single illegal class fails the whole batch, so one bad
+   target would silently disable every other hook. Failures are collected
+   and thrown after the remaining classes have been processed — per-class
+   attribution without hiding anything."
   ([^String target-internal]
    (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
          inst (when lookup-fn (lookup-fn))]
@@ -146,11 +154,32 @@
                            (filter (fn [^Class c]
                                      (and c (.equals dot-name (.getName c)))))
                            (filter (fn [^Class c] (.isModifiableClass inst c))))]
-       (when (seq candidates)
-         (.retransformClasses inst (into-array Class (vec candidates)))
-         (log/debug "retransform-loaded-matching! retransformed"
-                    (count candidates) "class(es) for target=" target-internal))
-       (count candidates)))))
+       (loop [remaining (vec candidates)
+              done 0
+              failed []]
+         (if (empty? remaining)
+           (do
+             (when (seq failed)
+               (throw (ex-info (str "retransform failed for "
+                                    (count failed) " class(es) matching "
+                                    target-internal)
+                               {:target target-internal
+                                :failed failed})))
+             (log/debug "retransform-loaded-matching! retransformed"
+                        done "class(es) for target=" target-internal)
+             done)
+           (let [^Class c (first remaining)
+                 result (try
+                          (retransform-one! inst c)
+                          (catch Throwable t
+                            (log/error t "retransform failed for class"
+                                       (.getName c))
+                            t))]
+             (recur (subvec remaining 1)
+                    (if (instance? Throwable result) done (inc done))
+                    (if (instance? Throwable result)
+                      (conj failed [(.getName c) (str result)])
+                      failed)))))))))
 
 (defonce ^:private status-index
   (java.util.concurrent.ConcurrentHashMap.))
