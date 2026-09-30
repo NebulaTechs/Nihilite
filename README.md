@@ -1,7 +1,7 @@
 # Nihilite
 
-Clojure nREPL agent for running JVMs. Attach with `-javaagent`, or
-dynamic-attach into a running process. You get a bencode nREPL on
+Clojure nREPL agent for running JVMs. Load it with `-javaagent` (or `-jar`,
+which also prearms the hook installer) and you get a bencode nREPL on
 `127.0.0.1` where `nihilite.api/install!` weaves a hook into any
 already-loaded class method.
 
@@ -19,12 +19,6 @@ clojure -T:build uberjar
 ```sh
 java -jar target/nihilite.jar
 java -javaagent:target/nihilite.jar -jar target/nihilite.jar
-```
-
-Or dynamic-attach into an already-running JVM from a Clojure REPL:
-
-```clojure
-(nihilite.attach/attach-to! 12345)  ; attach by PID, wait for the worker
 ```
 
 Connect to `127.0.0.1:7888` with any bencode nREPL client.
@@ -89,22 +83,12 @@ Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 - `(api/swap-bridge! id new-fn)` — replace the bridge in place
 - `(api/register-action! :kw)` — register a custom `:action`
 
-### Loader boundary
-
-A hook only fires for classes loaded by the **application classloader**.
-Nihilite injects its generated advice code into the app loader. Classes
-loaded by the bootstrap or platform classloader (`java.base` / `java.*`
-JDK internals) cannot resolve that code, so hooks on them register and
-report a `:woven-count` but never fire. The `minecraft` / `fabric`
-examples target app-loader classes and work; `jdkstdlib` (`FileInputStream`)
-and `hotrewrite` (`String`) target bootstrap classes and do not fire.
-
 ## Examples
 
 | Example | What it shows |
 | --- | --- |
-| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | Spec shape against a JDK stdlib method. **Teaching only** — bootstrap target, will not fire. |
-| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` hot rewrite. **Teaching only** — `String` is a bootstrap class, will not fire. |
+| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | Spec shape against a JDK stdlib method. Bootstrap target, reached through invokedynamic. |
+| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` hot rewrite on a bootstrap class. |
 | [`examples/minecraft/init.clj`](examples/minecraft/init.clj) | Vanilla Minecraft `MinecraftServer.sendSystemMessage` observer. App-loader target — actually fires. |
 | [`examples/fabric/init.clj`](examples/fabric/init.clj) | Fabric mod-loader hooks. App-loader target — actually fires. |
 

@@ -92,6 +92,7 @@
                                "-M" "-e"
                                (compile-script-for '[nihilite.kernel.exceptions
                                                      nihilite.kernel.bucket
+                                                     nihilite.kernel.indy
                                                      nihilite.kernel.installer
                                                      nihilite.kernel.agent])]}))
   nil)
@@ -100,8 +101,9 @@
   (str "(binding [*compile-path* \"target/test-classes\"]"
        " (doseq [n '[nihilite.test.retransform-driver"
        "               nihilite.test.redefine-instance-driver"
-        "               nihilite.test.compiler-loader-hint-driver"
-        "               nihilite.test.javaagent-classpath-driver]]"
+       "               nihilite.test.compiler-loader-hint-driver"
+       "               nihilite.test.indy-driver"
+       "               nihilite.test.javaagent-classpath-driver]]"
        "   (require n) (compile n)))"))
 
 (defn- compile-test-drivers!
@@ -227,6 +229,12 @@
                  "nihilite.test.redefineInstanceDriver" [] (driver-jvm-opts))
   nil)
 
+(defn indy-driver
+  [_]
+  (java-command! "Indy driver"
+                 "nihilite.test.indyDriver" [] (driver-jvm-opts))
+  nil)
+
 (defn check
   [_]
   (uberjar nil)
@@ -236,5 +244,6 @@
   (compiler-loader-driver nil)
   (javaagent-driver nil)
   (redefine-instance-driver nil)
+  (indy-driver nil)
   (println "All tools.build checks passed")
   nil)

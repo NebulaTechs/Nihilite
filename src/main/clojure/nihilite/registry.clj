@@ -189,25 +189,20 @@
 ;; static method is absent; on JDK 8 this returns nil and every
 ;; non-bootstrap loader is simply :app. Computed once at ns load.
 (defonce ^:private platform-class-loader
-  (try
-    (let [m (.getDeclaredMethod (Class/forName "java.lang.ClassLoader")
-                               "getPlatformClassLoader"
-                               (into-array Class []))]
-      (.invoke m nil (object-array [])))
-    (catch Exception _ nil)))
+  (ClassLoader/getPlatformClassLoader))
 
 (defn- target-loader
   "Which classloader the loaded target class is defined by, as a keyword:
-    :bootstrap  -- JDK core (java.*), loader is nil
-    :platform   -- JDK platform modules, Clojure/ByteBuddy's own classes
-    :app        -- application classpath (-cp / -jar), the supported target
-    :unloaded   -- no matching class is currently loaded
-    :unknown    -- the class is loaded but its loader cannot be determined
+     :bootstrap  -- JDK core (java.*), loader is nil
+     :platform   -- JDK platform modules, Clojure/ByteBuddy's own classes
+     :app        -- application classpath (-cp / -jar)
+     :unloaded   -- no matching class is currently loaded
+     :unknown    -- the class is loaded but its loader cannot be determined
 
-   Advice is woven with inline=false, so the woven body references a class
-   injected into the system (app) classloader. Only :app targets can
-   resolve it, so this is the field that actually predicts whether a hook
-   will fire."
+   Every tier is reachable: app-loader targets are dispatched through a plain
+   static call to the advice, while bootstrap and platform targets go through
+   invokedynamic so the call site carries no reference the target's loader
+   would have to resolve."
   [^String target-internal]
   (let [dot-name (.replace target-internal "/" ".")
         klass (try

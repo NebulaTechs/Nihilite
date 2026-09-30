@@ -12,8 +12,7 @@
    maps to more than one loaded Class."
   (:require [clojure.test :refer [deftest is]]
             [nihilite.registry :as reg])
-  (:import [net.bytebuddy ByteBuddy]
-           [net.bytebuddy.dynamic.loading ClassLoadingStrategy$Default]))
+  (:import [net.bytebuddy ByteBuddy]))
 
 (defn- stub-instrumentation
   "Returns [calls-atom instrumentation]. `failing` is a set of class names
@@ -36,10 +35,10 @@
 (def ^:private dup-target "dup.Target")
 
 (defn- load-twice []
-  (let [wrapper (ClassLoadingStrategy$Default/WRAPPER)
-        make (fn []
+  (let [make (fn []
                (-> (ByteBuddy.) (.subclass Object) (.name dup-target) (.make)
-                   (.load (ClassLoader/getSystemClassLoader) wrapper)
+                   (.load (ClassLoader/getSystemClassLoader)
+                          net.bytebuddy.dynamic.loading.ClassLoadingStrategy$Default/WRAPPER)
                    .getLoaded))]
     [(make) (make)]))
 

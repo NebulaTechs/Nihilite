@@ -106,11 +106,98 @@
 (defn- empty-implementation []
   net.bytebuddy.implementation.StubMethod/INSTANCE)
 
+(defn- prim-desc
+  "JVM descriptor for a primitive type."
+  [^Class t]
+  (case (.getName t)
+    "boolean" "Z"
+    "byte" "B"
+    "char" "C"
+    "short" "S"
+    "int" "I"
+    "long" "J"
+    "float" "F"
+    "double" "D"
+    (throw (IllegalArgumentException. (str "not primitive: " t)))))
+
+(defn- prim-unbox
+  "Box class for a primitive return type, used to unpack the Object a
+   Clojure fn returns into the primitive the generated method declares."
+  [^Class t]
+  (case (.getName t)
+    "boolean" "Boolean"
+    "byte" "Byte"
+    "char" "Character"
+    "short" "Short"
+    "int" "Integer"
+    "long" "Long"
+    "float" "Float"
+    "double" "Double"))
+
+(defn- prim-return
+  "The xRETURN opcode matching a primitive return type."
+  [^Class t]
+  (case (.getName t)
+    "boolean" Opcodes/IRETURN
+    "byte" Opcodes/IRETURN
+    "char" Opcodes/IRETURN
+    "short" Opcodes/IRETURN
+    "int" Opcodes/IRETURN
+    "long" Opcodes/LRETURN
+    "float" Opcodes/FRETURN
+    "double" Opcodes/DRETURN
+    (throw (IllegalArgumentException. (str "not primitive: " t)))))
+
 (defn- invoke-desc-for
   [param-classes]
   (let [n (count param-classes)
         objs (apply str (repeat n "Ljava/lang/Object;"))]
     (str "(" objs ")Ljava/lang/Object;")))
+
+(defn- prim-box
+  "Box class for a primitive type, or nil when the value is already a
+   reference."
+  [^Class t]
+  (when (.isPrimitive t)
+    (case (.getName t)
+      "boolean" "Boolean"
+      "byte" "Byte"
+      "char" "Character"
+      "short" "Short"
+      "int" "Integer"
+      "long" "Long"
+      "float" "Float"
+      "double" "Double")))
+
+(defn- load-opcode
+  "The xLOAD opcode for a value of the given type."
+  [^Class t]
+  (cond
+    (identical? t Long/TYPE) Opcodes/LLOAD
+    (identical? t Double/TYPE) Opcodes/DLOAD
+    (identical? t Float/TYPE) Opcodes/FLOAD
+    (or (identical? t Integer/TYPE)
+        (identical? t Short/TYPE)
+        (identical? t Byte/TYPE)
+        (identical? t Character/TYPE)) Opcodes/ILOAD
+    :else Opcodes/ALOAD))
+
+(defn- param-opcode-at
+  "Type of the value in local slot `i`, accounting for the receiver that an
+   instance method keeps in slot 0 and for long/double taking two slots."
+  [i param-classes static?]
+  (let [slots (mapcat (fn [^Class t]
+                        (if (or (identical? t Long/TYPE)
+                                (identical? t Double/TYPE))
+                          [t t]
+                          [t]))
+                      param-classes)
+        locals (if static?
+                 slots
+                 (into [(Class/forName "java.lang.Object")] slots))]
+    (if (< i (count locals))
+      (nth locals i)
+      (Class/forName "java.lang.Object"))))
 
 (defn- forwarder-implementation
   "Returns an `Implementation` (reify of Implementation) that emits a
@@ -131,28 +218,60 @@
 
    The appender's `apply(MethodVisitor, Context, MethodDescription)` is
    the entry point byte-buddy invokes during class definition; the third
-   arg is the method being woven, used to size locals and stack."
-  [^clojure.lang.Symbol forward-var param-classes ^Class return-type ^String method-name]
+   arg is the method being woven, used to size locals and stack.
+
+   An instance method has the receiver in local 0, so its forwarder has to
+   load one more local than it has declared parameters; otherwise the last
+   parameter never reaches the target fn."
+  [^clojure.lang.Symbol forward-var param-classes ^Class return-type ^String method-name
+   & {:keys [stack-size static?]}]
   (let [ns-name  (str (symbol (namespace forward-var)))
         var-name (str (name forward-var))
         is-void  (identical? return-type Void/TYPE)
-        invoke-desc (invoke-desc-for param-classes)
-        n-args (count param-classes)
+        n-args   (count param-classes)
+        ;; The receiver occupies local 0 on an instance method, so the
+        ;; forwarder passes it as the first argument and every declared
+        ;; parameter after it.
+        n-locals (if static? n-args (inc n-args))
+        invoke-desc (invoke-desc-for (if static? param-classes
+                                       (into [Object] param-classes)))
         msg (str method-name " " ns-name "/" var-name " not defined")
-        load-local (fn [^MethodVisitor mv i]
-                     (.visitVarInsn mv Opcodes/ALOAD i))
         call-method (fn [^MethodVisitor mv op ^String owner ^String name ^String desc iface?]
-                     (let [^MethodVisitor mv mv
-                           m (.getMethod MethodVisitor "visitMethodInsn"
-                                         (into-array Class
-                                                     [Integer/TYPE
-                                                      String
-                                                      String
-                                                      String
-                                                      Boolean/TYPE]))]
-                       (.setAccessible m true)
-                       (.invoke m mv (object-array [(int op) owner name desc (boolean iface?)]))))
-        size (ByteCodeAppender$Size. (inc n-args) (inc n-args))]
+                      (let [^MethodVisitor mv mv
+                            m (.getMethod MethodVisitor "visitMethodInsn"
+                                          (into-array Class
+                                                      [Integer/TYPE
+                                                       String
+                                                       String
+                                                       String
+                                                       Boolean/TYPE]))]
+                        (.setAccessible m true)
+                        (.invoke m mv (object-array [(int op) owner name desc (boolean iface?)]))))
+        load-local (fn [^MethodVisitor mv i]
+                     ;; ALOAD only loads references, so a primitive parameter
+                     ;; is loaded with its own opcode and then boxed: IFn.invoke
+                     ;; takes Object, and leaving a primitive on the operand
+                     ;; stack fails verification.
+                     (let [^Class t (param-opcode-at i param-classes static?)]
+                       (.visitVarInsn mv (load-opcode t) i)
+                       (when-let [box (prim-box t)]
+                         (call-method mv Opcodes/INVOKESTATIC
+                                      (str "java/lang/" box)
+                                      "valueOf"
+                                      (str "(" (prim-desc t) ")Ljava/lang/"
+                                           (prim-unbox t) ";")
+                                      false))))
+        ;; The appender must reserve a local slot for every value it loads
+        ;; and a wide slot for the receiver plus any long/double argument, so
+        ;; the local count is derived from the declared parameters rather than
+        ;; from the operand stack. A too-small local count makes the emitted
+        ;; frame claim a slot is a reference when it holds a primitive, which
+        ;; fails verification at load time.
+        local-size (or stack-size (+ 1 (reduce + (map #(if (or (identical? Long/TYPE %)
+                                                             (identical? Double/TYPE %))
+                                                          2 1)
+                                                        param-classes))))
+        size (ByteCodeAppender$Size. (or stack-size (+ 2 n-locals)) local-size)]
     (reify net.bytebuddy.implementation.Implementation
       (prepare [_ inst-type] inst-type)
       (appender [_ _target]
@@ -185,13 +304,34 @@
               (.visitTypeInsn mv Opcodes/INSTANCEOF "clojure/lang/IFn")
               (.visitJumpInsn mv Opcodes/IFEQ l-throw)
               (.visitTypeInsn mv Opcodes/CHECKCAST "clojure/lang/IFn")
-              (dotimes [i n-args] (load-local mv i))
+              (dotimes [i n-locals] (load-local mv i))
               (call-method mv Opcodes/INVOKEINTERFACE "clojure/lang/IFn"
                            "invoke"
                            invoke-desc true)
-              (if is-void
-                (.visitInsn mv Opcodes/RETURN)
-                (.visitInsn mv Opcodes/ARETURN))
+               (if is-void
+                 (.visitInsn mv Opcodes/RETURN)
+                 (do
+                   ;; IFn.invoke is typed Object, but the generated method is
+                   ;; declared with the spec's return type, so the JVM needs a
+                   ;; narrowing conversion before the ARETURN. CHECKCAST takes
+                   ;; an internal name, not a dotted one. A primitive return
+                   ;; needs the boxed value unpacked rather than cast, so the
+                   ;; generated method would fail verification otherwise.
+                    (if (.isPrimitive return-type)
+                      (let [unbox (prim-unbox return-type)]
+                        (.visitTypeInsn mv Opcodes/CHECKCAST
+                                       (str "java/lang/" unbox))
+                        (call-method mv Opcodes/INVOKEVIRTUAL
+                                     (str "java/lang/" unbox)
+                                     (str (.getName return-type) "Value")
+                                     (str "()" (prim-desc return-type))
+                                     false))
+                      (when-not (identical? return-type Object)
+                        (.visitTypeInsn mv Opcodes/CHECKCAST
+                                       (.replace (.getName return-type) "." "/"))))
+                   (.visitInsn mv (if (.isPrimitive return-type)
+                                    (prim-return return-type)
+                                    Opcodes/ARETURN))))
               (.visitFrame mv Opcodes/F_SAME1 0 nil 1 (into-array Object ["clojure/lang/Var"]))
               (.visitLabel mv l-unbound)
               (.visitInsn mv Opcodes/POP)
@@ -241,7 +381,10 @@
         (let [param-classes (mapv class-for-type params)
               body (or (:body spec)
                        (if forward-var
-                         (forwarder-implementation forward-var param-classes return-type name)
+                         (forwarder-implementation
+                          forward-var param-classes return-type name
+                          :stack-size (:stack-size spec)
+                          :static? static?)
                          (empty-implementation)))
               thrown (or (:throws spec) [])
               b (if (seq thrown)
@@ -292,12 +435,25 @@
    the transformer to obtain the advice bytecode later."
   (atom {}))
 
+(defn- build-fields
+  [builder fields]
+  (reduce (fn [b {:keys [name type static? volatile?]}]
+            (.defineField ^net.bytebuddy.dynamic.DynamicType$Builder b
+                          ^String name
+                          ^Class type
+                          (cond-> [Visibility/PUBLIC]
+                            static? (conj Ownership/STATIC)
+                            volatile? (conj net.bytebuddy.description.modifier.FieldManifestation/VOLATILE))))
+          builder
+          fields))
+
 (defn define-class!
   [spec]
   (reset! method-annotation-spec {})
   (let [name ^String (:name spec)
         super ^Class (or (:super spec) Object)
         interfaces (or (:interfaces spec) [])
+        fields (or (:fields spec) [])
         methods (or (:methods spec) [])
         inst ^java.lang.instrument.Instrumentation (:instrumentation spec)
         save-dir (or (:save-dir spec) (clojure.java.io/file "target" "classes"))
@@ -309,11 +465,12 @@
                             (.subclass super)
                             (.name name))
                         interfaces)
-        b (reduce (fn [b m]
-                    (collect-method-annos! m)
-                    (define-method b m))
-                  builder
-                  methods)
+        b (-> (reduce (fn [b m]
+                        (collect-method-annos! m)
+                        (define-method b m))
+                      builder
+                      methods)
+             (build-fields fields))
         spec-map @method-annotation-spec
         dynamic-type (-> b
                          (.visit ^AsmVisitorWrapper (if (seq spec-map)
@@ -340,10 +497,12 @@
             ;; process CWD has no target/ directory.
             inject-dir (.toFile (java.nio.file.Files/createTempDirectory
                                   "nihilite-classes" (make-array java.nio.file.attribute.FileAttribute 0)))
+            inject-target (or (:inject-target spec)
+                              net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation$Target/SYSTEM)
             ^net.bytebuddy.dynamic.loading.ClassInjector injector
             (net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation/of
               ^java.io.File inject-dir
-              net.bytebuddy.dynamic.loading.ClassInjector$UsingInstrumentation$Target/SYSTEM
+              inject-target
               inst)
             target-loader (ClassLoader/getSystemClassLoader)
           strategy (reify net.bytebuddy.dynamic.loading.ClassLoadingStrategy
