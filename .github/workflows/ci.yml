@@ -70,10 +70,10 @@ jobs:
       - name: Driver probes
         run: |
           clojure -T:build retransform-driver
-          clojure -T:build compiler-loader-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
           clojure -T:build indy-driver
+          clojure -T:build prod-bootstrap-driver
 
   test-17:
     runs-on: ubuntu-latest
@@ -111,10 +111,10 @@ jobs:
       - name: Driver probes
         run: |
           clojure -T:build retransform-driver
-          clojure -T:build compiler-loader-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
           clojure -T:build indy-driver
+          clojure -T:build prod-bootstrap-driver
 
   test-21:
     runs-on: ubuntu-latest
@@ -152,10 +152,10 @@ jobs:
       - name: Driver probes
         run: |
           clojure -T:build retransform-driver
-          clojure -T:build compiler-loader-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
           clojure -T:build indy-driver
+          clojure -T:build prod-bootstrap-driver
 
   test-25:
     runs-on: ubuntu-latest
@@ -193,10 +193,10 @@ jobs:
       - name: Driver probes
         run: |
           clojure -T:build retransform-driver
-          clojure -T:build compiler-loader-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
           clojure -T:build indy-driver
+          clojure -T:build prod-bootstrap-driver
 
   publish:
     runs-on: ubuntu-latest
