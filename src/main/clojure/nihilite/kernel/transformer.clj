@@ -34,11 +34,11 @@
     (.clear ^java.util.concurrent.ConcurrentHashMap match-cache)))
 
 (defn- registry-revision []
-  (let [v (resolve 'nihilite.registry/revision)]
+  (let [v (resolve 'nihilite.registry.index/revision)]
     (when v (.invoke ^clojure.lang.IFn v))))
 
 (defn- lookup-matching []
-  (let [v (resolve 'nihilite.registry/matching)]
+  (let [v (resolve 'nihilite.registry.index/matching)]
     (when v ^clojure.lang.IFn v)))
 
 (defn- hook-type-matches?

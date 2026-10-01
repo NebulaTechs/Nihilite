@@ -10,6 +10,7 @@
    is the single source of truth for the records (HookSpec /
    HookContext / HookEvent) and the position/action normalization."
   (:require [clojure.tools.logging :as log]
+            [nihilite.registry.index :as index]
             [nihilite.registry.stats :as stats])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicLong]
@@ -76,8 +77,6 @@
 
 (defonce ^:private by-id
   (ConcurrentHashMap.))
-(defonce ^:private by-target
-  (ConcurrentHashMap.))
 (defonce ^:private by-method
   (ConcurrentHashMap.))
 (defonce ^:private ^Object registry-lock
@@ -86,7 +85,6 @@
   (AtomicLong.))
 
 (defn get-by-id     ^ConcurrentHashMap [] by-id)
-(defn get-by-target ^ConcurrentHashMap [] by-target)
 (defn get-by-method ^ConcurrentHashMap [] by-method)
 
 (defn next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
@@ -98,7 +96,6 @@
           fresh
           (.get m k)))))
 
-(defn bucket        ^java.util.List [t]  (get-or-create-bucket by-target t))
 (defn method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
 
 (defn spec-bucket
@@ -113,7 +110,7 @@
   (let [pos (:position spec)
         bucket (if-let [mk (:method-key spec)]
                  (some-> (.get by-method mk) seq)
-                 (some-> (.get by-target (:target-internal spec)) seq))]
+                 (some-> (index/matching (:target-internal spec)) seq))]
     (when (seq bucket)
       (seq (filter #(= pos (:position %)) bucket)))))
 
@@ -248,15 +245,12 @@
                   :pending?    false
                   :registered? false))))
 
-(def ^:private ^java.util.concurrent.atomic.AtomicLong revision-counter
-  (java.util.concurrent.atomic.AtomicLong. 0))
-
 (defn bump-revision!
-  "Bumps the registry revision counter. Called on every mutating
-   operation so the transformer's negative match-cache can detect
-   stale entries and re-query the registry."
+  "Bumps the index revision counter. Called on every mutating operation so the
+   transformer's negative match-cache can detect stale entries and re-query the
+   registry."
   []
-  (.incrementAndGet ^java.util.concurrent.atomic.AtomicLong revision-counter))
+  (index/bump-revision!))
 
 (defn- mark-error! [spec-id ex-msg]
   (record-status! spec-id
@@ -373,12 +367,12 @@
          (let [prev (.put by-id (:id norm-spec) norm-spec)
               replaced? (some? prev)]
           (when replaced?
-            (let [prev-bucket (.get by-target (:target-internal prev))]
+            (let [prev-bucket (index/live-bucket (:target-internal prev))]
               (when prev-bucket (.remove prev-bucket prev)))
             (when-let [pmk (:method-key prev)]
               (let [pmb (.get by-method pmk)]
                 (when pmb (.remove pmb prev)))))
-          (.add (bucket (:target-internal norm-spec)) norm-spec)
+          (.add (index/bucket (:target-internal norm-spec)) norm-spec)
           (when-let [mk (:method-key norm-spec)]
             (.add (method-bucket mk) norm-spec))
           (when-not replaced?
@@ -406,16 +400,14 @@
 (defn uninstall!
   [id]
   (let [by-id     (get-by-id)
-        by-target (get-by-target)
         by-method (get-by-method)]
     (locking registry-lock
       (bump-revision!)
        (when-let [removed (.remove by-id (str id))]
          (let [target (:target-internal removed)
-               b (.get by-target (:target-internal removed))]
+               b (index/live-bucket target)]
            (when b (.remove b removed))
-           (when (and b (.isEmpty b))
-             (.remove by-target (:target-internal removed) b))
+           (index/forget-target! target b)
            (when-let [mk (:method-key removed)]
              (let [mb (.get by-method mk)]
                (when mb (.remove mb removed))
@@ -455,21 +447,24 @@
   []
   (locking registry-lock
     (.clear by-id)
-    (.clear by-target)
+    (index/clear!)
     (.clear by-method)
     (bump-revision!)
     (stats/clear!)))
 
 (defn matching
+  "Specs currently registered for `target-internal`. The query the weaving
+   machinery uses; prefer nilitite.registry.index/matching when you only need
+   to read, since that layer exists precisely to keep callers off the
+   registry's internals."
   ^java.util.List [target-internal]
-  (let [b (.get by-target target-internal)]
-    (if b (vec b) [])))
+  (index/matching target-internal))
 
 (defn revision
-  "Current registry revision number. Increments on every mutating
-   operation (install!/uninstall!/clear!)."
+  "Current index revision. Increments on every mutating operation
+   (install!/uninstall!/clear!)."
   []
-  (.get ^java.util.concurrent.atomic.AtomicLong revision-counter))
+  (index/revision))
 
 (defn list-ids
   []

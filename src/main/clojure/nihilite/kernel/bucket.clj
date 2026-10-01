@@ -4,20 +4,20 @@
    ByteBuddy positions (:entry, :return, :throw, :redefine). Also builds
    the per-position ElementMatcher.Junction the transformer applies to a
    method description."
-  (:require [clojure.string :as str]
-            [nihilite.registry]
-            [nihilite.registry.dispatch])
+  (:require [clojure.string :as str])
   (:import [net.bytebuddy.matcher ElementMatchers]))
 
 (defn- lookup-matching
-  "Returns the IFn behind `nihilite.registry/matching` if it is
-   resolvable, else nil. Used by ByteBuddy-generated transformer stubs
-   on threads where the registry namespace may not be loaded. Falls
-   back through (resolve) -> (Var/getRawRoot) -> (RT/var + deref) so
-   both AOT and driver/JAR deployments yield the IFn."
+  "The IFn behind `nihilite.registry.index/matching` if it is
+   resolvable, else nil. Looked up by symbol rather than required: the
+   ByteBuddy-generated transformer stubs call this on threads where the
+   index namespace may not be loaded yet, and a compile-time dependency
+   would drag the registry into the class loading path. Falls back through
+   (resolve) -> (Var/getRawRoot) so both AOT and driver/JAR deployments
+   yield the IFn."
   []
   (try
-    (let [v (resolve 'nihilite.registry/matching)]
+    (let [v (resolve 'nihilite.registry.index/matching)]
       (cond
         (instance? clojure.lang.IFn v) v
         (instance? clojure.lang.Var v)

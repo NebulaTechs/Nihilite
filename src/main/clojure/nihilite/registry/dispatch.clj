@@ -11,6 +11,7 @@
    nihilite.kernel.dispatcher reads it via Clojure/var."
   (:require [clojure.tools.logging :as log]
             [nihilite.registry :as reg]
+            [nihilite.registry.index :as index]
             [nihilite.registry.stats :as stats]
             [nihilite.kernel.exceptions :as exc]))
 
@@ -249,7 +250,7 @@
        :else
        (lookup-spec-for-call class-internal method-name parameter-count position))))
   ([^String class-internal method-name parameter-count position]
-   (let [b (.get (reg/get-by-target) class-internal)
+   (let [b (index/live-bucket class-internal)
          pos-kw (when position (reg/normalize-position position))]
      (when b
        (let [iname (str method-name)
