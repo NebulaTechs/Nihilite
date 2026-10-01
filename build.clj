@@ -92,6 +92,14 @@
                                "-M" "-e"
                                (compile-script-for '[nihilite.kernel.exceptions
                                                      nihilite.kernel.bucket
+                                                     ;; advice is AOT'd as a side effect of
+                                                     ;; installer but was never declared, so
+                                                     ;; class-dir shipped whatever bytes were
+                                                     ;; left in it. Declare it: class-dir comes
+                                                     ;; before src/main/clojure on the runner
+                                                     ;; classpath, so an undeclared ns silently
+                                                     ;; wins over the edited source.
+                                                     nihilite.kernel.advice
                                                      nihilite.kernel.indy
                                                      nihilite.kernel.installer
                                                      nihilite.kernel.agent])]}))
@@ -234,6 +242,34 @@
   (java-command! "Production bootstrap driver"
                  "nihilite.test.prodBootstrapDriver" [] (driver-jvm-opts))
   nil)
+
+(defn probe
+  "Runs a test driver and reports its real exit code instead of swallowing it.
+   ensure-success! raises on any non-zero status and clojure -T then exits 1,
+   which makes a System/exit probe indistinguishable from a plain failure — a
+   diagnostic that cannot tell two outcomes apart is not a diagnostic.
+
+   The main class comes from the PROBE_CLASS environment variable."
+  [_]
+  (compile-clj nil)
+  (compile-test-drivers!)
+  (let [result (b/process {:command-args
+                           (into ["java"]
+                                 (concat ["-cp" (str test-class-dir
+                                                     java.io.File/pathSeparator
+                                                     class-dir
+                                                     java.io.File/pathSeparator
+                                                     "src/main/clojure"
+                                                     java.io.File/pathSeparator
+                                                     "src/test/clojure"
+                                                     java.io.File/pathSeparator
+                                                     (basis-classpath @test-basis))]
+                                         [(System/getenv "PROBE_CLASS")]
+                                         (driver-jvm-opts)))})
+        code (:exit result)]
+    (println "PROBE-EXIT" (System/getenv "PROBE_CLASS") code)
+    (flush)
+    code))
 
 (defn check
   [_]
