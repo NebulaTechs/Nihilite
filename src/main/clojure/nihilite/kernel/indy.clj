@@ -163,17 +163,23 @@
    A bootstrap method must not trigger class loading: loading a class reads
    its bytes through java.io.FileInputStream, which is one of the classes being
    instrumented, so the nested link would recurse until the stack overflows.
-   The advice class is therefore resolved and cached here at premain time, and
-   this only ever looks the cache up.
+   The advice class is therefore resolved and cached by preload-advice! at
+   premain time, and this only ever looks the cache up.
 
    The lookup has to come from the agent loader: a Lookup taken from the
    instrumented class would not be granted access to the advice class."
-  [^String name ^String descriptor ^String advice-class-name ^MethodType mt]
+  [^String name ^String advice-class-name ^MethodType mt]
   (if-let [cached (get @advice-handles advice-class-name)]
     (.asType ^MethodHandle cached mt)
     (let [cl (ClassLoader/getSystemClassLoader)
           advice (Class/forName advice-class-name true cl)
-          advice-type (MethodType/fromMethodDescriptorString descriptor cl)
+          m (first (filter (fn [^java.lang.reflect.Method x]
+                             (and (= name (.getName x))
+                                  (Modifier/isStatic (.getModifiers x))))
+                           (.getDeclaredMethods advice)))
+          advice-type (MethodType/methodType (.getReturnType m)
+                                              (into-array Class
+                                                          (.getParameterTypes m)))
           mh (.findStatic (MethodHandles/lookup) advice name advice-type)]
       (swap! advice-handles assoc advice-class-name mh)
       (.asType mh mt))))
@@ -204,8 +210,7 @@
    Static arguments are a module label, the advice method descriptor and the
    advice class name, all strings."
   [^MethodHandles$Lookup lookup ^String name ^MethodType mt args]
-  (let [descriptor (nth args 1)
-        advice-class-name (nth args 2)
+  (let [advice-class-name (nth args 2)
         key [(.getName (.lookupClass lookup)) advice-class-name name]
         m (linking-map)]
     (if-let [existing (.get m key)]
@@ -213,15 +218,19 @@
       (let [placeholder (java.lang.invoke.MutableCallSite. (noop-handle mt))]
         (.put m key placeholder)
         (try
-          (let [mh (advice-handle name descriptor advice-class-name mt)]
+          (let [mh (advice-handle name advice-class-name mt)]
             (.setTarget placeholder mh)
             (java.lang.invoke.MutableCallSite/syncAll
              (into-array java.lang.invoke.MutableCallSite [placeholder]))
             (.remove m key)
             (ConstantCallSite. mh))
-          (catch Throwable _
+          (catch Throwable t
+            ;; Per project rule #439 the failure must surface. Silently
+            ;; resolving to a noop CallSite is what makes a hook look armed
+            ;; (woven-count 1, pending? false) while never firing, which is
+            ;; the exact failure mode this dispatch exists to remove.
             (.remove m key)
-            (iab-fallback mt)))))))
+            (throw t)))))))
 
 (def ^:private agent-bootstrap-name "nihilite.kernel.IndyAgentBootstrap")
 
@@ -275,6 +284,36 @@
                                                 MethodType
                                                 (Class/forName "[Ljava.lang.Object;")]))
     (.setAccessible true)))
+
+(def ^:private module-label "nihilite")
+
+(defn resolver-factory
+  "BootstrapArgumentResolver.Factory that pins each call site's three static
+   bootstrap arguments: a module label, the advice method's descriptor, and the
+   advice class name. All three are plain strings, so nothing in the woven
+   method body refers to a class the target loader would have to resolve.
+
+   `advice-class-name` is per-advice-class, so the caller passes the advice it
+   is about to weave; the descriptor is read off the advice method itself so
+   the two can never drift apart."
+  [advice-class-name]
+  (reify net.bytebuddy.asm.Advice$BootstrapArgumentResolver$Factory
+    (resolve [_ advice-method _is-exit]
+      (let [descriptor (.getDescriptor ^net.bytebuddy.description.method.MethodDescription
+                                       advice-method)]
+        (reify net.bytebuddy.asm.Advice$BootstrapArgumentResolver
+          (resolve [_ _instrumented-type _instrumented-method]
+            [(net.bytebuddy.utility.JavaConstant$Simple/ofLoaded module-label)
+             (net.bytebuddy.utility.JavaConstant$Simple/ofLoaded descriptor)
+             (net.bytebuddy.utility.JavaConstant$Simple/ofLoaded advice-class-name)]))))))
+
+(defn wire
+  "Applies the invokedynamic dispatch to an Advice builder: the call site
+   bootstraps through the injected dispatcher, and the static arguments name
+   the advice class. `wcm` is the Advice/withCustomMapping the caller is
+   already using, so a per-position post-processor can still be attached."
+  [^net.bytebuddy.asm.Advice$WithCustomMapping wcm advice-class-name]
+  (.bootstrap wcm (bootstrap-method) (resolver-factory advice-class-name)))
 
 (defn install-bridge!
   "Pushes the agent's linking handle and fallback handle into the

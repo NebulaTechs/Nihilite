@@ -24,7 +24,6 @@
    "nihilite.test.dispatch-common-test"
    "nihilite.test.dispatch-entry-cancel-test"
    "nihilite.test.transport-timeout-test"
-   "nihilite.test.attach-test"
    "nihilite.test.agent-worker-once-test"
    "nihilite.test.transport-bencode-roundtrip-test"
    "nihilite.test.version-resolution-test"
@@ -32,7 +31,6 @@
    "nihilite.test.api-facade-test"
    "nihilite.test.swap-bridge-test"
    "nihilite.test.install-status-test"
-    "nihilite.test.compiler-loader-hint-test"
     "nihilite.test.uninstall-warn-test"
    "nihilite.test.redefine-advice-composition-test"
    "nihilite.test.retransform-batch-atomicity-test"])

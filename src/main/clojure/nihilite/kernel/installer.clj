@@ -8,9 +8,10 @@
    wiring and the install / uninstall / uninstall-spec! entry points that
    the registry and the agent worker call into."
   (:require [nihilite.kernel.advice :as advice]
+            [nihilite.kernel.indy :as indy]
             [nihilite.kernel.transformer :as transformer])
   (:import [java.lang.instrument Instrumentation]
-            [java.util.logging Logger]))
+           [java.util.logging Logger]))
 
 (def ^:private installer-log (Logger/getLogger "nihilite.kernel.installer"))
 
@@ -42,6 +43,13 @@
         ;;   with    disableClassFormatChanges -> retransform OK, advice fires
         ;;   without disableClassFormatChanges -> attempted to add a method
         (.disableClassFormatChanges)
+        ;; The default ignore matcher drops every class the bootstrap loader
+        ;; defined, which is where java.* lives — so without this a hook on a
+        ;; JDK class registers, reports a woven count, and never fires. The
+        ;; type matcher generated in this namespace is the only filter we
+        ;; want, and it already rejects classes with no specs.
+        (.ignore ^net.bytebuddy.matcher.ElementMatcher
+                 (net.bytebuddy.matcher.ElementMatchers/none))
         (.with retransformation)
         (.with reiterator)
         (.with listener))))
@@ -51,6 +59,29 @@
         ctor (.getDeclaredConstructor cls (into-array Class []))]
     (.setAccessible ctor true)
     (.newInstance ctor (object-array []))))
+
+(def ^:private advice-classes
+  "advice class name -> the advice method ByteBuddy will bind the call site to.
+   The bootstrap method looks these up instead of resolving them, because a
+   bootstrap must not trigger class loading: loading a class reads its bytes
+   through java.io.FileInputStream, which is itself a hook target, so the
+   nested link would recurse until the stack overflows."
+  [["nihilite.kernel.HookAdvice" "onEntry"]
+   ["nihilite.kernel.ReturnAdvice" "onExit"]
+   ["nihilite.kernel.ThrowAdvice" "onThrow"]
+   ["nihilite.kernel.RedefineAdvice" "onRedefine"]])
+
+(defn- arm-indy!
+  "Injects the bootstrap-side dispatcher, pushes the agent bridge into it, and
+   resolves every advice method up front. Must run after advice/ensure-all!,
+   since the advice classes have to exist before they can be preloaded."
+  []
+  (indy/install-bridge!)
+  (doseq [[class-name method-name] advice-classes]
+    (indy/preload-advice! class-name method-name))
+  (log-info "HookInstaller armed invokedynamic dispatch for"
+            (count advice-classes) "advice classes")
+  nil)
 
 (defn install
   "Arms the single AgentBuilder (redefine + advice composed) against the
@@ -71,6 +102,7 @@
                           'nihilite.kernel.agent/agent-registerInstrumentation)]
         (register-fn inst))
       (advice/ensure-all! inst)
+      (arm-indy!)
       (transformer/ensure-all!)
       (let [type-matcher (transformer-instance "nihilite.kernel.HookTypeMatcher")
             combined-xform (transformer-instance "nihilite.kernel.AdviceTransformer")]
@@ -87,9 +119,9 @@
    (slash-separated) so that ByteBuddy drops the instrumentation.
    Returns the number of classes actually retransformed.
 
-   Same classloader boundary as retransform-loaded-matching!: only classes
-   the app classloader loaded can drop the advice, because the advice is
-   woven as an external reference to a system-loader class.
+   Every loader tier drops the advice the same way: retransforming from the
+   class's original bytecode removes the woven call site, and the remaining
+   hooks are re-woven by the same transform.
 
    A retransform failure propagates; it is not logged and swallowed."
   [^Instrumentation inst ^java.lang.String target-internal]

@@ -86,18 +86,6 @@
         (.compareAndSet ^java.util.concurrent.atomic.AtomicReference
                         registered-on nil inst))))
 
-(defn agent-resolveHostClassLoader
-  "Returns the classloader the Clojure Compiler should use, honoring
-   the `nihilite.compiler-loader-hint` system property. Exposed as a
-   public Agent entry point for tools and tests that need to resolve
-   the host classloader without running the full worker pipeline."
-  []
-  (try
-    (let [worker-fn (requiring-resolve 'nihilite.kernel.worker/resolve-host-class-loader)]
-      (when worker-fn (worker-fn)))
-    (catch Throwable _
-      (ClassLoader/getSystemClassLoader))))
-
 (defn agent-awaitWorkerReady
   "Blocks until the Clojure-runtime worker thread has finished its
    initClojure + bindCompilerLoader steps."
@@ -266,7 +254,6 @@
   []
   (let [string-cls (Class/forName "java.lang.String")
         instrumentation-cls (Class/forName "java.lang.instrument.Instrumentation")
-        class-cls (Class/forName "java.lang.ClassLoader")
         void-sym (symbol "void")
         object-cls (Class/forName "java.lang.Object")
         boolean-cls (Class/forName "java.lang.Boolean")
@@ -278,8 +265,6 @@
       :main true
       :methods
        [(with-meta (vector (symbol "currentInstrumentation") [] instrumentation-cls)
-                  {:static true})
-        (with-meta (vector (symbol "resolveHostClassLoader") [] class-cls)
                   {:static true})
         (with-meta (vector (symbol "awaitWorkerReady") [] object-cls) {:static true})
         (with-meta (vector (symbol "signalWorkerReady") [] object-cls) {:static true})

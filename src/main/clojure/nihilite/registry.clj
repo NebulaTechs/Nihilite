@@ -129,12 +129,9 @@
    retransformed — 0 when there is no Instrumentation or no matching class
    is loaded.
 
-   Note the support boundary: advice is woven with inline=false, so the
-   woven body holds an INVOKESTATIC to a class injected into the system
-   (app) classloader. Classes loaded by the bootstrap or platform
-   classloader therefore cannot resolve it and the hook never fires, even
-   though retransformClasses succeeds and this function reports 1. Hook
-   targets must be loaded by the application classloader.
+   Every loader tier is reachable: the advice is reached through an
+   invokedynamic call site, so the woven body names no class the target's
+   classloader would have to resolve.
 
    Each class is retransformed in its own call because retransform is
    batch-atomic: a single illegal class fails the whole batch, so one bad
@@ -184,10 +181,6 @@
 (defonce ^:private status-index
   (java.util.concurrent.ConcurrentHashMap.))
 
-;; The platform classloader exists only on JDK 9+. The call is resolved
-;; reflectively so the namespace still compiles on JDK 8, where the
-;; static method is absent; on JDK 8 this returns nil and every
-;; non-bootstrap loader is simply :app. Computed once at ns load.
 (defonce ^:private platform-class-loader
   (ClassLoader/getPlatformClassLoader))
 

@@ -20,6 +20,42 @@
 
 (def ^:private advice-classes (atom {}))
 
+;; True while an advice body is running on this thread.
+;;
+;; A bootstrap-loader target can be on the class loading path itself:
+;; java.io.FileInputStream.read is how a class file gets turned into a Class,
+;; and looking a class up or dispatching to a bridge both load classes. Without
+;; this guard, hooking that read makes the advice re-enter itself through the
+;; class loader and the stack overflows. Re-entering on the same thread is
+;; never a hook the user asked to observe, so the nested advice returns
+;; immediately.
+(def ^:private ^ThreadLocal in-advice (ThreadLocal.))
+
+(defn- reentrancy-guard
+  "Runs body unless this thread is already inside an advice.
+
+   Targets on the class loading path make that unavoidable: the advice body
+   has to load classes (looking dispatch up through RT/var, calling the
+   bridge), class loading reads .class bytes, and those bytes travel through
+   the very method being hooked. The cycle is structural, not probabilistic.
+
+   Verified working on an ordinary target — the retransform driver installs a
+   bridge that re-enters the hooked method and asserts the nested advice never
+   dispatches. It does NOT cut the cycle when the target is a class loading
+   path method: hooking java.io.FileInputStream.read still overflows the
+   stack. Whether the nested run sees a cleared flag because the advice body
+   throws during class loading (and the finally below removes it) is the
+   leading hypothesis, unconfirmed."
+  [body]
+  (if (.get ^ThreadLocal in-advice)
+    ::reentered
+    (do
+      (.set ^ThreadLocal in-advice true)
+      (try
+        (body)
+        (finally
+          (.remove ^ThreadLocal in-advice))))))
+
 (defn- lookup-spec [host-internal method-name arg-count descriptor phase]
   (let [lookup (clojure.lang.RT/var "nihilite.registry.dispatch" "lookup-spec-for-call")]
     (.invoke ^clojure.lang.IFn lookup host-internal method-name arg-count descriptor phase)))
@@ -27,24 +63,27 @@
 (defn hk-onEntry
   "Forwarder body called by the generated HookAdvice.onEntry stub."
   [^String method-name ^java.lang.Class host-class ^String descriptor ^Object self ^[Object] args]
-  (let [spec-id (try
-                  (lookup-spec (ap/host-internal host-class) method-name
-                                (if (nil? args) 0 (alength args)) descriptor "entry")
-                  (catch Throwable t
-                    (log/error t "entry advice lookup failed")
-                    (throw (exc/advice-ex! nil t))))]
-    (when (not (nil? spec-id))
-      (let [dispatch (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-for-spec")
-            result (try
-                     (.invoke ^clojure.lang.IFn dispatch spec-id self args)
-                     (catch nihilite.kernel.HookCancelledException e
-                       (throw e))
-                     (catch Throwable t
-                       (log/error t "entry advice dispatch failed")
-                       (throw (exc/advice-ex! spec-id t))))]
-        (when (= result (clojure.lang.Keyword/intern "nihilite" "short-circuit"))
-          (throw (exc/cancelled!)))
-        nil))))
+  (let [result (reentrancy-guard
+                 (fn []
+                   (let [spec-id (try
+                                   (lookup-spec (ap/host-internal host-class) method-name
+                                                (if (nil? args) 0 (alength args)) descriptor "entry")
+                                   (catch Throwable t
+                                     (log/error t "entry advice lookup failed")
+                                     (throw (exc/advice-ex! nil t))))]
+                     (when (not (nil? spec-id))
+                       (let [dispatch (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-for-spec")
+                             result (try
+                                      (.invoke ^clojure.lang.IFn dispatch spec-id self args)
+                                      (catch nihilite.kernel.HookCancelledException e
+                                        (throw e))
+                                      (catch Throwable t
+                                        (log/error t "entry advice dispatch failed")
+                                        (throw (exc/advice-ex! spec-id t))))]
+                         (when (= result (clojure.lang.Keyword/intern "nihilite" "short-circuit"))
+                           (throw (exc/cancelled!)))
+                         nil)))))]
+    (when (= ::reentered result) nil)))
 
 (defn rt-onExit
   "Forwarder body called by the generated ReturnAdvice.onExit stub. Returns
@@ -52,33 +91,60 @@
    dispatch-return."
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^[Object] args ^Object original]
-  (try
-    (let [spec-id (lookup-spec (ap/host-internal host-class) method-name
-                               (if (nil? args) 0 (alength args)) descriptor "return")]
-      (if (nil? spec-id)
-        original
-        (.invoke ^clojure.lang.IFn
-                 (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-return-for-spec")
-                 spec-id self args original)))
-    (catch Throwable t
-      (log/error t "return advice dispatch failed")
-      (throw (exc/advice-ex! nil t)))))
+  (let [result (reentrancy-guard
+                 (fn []
+                   (try
+                     (let [spec-id (lookup-spec (ap/host-internal host-class) method-name
+                                                (if (nil? args) 0 (alength args)) descriptor "return")]
+                       (if (nil? spec-id)
+                         original
+                         (.invoke ^clojure.lang.IFn
+                                  (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-return-for-spec")
+                                  spec-id self args original)))
+                     (catch Throwable t
+                       (log/error t "return advice dispatch failed")
+                       (throw (exc/advice-ex! nil t))))))]
+    (if (= ::reentered result) original result)))
 
 (defn th-onThrow
   "Forwarder body called by the generated ThrowAdvice.onThrow stub."
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^[Object] args ^Throwable thrown]
   (when-not (nil? thrown)
-    (try
-      (let [spec-id (lookup-spec (ap/host-internal host-class) method-name
-                                 (if (nil? args) 0 (alength args)) descriptor "throw")]
-        (when-not (nil? spec-id)
-          (.invoke ^clojure.lang.IFn
-                   (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-throw-for-spec")
-                   spec-id self args thrown)))
-      (catch Throwable t
-        (log/error t "throw advice dispatch failed")
-        (throw (exc/advice-ex! nil t))))))
+    (reentrancy-guard
+      (fn []
+        (try
+          (let [spec-id (lookup-spec (ap/host-internal host-class) method-name
+                                     (if (nil? args) 0 (alength args)) descriptor "throw")]
+            (when-not (nil? spec-id)
+              (.invoke ^clojure.lang.IFn
+                       (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-throw-for-spec")
+                       spec-id self args thrown)))
+          (catch Throwable t
+            (log/error t "throw advice dispatch failed")
+            (throw (exc/advice-ex! nil t))))))))
+
+(defn- rd-dispatch
+  "Resolves the :redefine spec and hands the call to the redefine dispatcher.
+   Split out of rd-onRedefine so the reentrancy guard there stays shallow."
+  [^String method-name ^java.lang.Class host-class ^String descriptor
+   ^Object self ^[Object] args]
+  (let [spec-id (try
+                  (lookup-spec (ap/host-internal host-class) method-name
+                               (if (nil? args) 0 (alength args)) descriptor "redefine")
+                  (catch Throwable t
+                    (log/error t "redefine advice lookup failed")
+                    (throw (exc/advice-ex! nil t))))]
+    (when-not (nil? spec-id)
+      (try
+        (let [ref-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher-ref")
+              reinstaller (some-> ^clojure.lang.Atom (deref ref-var) deref)
+              host (ap/host-internal host-class)]
+          (when reinstaller
+            (.invoke ^clojure.lang.IFn reinstaller host method-name self args descriptor)))
+        (catch Throwable t
+          (log/error t "redefine advice dispatch failed")
+          (throw (exc/advice-ex! spec-id t)))))))
 
 (defn rd-onRedefine
   "Forwarder body called by the generated RedefineAdvice.onRedefine stub.
@@ -91,24 +157,10 @@
    returns null."
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^[Object] args _return-slot]
-  (let [spec-id (try
-                  (lookup-spec (ap/host-internal host-class) method-name
-                                (if (nil? args) 0 (alength args)) descriptor "redefine")
-                  (catch Throwable t
-                    (log/error t "redefine advice lookup failed")
-                    (throw (exc/advice-ex! nil t))))]
-    (if (nil? spec-id)
-      nil
-      (try
-        (let [ref-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher-ref")
-              ^clojure.lang.Atom redefiner-atom (deref ref-var)
-              reinstaller (deref redefiner-atom)
-              host (ap/host-internal host-class)]
-          (when reinstaller
-            (.invoke ^clojure.lang.IFn reinstaller host method-name self args descriptor)))
-        (catch Throwable t
-          (log/error t "redefine advice dispatch failed")
-          (throw (exc/advice-ex! spec-id t)))))))
+  (let [result (reentrancy-guard
+                 (fn [] (rd-dispatch method-name host-class descriptor
+                                        self args)))]
+    (if (= ::reentered result) nil result)))
 
 (def ^:private origin-m-param     (delay (bg/anno net.bytebuddy.asm.Advice$Origin {:value "#m"})))
 (def ^:private origin-c-param     (delay (bg/anno net.bytebuddy.asm.Advice$Origin {})))
@@ -160,11 +212,17 @@
      :method-annos [@to-return-anno @on-exit-anno]
      :forward-var 'nihilite.kernel.advice/rt-onExit}]})
 
+;; onThrow returns Object rather than void on purpose. A void advice under
+;; the invokedynamic dispatch does not bind: the woven call site ends up with
+;; no target the bootstrap can point at, so the :throw advice silently never
+;; runs. Nothing reads the return value here — @Advice$Thrown and
+;; @Advice@AllArguments carry every input the position needs — so the
+;; Object return costs nothing and keeps the position working.
 (def ^:private throw-spec
   {:methods
    [{:name "onThrow"
      :static? true
-     :return "void"
+     :return "java.lang.Object"
      :params (conj (vec common-params) "java.lang.Throwable")
      :param-annos (conj (vec common-param-annos) @thrown-param)
      :method-annos [@on-exit-anno]

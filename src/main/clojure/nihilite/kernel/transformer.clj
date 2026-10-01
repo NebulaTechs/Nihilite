@@ -15,7 +15,8 @@
    longer uses the generic dispatcher."
   (:require [nihilite.kernel.classgen :as cg]
             [nihilite.kernel.bytegen :as bg]
-            [nihilite.kernel.bucket :as bucket])
+            [nihilite.kernel.bucket :as bucket]
+            [nihilite.kernel.indy :as indy])
   (:import [net.bytebuddy.asm Advice]
            [net.bytebuddy.dynamic ClassFileLocator$Simple]))
 
@@ -100,7 +101,7 @@
 (defn- visit-advice [builder position-keys matcher-class-name]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (Advice/withCustomMapping)
+          wcm (indy/wire (Advice/withCustomMapping) matcher-class-name)
           ppf (post-processor-factory)
           loc (advice-locator)
           advice (.to (.with wcm ppf)
@@ -112,9 +113,10 @@
 (defn- visit-return-advice [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          advice (.to (.with (Advice/withCustomMapping) (post-processor-factory))
-                        (Class/forName "nihilite.kernel.ReturnAdvice")
-                        (advice-locator))]
+          wcm (indy/wire (Advice/withCustomMapping) "nihilite.kernel.ReturnAdvice")
+          advice (.to (.with wcm (post-processor-factory))
+                      (Class/forName "nihilite.kernel.ReturnAdvice")
+                      (advice-locator))]
       (.visit builder (.on advice matcher)))
     builder))
 
@@ -161,7 +163,7 @@
   [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (Advice/withCustomMapping)
+          wcm (indy/wire (Advice/withCustomMapping) "nihilite.kernel.RedefineAdvice")
           ppf (post-processor-factory)
           loc (advice-locator)
           advice (.to (.with wcm ppf)

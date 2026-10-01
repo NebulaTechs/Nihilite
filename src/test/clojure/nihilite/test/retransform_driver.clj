@@ -104,9 +104,25 @@
 
 ;; Spec bridge implementations.
 
+(def ^:private reentry-depth (atom 0))
+(def ^:private reentrant-fires (atom 0))
+(def ^:private probe-method-ref (atom nil))
+
 (defn- entry-handler [_ctx]
-  (.println System/err (str "DEBUG entry-handler fired entered=" @entered))
   (swap! entered inc)
+  ;; Re-entrancy check: call the hooked method again from inside the advice,
+  ;; which is the same shape as the class loading cycle — the advice body needs
+  ;; something the advice itself triggers. A working reentrancy guard suppresses
+  ;; the nested run, so no bridge invocation happens at depth > 1.
+  (let [d (swap! reentry-depth inc)]
+    (when (and (> d 1) (< d 4))
+      (swap! reentrant-fires inc))
+    (when (and (= d 1) (some? @probe-method-ref))
+      (try
+        (.invoke ^java.lang.reflect.Method @probe-method-ref
+                 nil (object-array [(long 99)]))
+        (catch Throwable _ nil)))
+    (swap! reentry-depth dec))
   nil)
 (defn- return-handler [_ctx]
   (swap! return-mutated inc)
@@ -189,8 +205,17 @@
                                               (into-array Class []))]
 
     ;; probe(int) -- :entry fires
+    (reset! probe-method-ref probe)
     (let [result (.invoke probe nil (object-array [(int 1)]))]
       (when (not= @entered 1) (fail! (str "ENTERED=" @entered " expected 1") 3))
+      ;; The entry bridge re-enters the hooked method on purpose. A working
+      ;; reentrancy guard suppresses that nested advice, so the count stays 1
+      ;; and reentry-depth never gets past 2. Without the guard the nested run
+      ;; dispatches too and both climb.
+      (when (pos? @reentrant-fires)
+        (fail! (str "reentrancy guard did not suppress the nested advice run:"
+                    " " @reentrant-fires
+                    " re-entrant bridge invocations, expected 0") 29))
       (when (not= "original-1" result) (fail! (str "probe was \"" result "\" expected \"original-1\"") 4)))
 
     ;; install-status! :woven-count must report the real retransform count

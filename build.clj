@@ -101,8 +101,8 @@
   (str "(binding [*compile-path* \"target/test-classes\"]"
        " (doseq [n '[nihilite.test.retransform-driver"
        "               nihilite.test.redefine-instance-driver"
-       "               nihilite.test.compiler-loader-hint-driver"
        "               nihilite.test.indy-driver"
+       "               nihilite.test.prod-bootstrap-driver"
        "               nihilite.test.javaagent-classpath-driver]]"
        "   (require n) (compile n)))"))
 
@@ -206,12 +206,6 @@
                  "nihilite.test.retransformDriver" [] (driver-jvm-opts))
   nil)
 
-(defn compiler-loader-driver
-  [_]
-  (java-command! "Compiler loader driver"
-                 "nihilite.test.compilerLoaderHintDriver" [] (driver-jvm-opts))
-  nil)
-
 (defn javaagent-driver
   [_]
   (when-not (.exists (io/file uber-file))
@@ -220,7 +214,7 @@
                  "nihilite.test.javaagentClasspathDriver"
                   ["spawn-jar-smoke" (.getAbsolutePath (io/file uber-file))
                    "examples/jdkstdlib/init.clj"]
-                 (conj (driver-jvm-opts) "-Dnihilite.compiler-loader-hint="))
+                 (driver-jvm-opts))
   nil)
 
 (defn redefine-instance-driver
@@ -235,13 +229,18 @@
                  "nihilite.test.indyDriver" [] (driver-jvm-opts))
   nil)
 
+(defn prod-bootstrap-driver
+  [_]
+  (java-command! "Production bootstrap driver"
+                 "nihilite.test.prodBootstrapDriver" [] (driver-jvm-opts))
+  nil)
+
 (defn check
   [_]
   (uberjar nil)
   (verify-jar nil)
   (clojure-contract-test nil)
   (retransform-driver nil)
-  (compiler-loader-driver nil)
   (javaagent-driver nil)
   (redefine-instance-driver nil)
   (indy-driver nil)

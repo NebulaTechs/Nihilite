@@ -62,47 +62,15 @@
       (log-warn (str "[Nihilite] install-redefine-dispatcher! failed: "
                      (.toString t))))))
 
-(defn- find-hinted-class-loader
-  "If `nihilite.compiler-loader-hint` is set and Instrumentation is
-   available, returns the classloader of the first loaded class whose
-   name matches the hint; otherwise returns nil."
-  [hint]
-  (when-let [agent-currentInst (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)]
-    (when-let [inst (agent-currentInst)]
-      (when inst
-        (let [dot-name (.replace ^String hint "/" ".")]
-          (try
-            (some (fn [^Class c]
-                    (when (and c (.equals dot-name (.getName c))
-                               (.getClassLoader c))
-                      (.getClassLoader c)))
-                  (.getAllLoadedClasses ^java.lang.instrument.Instrumentation inst))
-        (catch Throwable t
-            (log-warn (str "[Nihilite] hint lookup failed: " (.toString t)))
-              nil)))))))
-
 (defn resolve-host-class-loader
-  "Returns the classloader the Clojure Compiler should use, honoring the
-   `nihilite.compiler-loader-hint` system property when present."
+  "Returns the classloader the Clojure Compiler should use."
   []
-  (let [hint (System/getProperty "nihilite.compiler-loader-hint" "")]
-    (if-not (seq hint)
-      (ClassLoader/getSystemClassLoader)
-      (if-let [match (find-hinted-class-loader hint)]
-        (do
-          (log-info (str "[Nihilite] compiler-loader hint '" hint
-                        "' resolved to" match))
-          match)
-        (do
-          (log-warn (str "[Nihilite] compiler-loader hint '" hint
-                        "' not found among loaded classes; "
-                        "falling back to system classloader"))
-          (ClassLoader/getSystemClassLoader))))))
+  (ClassLoader/getSystemClassLoader))
 
 (defn- bind-compiler-loader
   "Replaces clojure.lang.Compiler/LOADER with a DynamicClassLoader that
-   wraps the resolved host classloader. Lets `require` resolve user
-   classes at runtime via ByteBuddy-instrumented classloaders."
+   wraps the host classloader. Lets `require` resolve user classes at
+   runtime via the classloaders the instrumented program already has."
   []
   (let [host-cl (resolve-host-class-loader)
         loader (DynamicClassLoader. host-cl)]

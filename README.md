@@ -28,9 +28,6 @@ Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 - `nihilite.bind` (default `127.0.0.1`)
 - `nihilite.port` (default `7888`)
 - `nihilite.init` — a Clojure file evaluated at startup
-- `nihilite.compiler-loader-hint` — a class name; when set, the agent
-  re-arms its transformer onto that classloader so hooks also reach
-  classes on it
 
 ## Hooks API
 
@@ -97,16 +94,17 @@ Load any example via `-Dnihilite.init=examples/<name>/init.clj`.
 ## Tests
 
 ```sh
-clojure -T:build clojure-contract-test   # 131 cases
+clojure -T:build clojure-contract-test   # 147 cases
 clojure -T:build check                   # build + verify + all drivers
 ```
 
-`check` runs four drivers that exercise the real `Instrumentation` path
+`check` runs five drivers that exercise the real `Instrumentation` path
 the contract tests cannot reach: `retransform` (all four positions on an
-already-loaded app-loader class, including a co-located `:entry`
-surviving a `:redefine` uninstall), `jar-smoke` (agent deploys and the
-nREPL server comes up in a spawned `java -jar` process),
-`redefine-instance`, and `compiler-loader-hint`.
+already-loaded class, including a co-located `:entry` surviving a
+`:redefine` uninstall), `jar-smoke` (agent deploys and the nREPL server
+comes up in a spawned `java -jar` process), `redefine-instance`, and
+`indy` (an invokedynamic call site woven into a bootstrap-loader method
+actually firing).
 
 ## License
 
