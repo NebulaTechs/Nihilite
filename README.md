@@ -94,7 +94,7 @@ Load any example via `-Dnihilite.init=examples/<name>/init.clj`.
 ## Tests
 
 ```sh
-clojure -T:build clojure-contract-test   # 147 cases
+clojure -T:build clojure-contract-test   # 140 cases
 clojure -T:build check                   # build + verify + all drivers
 ```
 
@@ -102,9 +102,11 @@ clojure -T:build check                   # build + verify + all drivers
 the contract tests cannot reach: `retransform` (all four positions on an
 already-loaded class, including a co-located `:entry` surviving a
 `:redefine` uninstall), `jar-smoke` (agent deploys and the nREPL server
-comes up in a spawned `java -jar` process), `redefine-instance`, and
-`indy` (an invokedynamic call site woven into a bootstrap-loader method
-actually firing).
+comes up in a spawned `java -jar` process), `redefine-instance`, `indy`
+(an invokedynamic call site woven into a bootstrap-loader method
+actually firing), and `prod-bootstrap` (all four positions installing
+and firing on a bootstrap-loader class through the production
+`install!` path).
 
 ## License
 

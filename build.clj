@@ -244,5 +244,6 @@
   (javaagent-driver nil)
   (redefine-instance-driver nil)
   (indy-driver nil)
+  (prod-bootstrap-driver nil)
   (println "All tools.build checks passed")
   nil)
