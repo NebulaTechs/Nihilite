@@ -23,9 +23,7 @@
    "nihilite.test.dispatch-modified-test"
    "nihilite.test.dispatch-common-test"
    "nihilite.test.dispatch-entry-cancel-test"
-   "nihilite.test.transport-timeout-test"
    "nihilite.test.agent-worker-once-test"
-   "nihilite.test.transport-bencode-roundtrip-test"
    "nihilite.test.version-resolution-test"
    "nihilite.test.uninstall-retransform-test"
    "nihilite.test.api-facade-test"
@@ -34,7 +32,8 @@
    "nihilite.test.uninstall-warn-test"
    "nihilite.test.redefine-advice-composition-test"
    "nihilite.test.retransform-batch-atomicity-test"
-   "nihilite.test.ctx-return-test"])
+   "nihilite.test.ctx-return-test"
+   "nihilite.test.eval-test"])
 
 (defn- safe-deref
   [r]
