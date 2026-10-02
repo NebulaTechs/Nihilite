@@ -50,8 +50,6 @@
    the loader binding below."
   []
   (require-ns 'clojure.core)
-  (require-ns 'nihilite.transport)
-  (require-ns 'nihilite.boot)
   (require-ns 'nihilite.registry)
   (require-ns 'nihilite.registry.dispatch)
   (try

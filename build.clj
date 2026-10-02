@@ -227,7 +227,7 @@
   (java-command! "Clojure contract tests"
                  "clojure.main"
                  ["-m" "nihilite.test.runner"]
-                 ["-Dnrepl.disable.tools=true"])
+                 [])
   nil)
 
 (defn retransform-driver

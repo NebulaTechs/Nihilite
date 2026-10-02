@@ -44,7 +44,7 @@
                          (do (.execute server (fn [] (.sendSystemMessage server component false))) true))]
         {:scheduled delivered?
          :status   :ok
-         :thread   (if on-mc-thread? "main" "nrepl")
+         :thread   (if on-mc-thread? "main" (.getName (Thread/currentThread)))
          :message  msg})
       (catch Throwable t
         {:scheduled false

@@ -1,94 +1,90 @@
 (ns nihilite.boot
-  (:require [nihilite.version :as v]
-            [nrepl.middleware]
-            [nrepl.server :as nrepl.server])
+  "Startup work that is not the transformer: run the init script, and serve
+   an eval request that arrived on the agent args.
+
+   This namespace used to own the embedded nREPL server and its middleware
+   stack. Both are gone. Nihilite opens no port; a process that wants to
+   evaluate code in an attached JVM sends an eval request (see
+   nihilite.eval.protocol), and a process that wants a full control plane
+   starts its own service from its init script (see
+   examples/nrepl_service.clj)."
+  (:require [nihilite.eval :as ev]
+            [nihilite.eval.protocol :as proto])
   (:import [java.util.logging Logger Level]))
 
 (defonce ^:private log
   (doto (Logger/getLogger "Nihilite.Boot")
     (.setLevel Level/WARNING)))
 
-(defonce ^:private runtime-version v/version)
-
 (def ^:private init-property-name "nihilite.init")
 
-(def ^:private init-default-form "(require 'clojure.repl)")
+(def ^:const init-marker-done "nihilite:init-done")
+(def ^:const init-marker-failed "nihilite:init-failed")
 
-(defonce ^:private runtime-server (atom nil))
+(defn- stream-text [snapshot stream]
+  (apply str (keep (fn [e] (when (= stream (:stream e)) (:text e)))
+                   (:events snapshot))))
 
-(defn ensure-defaults!
-  "Populate the nihilite.bind / nihilite.port / nihilite.init system
-   properties with the canonical defaults if the caller has not set
-   them. Reads only from System/getProperty so callers always supply
-   configuration via -D on the java command line."
-  []
-  (when (nil? (System/getProperty "nihilite.port"))
-    (System/setProperty "nihilite.port" "7888"))
-  (when (nil? (System/getProperty "nihilite.bind"))
-    (System/setProperty "nihilite.bind" "127.0.0.1")))
-
-(defn middleware-stack
-  "No-op middleware stack; replace with custom middlewares in user init if needed."
-  [handler]
-  handler)
-
-(nrepl.middleware/set-descriptor!
- #'middleware-stack
- {:requires #{}
-  :expects  #{"eval"}})
-
-(defn start!
-  "Start the nrepl server on the configured bind:port and return the server handle."
-  []
-  (let [bind (System/getProperty "nihilite.bind")
-        port (Integer/parseInt (System/getProperty "nihilite.port"))
-        handler (nrepl.server/default-handler (var middleware-stack))
-        server (nrepl.server/start-server :port port :bind bind :handler handler)]
-    (reset! runtime-server server)
-    server))
+(defn- await-settled
+  "Waits up to timeout-ms for a session to stop running. Returns the snapshot
+   either way; :running? says which happened."
+  [sid timeout-ms]
+  (let [deadline (+ (System/nanoTime)
+                    (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS timeout-ms))]
+    (loop []
+      (let [s (ev/snapshot sid)]
+        (cond
+          (not (:running? s)) s
+          (> (System/nanoTime) deadline) s
+          :else (do (Thread/sleep 20) (recur)))))))
 
 (defn eval-init!
-  "Read the system property `nihilite.init` as a Clojure form string and eval it in
-    the current namespace. The default is (require 'clojure.repl) so the connected
-    nREPL client has familiar REPL bindings. Returns `true` when the form was
-    evaluated without throwing, `false` when it threw (the error is logged at
-    WARNING and swallowed so the nREPL server still comes up)."
-  []
-  (let [form (or (System/getProperty init-property-name) init-default-form)]
-    (try
-      (let [forms (read-string (str "[" form "]"))]
-        (doseq [f forms]
-          (clojure.lang.Compiler/eval f))
-        true)
-      (catch Throwable t
-        (.log ^Logger log Level/WARNING
-              (str "[Nihilite] init failed: " (.getMessage t)) t)
-        false))))
+  "Runs the form in the `nihilite.init` system property, if there is one, in
+   its own eval session. Returns true when it ran without throwing.
 
-(defn -main
-  "Entry point invoked by java -jar nihilite.jar. Ensures bind / port
-   system properties have defaults, starts the canonical nrepl server,
-   runs the init form, then blocks the main thread forever so the JVM
-   stays alive until killed. Configuration is read exclusively from
-   System/getProperty so callers must supply -D on the java command
-   line; --bind / --port CLI flags are not recognized."
-  [& _args]
-  (try
-    (ensure-defaults!)
-    (start!)
-    (println "nihilite:server-ready")
+   The property names a FORM rather than a file, matching every other knob in
+   this project; a path works too because (load-file \"...\") is a form.
+   There is deliberately no default form any more: the old default was
+   (require 'clojure.repl), which only existed so a client connecting to the
+   deleted server would have familiar bindings.
+
+   Output is echoed to stdout as it happens rather than swallowed into the
+   session. A script that installs a hook and prints a marker is debugging,
+   and silent output turns that into guesswork."
+  []
+  (if-let [form (System/getProperty init-property-name)]
+    (let [sid (ev/open-session)]
+      (try
+        (ev/eval-in sid form)
+        (let [s   (await-settled sid 30000)
+              out (stream-text s :out)
+              err (stream-text s :err)]
+          (when (seq out) (print out) (flush))
+          (when (seq err) (binding [*out* *err*] (print err)) (flush))
+          (cond
+            (:error s)
+            (do (.log ^Logger log Level/WARNING
+                      (str "[Nihilite] init failed: " (:error s)))
+                false)
+
+            (:running? s)
+            (do (.log ^Logger log Level/WARNING
+                      "[Nihilite] init did not finish within 30s")
+                false)
+
+            :else true))
+        (finally
+          (ev/close-session sid))))
+    true))
+
+(defn run-startup!
+  "Runs the init script and then serves an eval request from the agent args.
+
+   Args that are not an eval request are left alone, so an existing
+   -javaagent or -jar invocation behaves exactly as it did. Returns the eval
+   reply when one was served, nil otherwise."
+  [args]
+  (let [init-ok? (eval-init!)]
+    (println (if init-ok? init-marker-done init-marker-failed))
     (flush)
-    (let [init-ok? (eval-init!)]
-      (if init-ok?
-        (println "nihilite:init-done")
-        (println "nihilite:init-failed"))
-      (flush)
-      (println (str "[Nihilite] server " runtime-version " ready on "
-                    (System/getProperty "nihilite.bind") ":"
-                    (System/getProperty "nihilite.port")))
-      (flush)
-      @(.await (java.util.concurrent.CountDownLatch. 1)))
-    (catch InterruptedException _ nil)
-    (catch Throwable t
-      (.log ^Logger log Level/SEVERE (str "[Nihilite] FATAL: " (.getMessage t)) t)
-      (System/exit 1))))
+    (proto/handle-args! args)))

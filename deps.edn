@@ -6,7 +6,6 @@
         org.clojure/spec.alpha {:mvn/version "0.6.249"}
         org.clojure/core.specs.alpha {:mvn/version "0.5.81"}
         org.clojure/tools.logging {:mvn/version "1.3.1"}
-        nrepl/nrepl {:mvn/version "1.7.0"}
         net.bytebuddy/byte-buddy {:mvn/version "1.18.14"}
         net.bytebuddy/byte-buddy-agent {:mvn/version "1.18.14"}}
 
@@ -14,8 +13,7 @@
  {:dev {:extra-paths ["src/test/clojure"]}
 
   :test {:extra-paths ["src/test/clojure"]
-         :main-opts ["-m" "nihilite.test.runner"]
-         :jvm-opts ["-Dnrepl.disable.tools=true"]}
+         :main-opts ["-m" "nihilite.test.runner"]}
 
   :build {:deps {io.github.clojure/tools.build
                  {:git/tag "v0.10.10"
