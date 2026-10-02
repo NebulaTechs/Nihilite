@@ -85,9 +85,18 @@
   (vec (sort (keys (stats/stats-snapshot)))))
 
 (defn install-status!
-  "Mark a spec's last install/uninstall event timestamp and return
-   the full `StatsRecord`. Returns `nil` if no spec with that id is
-   registered."
+  "Report a spec's install-side and runtime-side status.
+
+   Install side: :registered?, :woven-count, :pending?, :target-loader,
+   :last-error -- what the agent did to the already-loaded classes.
+   Runtime side: :fired, :modified, :cancelled, :exceptions -- what the
+   advice has actually done since install.
+
+   Neither side implies the other, so both are returned: a :woven-count of 1
+   means the bytes were rewritten, not that the advice runs, and a :fired of 0
+   means no bridge has run yet, which is also what a permanently dead hook
+   looks like. Check :fired only after the target method has actually been
+   called."
   [id]
   (reg/install-status! id))
 
