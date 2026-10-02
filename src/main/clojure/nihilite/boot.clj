@@ -10,7 +10,8 @@
    examples/nrepl_service.clj)."
   (:require [nihilite.eval :as ev]
             [nihilite.eval.protocol :as proto])
-  (:import [java.util.logging Logger Level]))
+  (:import [java.util.concurrent.atomic AtomicBoolean]
+           [java.util.logging Logger Level]))
 
 (defonce ^:private log
   (doto (Logger/getLogger "Nihilite.Boot")
@@ -20,6 +21,9 @@
 
 (def ^:const init-marker-done "nihilite:init-done")
 (def ^:const init-marker-failed "nihilite:init-failed")
+
+(defonce ^:private init-ran
+  (AtomicBoolean. false))
 
 (defn- stream-text [snapshot stream]
   (apply str (keep (fn [e] (when (= stream (:stream e)) (:text e)))
@@ -50,9 +54,17 @@
 
    Output is echoed to stdout as it happens rather than swallowed into the
    session. A script that installs a hook and prints a marker is debugging,
-   and silent output turns that into guesswork."
+   and silent output turns that into guesswork.
+
+   Runs at most once per JVM. Every attach calls run-startup! -- that is where
+   an eval request is served -- so without the guard a script that installs
+   hooks would install them again on every poll."
   []
-  (if-let [form (System/getProperty init-property-name)]
+  (if-not (.compareAndSet init-ran false true)
+    (do
+      (.log ^Logger log Level/FINE "init already ran in this JVM; skipping")
+      true)
+    (if-let [form (System/getProperty init-property-name)]
     (let [sid (ev/open-session)]
       (try
         (ev/eval-in sid form)
@@ -75,7 +87,7 @@
             :else true))
         (finally
           (ev/close-session sid))))
-    true))
+      true)))
 
 (defn run-startup!
   "Runs the init script and then serves an eval request from the agent args.

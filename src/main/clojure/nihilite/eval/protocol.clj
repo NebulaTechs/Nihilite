@@ -45,7 +45,16 @@
 
 (def ^:const prefix "eval:")
 
-(def ^:private default-wait-ms 30000)
+(def ^:const wait-ms-property "nihilite.eval.wait-ms")
+
+(def ^:private default-wait-ms
+  "How long one request waits for its eval before replying :done false.
+
+   Settable so a test -- or someone driving a JVM they cannot restart -- can
+   make the poll path reachable without waiting half a minute."
+  (or (some-> (System/getProperty wait-ms-property) str/trim not-empty
+              parse-long)
+      30000))
 
 (defn- b64-decode ^String [^String s]
   (String. (.decode (Base64/getDecoder) s)))
@@ -96,21 +105,28 @@
 (defn run-request!
   "Evaluates the request's code in a fresh session and returns the reply map.
    A fresh session per request keeps requests independent: two attachers, or
-   one attacher asking twice, do not share a namespace."
+   one attacher asking twice, do not share a namespace.
+
+   The session is closed on the way out ONLY when the eval finished. When it
+   did not, the session is left live on purpose: :done false plus a :session
+   id is the attacher's handle for coming back, and closing it here would kill
+   the polling loop the reply describes. The attacher owns that session from
+   then on and should close it when finished."
   [{:keys [code]}]
-  (let [sid (ev/open-session)]
-    (try
-      (ev/eval-in sid code)
-      (let [s (await-done sid)]
-        {:session sid
-         :ns (:ns s)
-         :value (:value s)
-         :error (:error s)
-         :out (stream-text s :out)
-         :err (stream-text s :err)
-         :done (not (:running? s))})
-      (finally
-        (ev/close-session sid)))))
+  (let [sid (ev/open-session)
+        s   (do (ev/eval-in sid code)
+                (await-done sid))
+        done (not (:running? s))
+        reply {:session sid
+               :ns (:ns s)
+               :value (:value s)
+               :error (:error s)
+               :out (stream-text s :out)
+               :err (stream-text s :err)
+               :done done}]
+    (when done
+      (ev/close-session sid))
+    reply))
 
 (defn- send-tcp!
   [{:keys [host port token]} ^String payload]
