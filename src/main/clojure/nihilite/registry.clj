@@ -37,7 +37,7 @@
    action method-key source-class source-descriptor tag])
 
 (defrecord HookContext
-  [hookId self args phase returnValue cancelled])
+  [hook-id self args phase return-value cancelled])
 
 (defrecord HookEvent
   [spec-id source phase self args return-value throwable
@@ -48,11 +48,20 @@
   (str class-internal "/" method-name "#" descriptor))
 
 (defn ctx-return
-  "Return value of a HookContext/HookEvent, or nil when absent."
+  "Return value of a HookContext/HookEvent, or nil when absent.
+
+   Keyword access, not `.getReturnValue`: Clojure 1.12 no longer emits
+   field accessors for defrecord, so an accessor call on a record
+   compiles (the hint degrades to reflection) and then throws
+   `IllegalArgumentException: No matching field found` on every call.
+   Verified against clojure-1.12.6.jar: emit-defrecord in
+   clojure/core_deftype.clj emits only the IRecord/IHashEq/IObj/
+   ILookup/IPersistentMap/Map/Serializable surface plus the record body,
+   with no getXxx generation."
   [x]
   (cond
-    (instance? HookContext x) (.getReturnValue ^HookContext x)
-    (instance? HookEvent x) (.getReturnValue ^HookEvent x)
+    (instance? HookContext x) (:return-value x)
+    (instance? HookEvent x) (:return-value x)
     :else nil))
 
 (defn normalize-position

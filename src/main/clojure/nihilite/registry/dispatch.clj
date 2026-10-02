@@ -72,11 +72,11 @@
     (instance? nihilite.registry.HookEvent x)
     (let [ev ^nihilite.registry.HookEvent x]
       (reg/map->HookContext
-        {:hookId      (.-spec-id ev)
+        {:hook-id      (.-spec-id ev)
          :self        (.-self ev)
          :args        (.-args ev)
          :phase       (.-phase ev)
-         :returnValue (.-return-value ev)
+         :return-value (.-return-value ev)
          :cancelled   ((.-cancelled? ev))}))
     :else nil))
 

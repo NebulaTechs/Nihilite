@@ -58,7 +58,7 @@
 
 (def fabric-on-send-system-message
   (fn [ctx]
-    (let [original (:returnValue ctx)
+    (let [original (:return-value ctx)
           replacement (str original " [fabric-tag]")]
       (println :fabric-return-overrode-from original :to replacement)
       replacement)))
