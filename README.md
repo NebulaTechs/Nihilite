@@ -35,9 +35,22 @@ java -Dnihilite.init='(load-file "init.clj")' -javaagent:target/nihilite.jar -ja
 Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 
 - `nihilite.init` — a Clojure **form** evaluated at startup. A path works
-  too, because `(load-file "init.clj")` is a form.
+  too, because `(load-file "init.clj")` is a form. Runs at most once per JVM.
+- `nihilite.eval.wait-ms` — how long one eval request waits before replying
+  `:done false`. Default `30000`.
 
 There is deliberately no port setting any more: nothing binds.
+
+### `java -jar` versus `-javaagent`
+
+`java -jar target/nihilite.jar` runs the init script and **returns**; it does
+not block. It used to wait forever on a latch that only existed to hold the
+nREPL server open. The JVM now lives as long as your own non-daemon threads
+keep it alive, so a bare `java -jar` with no init script exits immediately.
+
+That path also cannot weave anything: `Main-Class` is handed a `nil`
+`Instrumentation`, so `installer/install` never runs and every hook stays at
+`:pending? true`. Use `-javaagent:` for real work.
 
 ## Evaluating code in an attached JVM
 
@@ -240,16 +253,19 @@ clojure -T:build clojure-contract-test   # 187 cases
 clojure -T:build check                   # build + verify + all drivers
 ```
 
-`check` runs five drivers that exercise the real `Instrumentation` path
+`check` runs six drivers that exercise the real `Instrumentation` path
 the contract tests cannot reach: `retransform` (all four positions on an
 already-loaded class, including a co-located `:entry` surviving a
 `:redefine` uninstall, and the reentrancy guard cutting a bridge that
-re-enters its own target), `jar-smoke` (a spawned `java -javaagent:` process, with
-no server anywhere: the init form has to evaluate, the hook has to report a
-non-zero `:woven-count` **and** fire, and the child's log must contain no
-bridge or transformer errors), `redefine-instance`, `indy` (an invokedynamic
-call site woven into a bootstrap-loader method actually firing), and
-`prod-bootstrap` (all four positions installing and firing on a
+re-enters its own target), `jar-smoke` (a spawned `java -javaagent:`
+process, with no server anywhere: the init form has to evaluate, the hook has
+to report a non-zero `:woven-count` **and** fire, and the child's log must
+contain no bridge or transformer errors), `eval-attach` (a second process
+attaching to that child and driving `loadAgent` with `eval:` requests — value,
+`*out*`, thrown error, `:done false`, poll, interrupt, close, and a hook
+installed over the channel that then fires), `redefine-instance`, `indy` (an
+invokedynamic call site woven into a bootstrap-loader method actually firing),
+and `prod-bootstrap` (all four positions installing and firing on a
 bootstrap-loader class through the production `install!` path).
 
 `jar-smoke` uses `-javaagent:` rather than `-jar` on purpose. Weaving needs a
@@ -257,6 +273,11 @@ real `Instrumentation`, and only the agent entry points get one — `java -jar`
 reaches `Main-Class`, which is handed `nil`, so nothing is ever woven and every
 hook sits at `:pending? true` forever. `-javaagent` is also the deployment this
 project documents, and the one where `-Dnihilite.init` used to be dead.
+
+`eval-attach`'s child gets a classpath of third-party jars only, so every
+nihilite class it uses comes out of the agent jar. A child that could see
+`src/main/clojure` would resolve edited namespaces straight from disk and
+prove nothing about the artifact.
 
 `prod-bootstrap` also prints a `REENTRY_STATUS` line: what a hook on
 `java.io.FileInputStream.read` did when its bridge re-entered the target.
