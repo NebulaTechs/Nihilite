@@ -72,6 +72,28 @@
   (.mkdirs (io/file class-dir))
   nil)
 
+(defn- reset-derived-dir!
+  "Deletes `dir` and recreates it empty.
+
+   Both AOT output directories are pure derived state, yet `java-command!`
+   puts them AHEAD of the source directories on the runner classpath. A
+   leftover .class therefore wins over the source it was generated from:
+   an edited namespace that was never recompiled, or a WIP revision that
+   got reverted, keeps running. A stale
+   `nihilite.test.indy_driver$weave_BANG_` from an uncommitted revision made
+   `.write` land on the byte[] receiver and the driver reported a bogus
+   ClassCastException plus DRIVER_FAIL; `clean` alone made it pass.
+
+   Wiping before regenerating removes the whole class of fabricated result.
+   Narrowing the classpath instead would hide it while still testing
+   whatever happened to be in target/, and skipping the wipe would keep
+   every single-driver run dependent on the previous run's leftovers."
+  [dir]
+  (let [f (io/file dir)]
+    (when (.exists f)
+      (b/delete {:path dir}))
+    (.mkdirs f)))
+
 (defn- compile-script-for
   "Returns a Clojure -e script that AOT-compiles the given kernel namespaces.
    Each namespace is `require`d first because clojure.core/compile demands
@@ -84,11 +106,11 @@
 
 (defn compile-clj
   [_]
-  (.mkdirs (io/file class-dir))
+  (reset-derived-dir! class-dir)
   (ensure-success!
     "Clojure compilation"
     (b/process {:command-args ["clojure" "-Sdeps"
-                               (str "{:paths [\"src/main/clojure\" \"target/classes\"]}")
+                               "{:paths [\"src/main/clojure\" \"target/classes\"]}"
                                "-M" "-e"
                                (compile-script-for '[nihilite.kernel.exceptions
                                                      nihilite.kernel.bucket
@@ -119,14 +141,14 @@
    test class directory so build.clj's java-command! can invoke them as
    `java nihilite.test.retransformDriver` etc."
   []
-  (.mkdirs (io/file test-class-dir))
+  (reset-derived-dir! test-class-dir)
   (doseq [d ["nihilite/test"]]
     (.mkdirs (io/file test-class-dir d)))
   (ensure-success!
    "Test driver Clojure compilation"
    (b/process {:command-args
                ["clojure" "-Sdeps"
-                (str "{:paths [\"src/main/clojure\" \"src/test/clojure\" \"target/classes\"]}")
+                "{:paths [\"src/main/clojure\" \"src/test/clojure\" \"target/classes\"]}"
                 "-M"
                 "-e"
                 (compile-test-driver-script)]}))
