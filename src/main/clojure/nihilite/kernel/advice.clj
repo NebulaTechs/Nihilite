@@ -39,13 +39,25 @@
    bridge), class loading reads .class bytes, and those bytes travel through
    the very method being hooked. The cycle is structural, not probabilistic.
 
-   Verified working on an ordinary target — the retransform driver installs a
-   bridge that re-enters the hooked method and asserts the nested advice never
-   dispatches. It does NOT cut the cycle when the target is a class loading
-   path method: hooking java.io.FileInputStream.read still overflows the
-   stack. Whether the nested run sees a cleared flag because the advice body
-   throws during class loading (and the finally below removes it) is the
-   leading hypothesis, unconfirmed."
+   Verified on an ordinary target: the retransform driver installs a bridge
+   that re-enters the hooked method and asserts the nested advice never
+   dispatches.
+
+   It does not close every cycle, and it is not always reached. A hook is
+   unsafe exactly when the advice's own machinery needs the hooked method --
+   String, Object identity, class loading. On those targets the cycle can
+   close ABOVE this guard: the generated advice stub resolves its forwarder var
+   by name on every call (bytegen/forwarder-implementation emits Var.intern),
+   and touching Namespace/Var can load classes, which can read bytes through
+   the hooked method. Measured: java.lang.String.length, String.hashCode and
+   Object.equals overflow the stack however this flag is set.
+
+   java.io.FileInputStream.read is the case that motivates not trusting any of
+   this from the outside. Depending on classpath shape it either overflows, or
+   registers with a woven count of 1 and never runs the advice at all -- the
+   entry point is never reached, so this guard is never consulted. Both look
+   identical through the API. nilhotite.test.prod-bootstrap-driver prints the
+   measurement; it is not a gate, because a coin flip is not a test."
   [body]
   (if (.get ^ThreadLocal in-advice)
     ::reentered

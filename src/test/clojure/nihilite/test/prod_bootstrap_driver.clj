@@ -11,13 +11,18 @@
    All four positions are exercised, because \"the advice fired\" and \"each
    position survived the switch\" are separate claims.
 
-   Targets are java.util.BitSet methods, one instance per position. Three
-   constraints shaped that choice, each learned the hard way:
-   java.io.FileInputStream is on the class loading path, so the advice body
-   has to load classes, which read bytes through the very method it hooked;
-   ReentrantLock.lock is used by the nREPL transport and the logging plumbing,
-   so hooking it makes the agent's own machinery re-enter the advice; and
-   BitSet.length cannot be replaced because other BitSet methods consult it."
+   Targets for the four-position matrix are java.util.BitSet methods, one
+   instance per position. Three constraints shaped that choice: BitSet.length
+   cannot be replaced because other BitSet methods consult it, and the matrix
+   needs one target per position with independent bodies. ReentrantLock.lock
+   is deliberately absent even though it would work -- it is used by the nREPL
+   transport, so hooking it makes the agent's own machinery re-enter the
+   advice.
+
+   The last section hooks java.io.FileInputStream.read on purpose: that is the
+   class loading path, and it is where a reentrancy guard earns its keep. It
+   was avoided here until the guard's behaviour on it was measured rather than
+   assumed."
   (:require [nihilite.registry :as reg])
   (:import [net.bytebuddy.agent ByteBuddyAgent]
            [java.util BitSet])
@@ -126,6 +131,62 @@
         (fail! (str "expected IndexOutOfBoundsException from BitSet.get(-1), got "
                     (pr-str thrown))
                9)))
+
+    ;; Collision: the class loading path, hooked on purpose.
+     ;;
+     ;; java.io.FileInputStream.read is how the JVM turns bytes into a Class, so
+     ;; an advice on it runs while the JVM is loading -- and the advice body needs
+     ;; classes of its own (the spec lookup, the bridge). The bridge below
+     ;; re-enters the hooked method the way class loading would, which is the
+     ;; tightest form of that cycle: same thread, same method, inside the advice.
+     ;;
+     ;; This section is a MEASUREMENT, not an assertion, and it is deliberately
+     ;; not a gate. Across identical runs on one JDK the nested count came back
+     ;; both 0 and 1, so the guard's behaviour here depends on whether the advice
+     ;; path happened to be warm: a bridge-driven re-entry is always cut (put
+     ;; `(if false ::reentered ...)` in place of the check and this reports
+     ;; nested > 0), but a re-entry that arrives through the advice's own class
+     ;; loading is not reliably cut, because that cycle closes in the generated
+     ;; stub's per-call Var.intern -- above the guard, before hk-onEntry runs.
+     ;;
+     ;; The guard's deterministic coverage lives in the retransform driver,
+     ;; which re-enters an ordinary target. Gating on this one would mean
+     ;; gating on a coin flip.
+     (let [depth  (atom 0)
+           outer  (atom 0)
+           nested (atom 0)
+           reentry-file (doto (java.io.File/createTempFile "nihilite-reentry" ".bin")
+                          (.deleteOnExit))
+           bridge (fn [_ctx]
+                    (let [d (swap! depth inc)]
+                      (try
+                        (if (= d 1)
+                          (do (swap! outer inc)
+                              (with-open [in (java.io.FileInputStream. reentry-file)]
+                                (let [ba (byte-array 8)]
+                                  (.read in ba 0 8))))
+                          (swap! nested inc))
+                        (finally
+                          (swap! depth dec)))))
+           buf (byte-array 8)]
+      (spit reentry-file "01234567")
+      (reg/install! {:id              "pbd-reentry"
+                     :target-internal "java/io/FileInputStream"
+                     :method-name     "read"
+                     :descriptor      "([BII)I"
+                     :position        :entry
+                     :arity           3
+                     :action          :observe
+                     :bridge          bridge
+                     :note            "class-loading-path re-entrancy, measured"})
+      (with-open [in (java.io.FileInputStream. reentry-file)]
+        (.read in buf 0 8))
+      (when-not (= "01234567" (String. buf "UTF-8"))
+        (fail! "the hooked read did not return the file's bytes" 12))
+      (println "REENTRY_STATUS" (pr-str {:outer  @outer
+                                         :nested @nested
+                                         :note   "measurement only; nested varies 0 or 1 across runs"}))
+      (reg/uninstall! "pbd-reentry"))
 
     (println "DRIVER_PASS all four positions install and fire on"
              " bootstrap-loader classes through the production path")
