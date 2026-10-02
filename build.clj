@@ -133,7 +133,8 @@
        "               nihilite.test.redefine-instance-driver"
        "               nihilite.test.indy-driver"
        "               nihilite.test.prod-bootstrap-driver"
-       "               nihilite.test.javaagent-classpath-driver]]"
+       "               nihilite.test.javaagent-classpath-driver"
+       "               nihilite.test.eval-attach-driver]]"
        "   (require n) (compile n)))"))
 
 (defn- compile-test-drivers!
@@ -247,6 +248,18 @@
                  (driver-jvm-opts))
   nil)
 
+(defn eval-attach-driver
+  "Proves the eval wire protocol from another process: spawn a child with
+   -javaagent, attach to it, and drive loadAgent with eval: requests."
+  [_]
+  (when-not (.exists (io/file uber-file))
+    (uberjar nil))
+  (java-command! "Eval attach driver"
+                 "nihilite.test.evalAttachDriver"
+                 [(.getAbsolutePath (io/file uber-file))]
+                 (driver-jvm-opts))
+  nil)
+
 (defn redefine-instance-driver
   [_]
   (java-command! "Redefine instance driver"
@@ -300,6 +313,7 @@
   (clojure-contract-test nil)
   (retransform-driver nil)
   (javaagent-driver nil)
+  (eval-attach-driver nil)
   (redefine-instance-driver nil)
   (indy-driver nil)
   (prod-bootstrap-driver nil)
