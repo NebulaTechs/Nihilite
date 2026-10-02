@@ -1,9 +1,20 @@
 # Nihilite
 
-Clojure nREPL agent for running JVMs. Load it with `-javaagent` (or `-jar`,
-which also prearms the hook installer) and you get a bencode nREPL on
-`127.0.0.1` where `nihilite.api/install!` weaves a hook into any
-already-loaded class method.
+Clojure agent for weaving hooks into running JVMs. Load it with
+`-javaagent` and `nihilite.api/install!` weaves a hook into any already-loaded
+class method.
+
+**Nihilite opens no port.** It used to ship an embedded bencode nREPL server
+on `127.0.0.1:7888`; that is gone, along with the `nrepl` dependency. What
+replaced it is the choice the server was taking away:
+
+- **Want an interactive control plane?** Start your own from the init script.
+  See `examples/nrepl_service.clj` — it puts nrepl back on the classpath from
+  an init script and binds it to loopback. Bring cider-nrepl too if you want
+  Calva; that middleware was never shipped here, which is why an editor
+  refused to talk to the old built-in server.
+- **Just want to evaluate something in an attached JVM?** Use the eval
+  protocol below, or `nihilite.api/eval-in` from inside the target.
 
 All bytecode classes are generated from Clojure at runtime / AOT (zero
 `.java` source in the repo).
@@ -17,17 +28,54 @@ clojure -T:build uberjar
 ## Run
 
 ```sh
-java -jar target/nihilite.jar
-java -javaagent:target/nihilite.jar -jar target/nihilite.jar
+java -javaagent:target/nihilite.jar -jar your-app.jar
+java -Dnihilite.init='(load-file "init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar
 ```
-
-Connect to `127.0.0.1:7888` with any bencode nREPL client.
 
 Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 
-- `nihilite.bind` (default `127.0.0.1`)
-- `nihilite.port` (default `7888`)
-- `nihilite.init` — a Clojure file evaluated at startup
+- `nihilite.init` — a Clojure **form** evaluated at startup. A path works
+  too, because `(load-file "init.clj")` is a form.
+
+There is deliberately no port setting any more: nothing binds.
+
+## Evaluating code in an attached JVM
+
+`VirtualMachine.loadAgent` takes one String and returns void, so that String
+is the only way in and there is no way back. Nihilite's answer is a small
+wire format that any language can implement:
+
+```text
+eval:<transport>|<base64-code>
+```
+
+| transport | effect |
+| --- | --- |
+| `discard` | run it, reply nowhere |
+| `file:<path>` | reply written to that file as EDN |
+| `tcp:<host>:<port>:<token>` | reply written to a socket, token echoed first |
+
+Agent args without the `eval:` prefix are not an eval request, so an existing
+invocation behaves exactly as it did. The reply is one EDN map with `:token`,
+`:session`, `:ns`, `:value`, `:error`, `:out`, `:err` and `:done`.
+
+So a complete round trip from another process is:
+
+```java
+VirtualMachine vm = VirtualMachine.attach(pid);
+vm.loadAgent("target/nihilite.jar",
+             "eval:file:/tmp/reply.edn|" + base64("(nihilite.api/list-specs)"));
+vm.detach();
+// /tmp/reply.edn now holds {:value "{...}", :done true, ...}
+```
+
+`:done false` means the eval was still running when the wait expired; the
+`:session` in the reply is live and can be polled by sending a second request
+whose code is `(nihilite.eval/snapshot "<session-id>")`. One attach round
+trip per read is the price of `loadAgent` having no return channel — if you
+want cheaper reads, start a real service from your init script instead.
+
+## Hooks API
 
 ## Hooks API
 
@@ -89,6 +137,27 @@ Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 - `(api/swap-bridge! id new-fn)` — replace the bridge in place
 - `(api/register-action! :kw)` — register a custom `:action`
 
+### Eval verbs
+
+These are the in-process side of the wire format above; a process on the other
+side of `loadAgent` reaches the same code.
+
+- `(api/open-session)` — open a session, returns its id. Each session keeps
+  its own namespace, so `(def x 1)` survives into the next `eval-in` and is
+  invisible to other sessions
+- `(api/eval-in sid code)` — start evaluating, returns an eval id **immediately**.
+  Asynchronous on purpose: the usual caller is an attacher holding a
+  `loadAgent` open, and a form that never returns must not wedge it
+- `(api/snapshot sid)` / `(api/snapshot sid since)` — output and state.
+  `:events` is one ordered log, each entry tagged `:out` or `:err` with a
+  `:seq`, so the interleaving of the two streams is recorded rather than
+  reconstructed. Pass the previous `:cursor` as `since` to read incrementally
+- `(api/interrupt! sid)` — `Thread.interrupt`. It unblocks a thread waiting on
+  I/O, sleep or a monitor. It cannot stop a tight `(loop [] (recur))`: Clojure's
+  `recur` never checks the interrupt flag, and `Thread.stop` was removed in
+  JDK 20
+- `(api/close-session! sid)` — interrupt anything running, then forget it
+
 ## Examples
 
 | Example | What it shows |
@@ -97,8 +166,20 @@ Configuration via `-D` system property (placed before `-javaagent` and `-jar`):
 | [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` hot rewrite on a bootstrap class. |
 | [`examples/minecraft/init.clj`](examples/minecraft/init.clj) | Vanilla Minecraft `MinecraftServer.sendSystemMessage` observer. App-loader target — actually fires. |
 | [`examples/fabric/init.clj`](examples/fabric/init.clj) | Fabric mod-loader hooks. App-loader target — actually fires. |
+| [`examples/nrepl_service.clj`](examples/nrepl_service.clj) | Bring your own control plane: puts nrepl back on the classloader from an init script and binds it to loopback. |
 
 Load any example via `-Dnihilite.init=examples/<name>/init.clj`.
+
+Measured: an init script CAN deploy its own network service, and CAN put a jar
+the agent has never seen onto the classloader and `require` from it.
+`clojure.lang.DynamicClassLoader` extends `URLClassLoader`, so one `addURL`
+does what core.async's `add-libs` does — `add-libs` itself is not in
+`clojure.core`. Note that inside the init eval context `Compiler/LOADER`
+reads back as a `clojure.lang.Var`, so `deref` it (or use `RT/baseLoader`);
+the thread context classloader is an `AppClassLoader` and `addURL` does not
+apply there. `examples/nrepl_service.clj` shows the working shape, and
+`nihilite.test.init-service-driver` measures it end to end from another
+process.
 
 ## Limits
 
@@ -155,7 +236,7 @@ Neither the JVM's nor this API's behaviour is reliable here. A hook on
 ## Tests
 
 ```sh
-clojure -T:build clojure-contract-test   # 164 cases
+clojure -T:build clojure-contract-test   # 187 cases
 clojure -T:build check                   # build + verify + all drivers
 ```
 
@@ -163,12 +244,19 @@ clojure -T:build check                   # build + verify + all drivers
 the contract tests cannot reach: `retransform` (all four positions on an
 already-loaded class, including a co-located `:entry` surviving a
 `:redefine` uninstall, and the reentrancy guard cutting a bridge that
-re-enters its own target), `jar-smoke` (a spawned `java -jar` process where a
-production-path hook has to fire and the child's log must contain no bridge
-or transformer errors), `redefine-instance`, `indy` (an invokedynamic call
-site woven into a bootstrap-loader method actually firing), and
+re-enters its own target), `jar-smoke` (a spawned `java -javaagent:` process, with
+no server anywhere: the init form has to evaluate, the hook has to report a
+non-zero `:woven-count` **and** fire, and the child's log must contain no
+bridge or transformer errors), `redefine-instance`, `indy` (an invokedynamic
+call site woven into a bootstrap-loader method actually firing), and
 `prod-bootstrap` (all four positions installing and firing on a
 bootstrap-loader class through the production `install!` path).
+
+`jar-smoke` uses `-javaagent:` rather than `-jar` on purpose. Weaving needs a
+real `Instrumentation`, and only the agent entry points get one — `java -jar`
+reaches `Main-Class`, which is handed `nil`, so nothing is ever woven and every
+hook sits at `:pending? true` forever. `-javaagent` is also the deployment this
+project documents, and the one where `-Dnihilite.init` used to be dead.
 
 `prod-bootstrap` also prints a `REENTRY_STATUS` line: what a hook on
 `java.io.FileInputStream.read` did when its bridge re-entered the target.
