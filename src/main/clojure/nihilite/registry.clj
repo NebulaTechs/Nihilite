@@ -266,14 +266,46 @@
     (fn [cur]
       (assoc cur :last-error ex-msg))))
 
+(defn- counter-value
+  "Reads a StatsRecord counter atom into a plain long, or nil when the record
+   has no such field."
+  [r k]
+  (some-> ^clojure.lang.Atom (get r k) deref))
+
 (defn install-status!
+  "Install-side and runtime-side status for one spec.
+
+   Install side (status-index): :registered?, :woven-count (how many loaded
+   classes were retransformed), :pending?, :target-loader, :last-error.
+   Runtime side (stats-index): :fired, :modified, :cancelled, :exceptions --
+   how many times the advice has actually reached the bridge, changed a return
+   value, short-circuited, or thrown.
+
+   Both sides are reported because neither implies the other. A woven-count of 1
+   says the bytes were rewritten, not that the advice will run: the advice can
+   be entered and find no spec, or a woven call site can stay unlinked while the
+   target method keeps executing. That is why :fired is reported next to
+   :woven-count rather than derived from it.
+
+   A :fired of 0 is NOT a verdict. It means no bridge has run yet, which is
+   indistinguishable from a permanently dead hook without observing whether the
+   target method is being called at all -- which the advice cannot see, because
+   an advice that never runs is exactly the case where it has no data. Check
+   :fired after the target method has demonstrably been called."
   [id]
   (let [id (str id)
-        ref (.get status-index id)]
-    (if (nil? ref)
-      {:spec-id id :registered? false :woven-count 0 :pending? false :last-error nil}
-      (let [m (.get ^java.util.concurrent.atomic.AtomicReference ref)]
-        (assoc m :spec-id id)))))
+        ref (.get status-index id)
+        base (if (nil? ref)
+               {:spec-id id :registered? false :woven-count 0 :pending? false :last-error nil}
+               (assoc (.get ^java.util.concurrent.atomic.AtomicReference ref) :spec-id id))
+        rec  (stats/get-stats id)]
+    (if (nil? rec)
+      (assoc base :fired 0 :modified 0 :cancelled 0 :exceptions 0)
+      (assoc base
+             :fired      (counter-value rec :fired)
+             :modified   (counter-value rec :modified)
+             :cancelled  (counter-value rec :cancelled)
+             :exceptions (counter-value rec :exceptions)))))
 
 (defn install!
   [spec]
