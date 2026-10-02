@@ -16,7 +16,7 @@
    use to look up the live Instrumentation when uninstalling a spec.
 
    The Worker thread is a plain Clojure Thread that calls initClojure()
-   (require transport/boot/registry + install-redefine-dispatcher!) and
+   (require registry + dispatch, then install-redefine-dispatcher!) and
    bindCompilerLoader() before signaling Worker ready.
 
    Like the other kernel/* classes, this is emitted via the private
@@ -152,48 +152,96 @@
       (.setContextClassLoader worker (ClassLoader/getSystemClassLoader))
       (.start worker))))
 
+(defn- run-startup!
+  "Hands the agent args to nihilite.boot, which runs the init script and
+   serves an eval request if the args carry one.
+
+   Resolved through RT/var rather than required: the worker thread brings
+   Clojure-side state up on its own schedule, and this must not race it."
+  [args]
+  (try
+    ;; The worker deliberately does not require boot: boot is startup, not
+    ;; worker state. RT/var resolves a var but does not load its namespace,
+    ;; so the require has to happen here or the var comes back unbound.
+    (require (quote nihilite.boot))
+    (let [v (clojure.lang.RT/var "nihilite.boot" "run-startup!")]
+      (when-not (.isBound v)
+        (log-error "[Nihilite] nihilite.boot/run-startup! is not present; abort"))
+      (when (.isBound v)
+        (.invoke ^clojure.lang.IFn v (object-array [args]))))
+    (catch Throwable t
+      (log-error (str "[Nihilite] startup failed: " (.toString t))))))
+
+(defn- run-startup-async!
+  "Runs the init script on its own thread.
+
+   premain has to return promptly: on the -javaagent path the JVM is holding
+   the application's main thread, and a slow init script would be charged to
+   application startup. This is also the fix for init being dead on that path
+   -- it used to run only under boot/-main, which Main-Class reaches and
+   -javaagent does not."
+  [args]
+  (doto (Thread. ^Runnable #(do (agent-awaitWorkerReady)
+                                (run-startup! args))
+                 "nihilite-startup")
+    (.setDaemon true)
+    (.start)))
+
+(defn- arm-agent!
+  "Installs the ByteBuddy transformer and starts the worker thread. Shared by
+   every entry point so none of them can arm twice or forget the worker.
+
+   Returns true when the Instrumentation was newly registered."
+  [^String label ^Instrumentation inst]
+  (extend-system-class-loader-search inst)
+  (let [fresh? (agent-registerInstrumentation inst)]
+    (when fresh?
+      (try
+        (require (quote nihilite.kernel.installer))
+        ((resolve (quote nihilite.kernel.installer/install)) inst)
+        (log-info (str "[Nihilite Agent] " label
+                      " armed HookInstaller (ByteBuddy AgentBuilder)"))
+        (catch Throwable t
+          (log-error (str "[Nihilite Agent] HookInstaller.install failed: "
+                          (.toString t))))))
+    (start-worker-once)
+    fresh?))
+
 (defn agent-premain
   "Forwarded by nihilite.kernel.Agent.premain (JVM instrument entry).
-   Without an Instrumentation (driver path or no-attach smoke test), the
-   call still returns cleanly and starts the worker thread so that any
-   driver-side `awaitWorkerReady` resolves."
-  [^String _args ^Instrumentation inst]
+   Arms the installer, starts the worker, and runs the init script in the
+   background so the application's startup is not charged for it.
+
+   Without an Instrumentation (driver path or no-attach smoke test) the call
+   still returns cleanly and starts the worker, so a driver-side
+   `awaitWorkerReady` resolves."
+  [^String args ^Instrumentation inst]
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
-    (let [t0 (System/nanoTime)]
-      (extend-system-class-loader-search inst)
-      (when (agent-registerInstrumentation inst)
-        (try
-          (require (quote nihilite.kernel.installer))
-          ((resolve (quote nihilite.kernel.installer/install)) inst)
-          (log-info "[Nihilite Agent] premain armed HookInstaller (ByteBuddy AgentBuilder)")
-          (catch Throwable t
-            (log-error (str "[Nihilite Agent] HookInstaller.install failed: "
-                            (.toString t))))))
-      (start-worker-once)
+    (let [t0     (System/nanoTime)
+          fresh? (arm-agent! "premain" inst)]
+      (run-startup-async! args)
+      (when-not fresh?
+        (log-info (format "[Nihilite Agent] premain no-op (HookInstaller already registered for %s)"
+                          (str (.get registered-on)))))
       (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
         (log-info (format "[Nihilite Agent] premain returned in %.0f ms" elapsed-ms))))))
 
 (defn agent-agentmain
-  "Forwarded by nihilite.kernel.Agent.agentmain (JVM dynamic-attach entry)."
-  [^String _args ^Instrumentation inst]
+  "Forwarded by nihilite.kernel.Agent.agentmain (JVM dynamic-attach entry).
+
+   Runs the init script and serves an eval request SYNCHRONOUSLY, unlike
+   premain. The caller is a VirtualMachine.loadAgent that is blocked until
+   this returns; replying from a background thread would let loadAgent return
+   before the reply was written, and the attacher would read nothing."
+  [^String args ^Instrumentation inst]
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
-    (let [t0 (System/nanoTime)]
-      (extend-system-class-loader-search inst)
-      (if (agent-registerInstrumentation inst)
-        (do
-          (try
-            (require (quote nihilite.kernel.installer))
-            ((resolve (quote nihilite.kernel.installer/install)) inst)
-            (log-info "[Nihilite Agent] agentmain armed HookInstaller (dynamic attach)")
-            (catch Throwable t
-              (log-error (str "[Nihilite Agent] HookInstaller.install failed: "
-                              (.toString t)))))
-          (start-worker-once))
-        (do
-          (when inst
-            (log-info (format "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)"
-                              (str (.get registered-on)))))
-          (start-worker-once)))
+    (let [t0     (System/nanoTime)
+          fresh? (arm-agent! "agentmain" inst)]
+      (when-not fresh?
+        (log-info (format "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)"
+                          (str (.get registered-on)))))
+      (agent-awaitWorkerReady)
+      (run-startup! args)
       (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
         (log-info (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms))))))
 
@@ -227,15 +275,14 @@
    the boot-main argv."
   [& args]
   (binding [*ns* (find-ns 'nihilite.kernel.agent)]
-    (agent-premain nil nil)
-    (agent-awaitWorkerReady)
-    (let [flat-args (flatten-args args)
-          boot-main (clojure.lang.RT/var "nihilite.boot" "-main")]
-      (when (or (nil? boot-main) (not (.isBound boot-main)))
-        (log-error "[Nihilite] nihilite.boot/-main is not present; abort"))
-      (when (and boot-main (.isBound boot-main))
-        (.applyTo ^clojure.lang.IFn boot-main
-                  (clojure.lang.RT/seq (into-array String flat-args)))))))
+    (let [t0     (System/nanoTime)
+          fresh? (arm-agent! "main" nil)]
+      (when-not fresh?
+        (log-info "[Nihilite] main no-op (HookInstaller already registered)"))
+      (agent-awaitWorkerReady)
+      (run-startup! (first (flatten-args args)))
+      (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
+        (log-info (format "[Nihilite] main returned in %.0f ms" elapsed-ms))))))
 
 (defn agent-main
   "The JVM-lookup main(String[]) entry point. gen-class :main true looks
