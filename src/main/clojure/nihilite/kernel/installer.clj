@@ -83,6 +83,25 @@
             (count advice-classes) "advice classes")
   nil)
 
+(defn- preload-registry-read-side!
+  "The generated HookTypeMatcher answers \"does this class have a hook\" for
+   every class the JVM loads, and it reaches the registry through
+   `(resolve 'nihilite.registry.index/revision)`.    `resolve` hands back an
+   unbound var while that namespace is still evaluating, so a class loaded
+   before the first install! completed made the matcher throw
+   `IllegalStateException: Attempting to call unbound fn` out of
+   HookTypeMatcher.matches -- the throw escapes the matcher's own try, and
+   ByteBuddy's onError turns it into one log line and a silently unwoven
+   class. Reproduced in a real `java -javaagent` JVM.
+
+   Loading the read side here, before the AgentBuilder is armed, removes
+   the half-loaded-registry state instead of papering over it at each use
+   site. nihilite.registry.index only imports java.util.concurrent, so this
+   pulls in no registry mutation code and cannot cycle."
+  []
+  (require 'nihilite.registry.index)
+  nil)
+
 (defn install
   "Arms the single AgentBuilder (redefine + advice composed) against the
    live JVM. Also publishes `inst` through
@@ -101,6 +120,7 @@
       (let [register-fn (requiring-resolve
                           'nihilite.kernel.agent/agent-registerInstrumentation)]
         (register-fn inst))
+      (preload-registry-read-side!)
       (advice/ensure-all! inst)
       (arm-indy!)
       (transformer/ensure-all!)
