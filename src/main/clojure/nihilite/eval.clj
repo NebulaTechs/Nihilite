@@ -78,7 +78,20 @@
 (defn- session-writer ^Writer [^Session s stream]
   (proxy [Writer] []
     (write
-      ([x] (emit! s stream (cond (nil? x) nil (string? x) x :else (str x))))
+      ([x]
+       (emit! s stream
+              (cond
+                (nil? x) nil
+                (string? x) x
+                ;; proxy collapses write(int) and write(Object) into this one
+                ;; arity, so Writer's own write(int) -- which would encode the
+                ;; code point as a character -- never runs. A boxed Integer
+                ;; here is a code point: println writes the space between
+                ;; arguments as write(int 32), and (str x) turned that into
+                ;; "32". Measured: (println "a" 1) emitted "a321".
+                (instance? Integer x) (String. (Character/toChars (int x)))
+                (bytes? x) (String. ^bytes x "UTF-8")
+                :else (str x))))
       ([x off len] (emit! s stream (part->string x off len))))
     (flush [] nil)
     (close [] nil)))
@@ -157,7 +170,12 @@
 
    `:since` is a cursor: pass the highest :seq you already have and only
    newer chunks come back. Omit it for everything, which is what a caller
-   that has not been polling wants."
+   that has not been polling wants.
+
+   `:cursor` comes back monotonic -- it is the higher of what you passed in
+   and the last chunk in this page. Deriving it from the page alone would
+   reset it to 0 whenever a read returned nothing new, and the caller's next
+   read would start from the beginning and reprint the whole session."
   ([sid] (snapshot sid nil))
   ([^String sid since]
    (if-let [^Session s (get @sessions sid)]
@@ -169,7 +187,7 @@
        {:session sid
         :ns (str (ns-name (:ns-obj s)))
         :events events
-        :cursor (long (:seq (peek events) 0))
+        :cursor (long (max lower (:seq (peek events) 0)))
         :value @(:value s)
         :error @(:error s)
         :running? (some? @(:running s))})

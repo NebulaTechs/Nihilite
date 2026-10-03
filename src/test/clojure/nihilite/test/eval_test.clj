@@ -149,3 +149,16 @@
     (is (true? (ev/close-session sid)))
     (is (not (ev/session? sid)))
     (is (not-any? #(= sid %) (ev/session-ids)))))
+
+(deftest printing-several-arguments-keeps-the-spaces
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(println \"a\" 1) (println \"sp\" 2) (println \"one\")")
+    (let [printed (->> (:events (settle sid))
+                       (filter #(= :out (:stream %)))
+                       (map :text)
+                       (apply str))]
+      (is (str/includes? printed "a 1\n")
+          (str "println with two args must separate them with a space: " (pr-str printed)))
+      (is (str/includes? printed "sp 2\n"))
+      (is (str/includes? printed "one\n")))
+    (ev/close-session sid)))
