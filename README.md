@@ -14,7 +14,7 @@ replaced it is the choice the server was taking away:
   Calva; that middleware was never shipped here, which is why an editor
   refused to talk to the old built-in server.
 - **Just want to evaluate something in an attached JVM?** Use the eval
-  protocol below, or `nihilite.api/eval-in` from inside the target.
+  protocol below, or `nihilite.eval/eval-in` from inside the target.
 
 All bytecode classes are generated from Clojure at runtime / AOT (zero
 `.java` source in the repo).
@@ -152,24 +152,33 @@ want cheaper reads, start a real service from your init script instead.
 
 ### Eval verbs
 
-These are the in-process side of the wire format above; a process on the other
-side of `loadAgent` reaches the same code.
+These live in **`nihilite.eval`**, not `nihilite.api`. `nihilite.api` is the
+hook workbench — install, inspect, swap, unregister — and stays that narrow.
+Eval is a separate concern with a separate entry point, so requiring one does
+not drag in the other. They are the in-process side of the wire format above;
+a process on the other side of `loadAgent` reaches the same code.
 
-- `(api/open-session)` — open a session, returns its id. Each session keeps
+- `(eval/open-session)` — open a session, returns its id. Each session keeps
   its own namespace, so `(def x 1)` survives into the next `eval-in` and is
   invisible to other sessions
-- `(api/eval-in sid code)` — start evaluating, returns an eval id **immediately**.
-  Asynchronous on purpose: the usual caller is an attacher holding a
-  `loadAgent` open, and a form that never returns must not wedge it
-- `(api/snapshot sid)` / `(api/snapshot sid since)` — output and state.
+- `(eval/eval-in sid code)` — start evaluating, returns an eval id
+  **immediately**. Asynchronous on purpose: the usual caller is an attacher
+  holding a `loadAgent` open, and a form that never returns must not wedge it
+- `(eval/snapshot sid)` / `(eval/snapshot sid since)` — output and state.
   `:events` is one ordered log, each entry tagged `:out` or `:err` with a
   `:seq`, so the interleaving of the two streams is recorded rather than
   reconstructed. Pass the previous `:cursor` as `since` to read incrementally
-- `(api/interrupt! sid)` — `Thread.interrupt`. It unblocks a thread waiting on
+- `(eval/interrupt sid)` — `Thread.interrupt`. It unblocks a thread waiting on
   I/O, sleep or a monitor. It cannot stop a tight `(loop [] (recur))`: Clojure's
   `recur` never checks the interrupt flag, and `Thread.stop` was removed in
   JDK 20
-- `(api/close-session! sid)` — interrupt anything running, then forget it
+- `(eval/close-session sid)` — interrupt anything running, then forget it
+- `(eval/session? sid)` / `(eval/session-ids)` — which sessions exist
+
+`:value` is the last **non-nil** value the session saw, not this eval's
+result, so a form returning nil leaves it alone. Every non-nil form's rendered
+value is also emitted into `:events` with `:stream :out`, which is what a REPL
+should print.
 
 ## Examples
 
