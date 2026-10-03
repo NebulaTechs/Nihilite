@@ -206,14 +206,10 @@
   (extend-system-class-loader-search inst)
   (let [fresh? (agent-registerInstrumentation inst)]
     (when fresh?
-      (try
-        (require (quote nihilite.kernel.installer))
-        ((resolve (quote nihilite.kernel.installer/install)) inst)
-        (log-info (str "[Nihilite Agent] " label
-                      " armed HookInstaller (ByteBuddy AgentBuilder)"))
-        (catch Throwable t
-          (log-error (str "[Nihilite Agent] HookInstaller.install failed: "
-                          (.toString t))))))
+      (require (quote nihilite.kernel.installer))
+      ((resolve (quote nihilite.kernel.installer/install)) inst)
+      (log-info (str "[Nihilite Agent] " label
+                    " armed HookInstaller (ByteBuddy AgentBuilder)")))
     (start-worker-once)
     fresh?))
 

@@ -123,11 +123,7 @@
             event  (->hook-event spec self args nil)]
         (walk-bucket bucket event spec-id)))
     (catch nihilite.kernel.HookCancelledException _
-      (throw (exc/cancelled!)))
-    (catch Throwable t
-      (try (log/error t "registry dispatch-for-spec failed (id=" spec-id ")")
-           (catch Throwable _)))
-    (finally nil)))
+      (throw (exc/cancelled!)))))
 
 (defn- modify-value-compatible?
   "Whether `rv` can legally replace `original` as the target method's
@@ -148,6 +144,73 @@
       (nil? original)
       (instance? (class original) rv)))
 
+(def ^:private boxed-primitives
+  "descriptor return char -> the wrapper class, so a bridge value can be
+   narrowed to what the target method actually returns."
+  {\I Integer
+   \J Long
+   \Z Boolean
+   \B Byte
+   \C Character
+   \S Short
+   \F Float
+   \D Double})
+
+(defn- descriptor-return-class
+  "The class a method with this descriptor returns, or nil when the
+   descriptor is absent or its return type is void.
+
+   Parses only what is needed: the substring after the closing paren of the
+   parameter list. `Lname;` and `[type` forms come back as a string, not a
+   Class, because resolving them would mean loading the type -- which, on a
+   hook that is being installed precisely to observe a class-loading path, is
+   the thing most likely to re-enter the advice."
+  [^String descriptor]
+  (when (and descriptor (<= 3 (count descriptor)))
+    (let [close (.indexOf ^String descriptor (int \)))
+          rt    (when (>= close 0) (subs descriptor (inc close)))]
+      (when (and rt (seq rt))
+        (let [c (first rt)]
+          (cond
+            (= \V c) nil
+            (= \L c) (subs rt 1 (dec (count rt)))
+            (= \[ c) rt
+            (contains? boxed-primitives c) (boxed-primitives c)
+            :else rt))))))
+
+(defn coerce-return
+  "Narrows a bridge's return value to the target method's return type.
+
+   The advice forwarders return Object, and AssignReturned.ToReturned /
+   @Advice.Return(DYNAMIC) write that Object into the target's return slot,
+   which is a CHECKCAST to the target type. A Clojure literal boxes to Long,
+   so `(fn [] 7)` against an `int`-returning method throws
+   ClassCastException: Long cannot be cast to Integer -- from inside the woven
+   method, naming neither the hook nor the spec.
+
+   Numeric narrowing is what a caller means here, so do it in Clojure where the
+   error can name the spec. A value that genuinely cannot represent the target
+   type is left alone, and the caller rejects it with
+   :nihilite/invalid-modify-value."
+  [rv ^String descriptor]
+  (let [target (descriptor-return-class descriptor)]
+    (cond
+      (nil? rv) rv
+      (nil? target) rv
+      (string? target) rv
+      (instance? target rv) rv
+      ;; rv is a Number standing in for a narrower or wider numeric return
+      (and (number? rv) (contains? (set (vals boxed-primitives)) target))
+      (condp identical? target
+        Integer (.intValue ^Number rv)
+        Long (.longValue ^Number rv)
+        Short (.shortValue ^Number rv)
+        Byte (.byteValue ^Number rv)
+        Double (.doubleValue ^Number rv)
+        Float (.floatValue ^Number rv)
+        rv)
+      :else rv)))
+
 (defn dispatch-return-for-spec
   [spec-id self args original]
   (try
@@ -167,22 +230,24 @@
             (cond
               (and (= action :modify) (some? rv))
               (do
-                (when-not (modify-value-compatible? rv original)
-                  (throw (ex-info
-                           (str ":modify bridge for spec " (:id s) " returned "
-                                (.getName (class rv))
-                                ", which cannot replace the target's "
-                                (.getName (class original))
-                                ". A :modify bridge must RETURN the"
-                                " replacement value (it may take ctx as its"
-                                " single argument, but must not return it).")
-                           {:nihilite/kind :nihilite/invalid-modify-value
-                            :nihilite/id (:id s)
-                            :nihilite/returned (class rv)
-                            :nihilite/original (class original)})))
-                (reset! result rv)
-                (reset! modified? true)
-                (reset! decided? true))
+                (let [rv' (coerce-return rv (or (:source-descriptor s)
+                                                 (:source-descriptor spec)))]
+                  (when-not (modify-value-compatible? rv' original)
+                    (throw (ex-info
+                             (str ":modify bridge for spec " (:id s) " returned "
+                                  (.getName (class rv'))
+                                  ", which cannot replace the target's "
+                                  (.getName (class original))
+                                  ". A :modify bridge must RETURN the"
+                                  " replacement value (it may take ctx as its"
+                                  " single argument, but must not return it).")
+                             {:nihilite/kind :nihilite/invalid-modify-value
+                              :nihilite/id (:id s)
+                              :nihilite/returned (class rv')
+                              :nihilite/original (class original)})))
+                  (reset! result rv')
+                  (reset! modified? true)
+                  (reset! decided? true)))
 
               (= action :cancel)
               (do (call-cancel! event) (reset! decided? true))
@@ -194,30 +259,14 @@
           (when-let [r (stats/get-stats spec-id)]
             (swap! (:modified r) inc)))
         @result)
-      original)
-    ;; An invalid :modify value is a programming error the user must see;
-    ;; do not degrade to the original value, which would hide it.
-    (catch clojure.lang.ExceptionInfo e
-      (if (= :nihilite/invalid-modify-value (:nihilite/kind (ex-data e)))
-        (throw e)
-        (do (try (log/error e "registry dispatch-return-for-spec failed (id=" spec-id ")")
-                 (catch Throwable _))
-            original)))
-    (catch Throwable t
-      (try (log/error t "registry dispatch-return-for-spec failed (id=" spec-id ")")
-           (catch Throwable _))
       original)))
 
 (defn dispatch-throw-for-spec
   [spec-id self args throwable]
-  (try
-    (when-let [spec (reg/lookup spec-id)]
-      (let [bucket (reg/spec-bucket spec)
-            event  (assoc (->hook-event spec self args nil) :throwable throwable)]
-        (walk-bucket bucket event spec-id)))
-    (catch Throwable t
-      (try (log/error t "registry dispatch-throw-for-spec failed (id=" spec-id ")")
-           (catch Throwable _)))))
+  (when-let [spec (reg/lookup spec-id)]
+    (let [bucket (reg/spec-bucket spec)
+          event  (assoc (->hook-event spec self args nil) :throwable throwable)]
+      (walk-bucket bucket event spec-id))))
 
 (defn lookup-spec-for-call
   "Find the spec id that should handle a call to
@@ -284,7 +333,8 @@
         (if-let [bridge-fn (safe-bridge spec)]
           (try
             (stats/bump-fired! spec-id)
-            (bridge-fn self args method-name)
+            (coerce-return (bridge-fn self args method-name)
+                           (or (:source-descriptor spec) descriptor))
             (catch Throwable t
               (log/error t "bridge redefine-fire failed (id=" spec-id ")")
               (throw t)))
