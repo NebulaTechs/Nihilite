@@ -72,6 +72,7 @@ jobs:
           clojure -T:build retransform-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
+          clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
 
@@ -113,6 +114,7 @@ jobs:
           clojure -T:build retransform-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
+          clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
 
@@ -154,6 +156,7 @@ jobs:
           clojure -T:build retransform-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
+          clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
 
@@ -195,6 +198,7 @@ jobs:
           clojure -T:build retransform-driver
           clojure -T:build redefine-instance-driver
           clojure -T:build javaagent-driver
+          clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
 
@@ -235,31 +239,26 @@ jobs:
       - name: Verify jar contents
         run: clojure -T:build verify-jar
 
-      - name: Smoke test jar startup
+      - name: Smoke test the shipped jar
         run: |
           set -euo pipefail
-          PORT=$((10000 + RANDOM % 5000))
-          java -Dnihilite.bind=127.0.0.1 -Dnihilite.port=$PORT -jar target/nihilite.jar > /tmp/nihilite-startup.log 2>&1 &
-          PID=$!
-          for _ in $(seq 1 30); do
-            sleep 1
-            if grep -q '^\[Nihilite\] server .* ready on' /tmp/nihilite-startup.log; then
-              echo "startup OK: $(grep '\[Nihilite\] server .* ready on' /tmp/nihilite-startup.log)"
-              kill -9 $PID 2>/dev/null || true
-              wait $PID 2>/dev/null || true
-              exit 0
-            fi
-            if ! kill -0 $PID 2>/dev/null; then
-              echo "::error::jar exited before startup banner"
-              cat /tmp/nihilite-startup.log
-              exit 1
-            fi
-          done
-          echo "::error::startup banner not seen within 30s"
-          cat /tmp/nihilite-startup.log
-          kill -9 $PID 2>/dev/null || true
-          wait $PID 2>/dev/null || true
-          exit 1
+
+          # `java -jar` reaches Main-Class, which is handed a nil
+          # Instrumentation: it can never weave, so it does not try. It prints
+          # a stub notice and returns 0. This used to wait for a server banner
+          # that went away with the embedded nREPL, so the step failed on a jar
+          # that was working exactly as designed.
+          java -jar target/nihilite.jar > /tmp/nihilite-main.log 2>&1
+          echo "--- java -jar output ---"
+          cat /tmp/nihilite-main.log
+          grep -q 'bytecode hook agent for the JVM' /tmp/nihilite-main.log
+          grep -q 'nothing to run here' /tmp/nihilite-main.log
+
+          # Then the part that actually matters for a published artifact:
+          # mount it into a real JVM and prove a hook weaves and fires. This
+          # is the only assertion in CI that exercises the shipped jar through
+          # the production install! path.
+          clojure -T:build javaagent-driver
 
       - uses: actions/upload-artifact@v7
         if: success()
