@@ -100,6 +100,31 @@ and `Thread.stop`, which would, was removed in JDK 20. A CPU-bound eval that
 must be killed has to cooperate — poll `snapshot` and check `:running?` from the
 code being evaluated.
 
+Measured, because the two cases are not the same:
+
+```text
+(loop [] (recur))     running after 1.5s?      true
+                      interrupt -> {:interrupted? true}
+                      running after int+1.5s?  true      <- still running
+                      still running?           true
+```
+
+`close-session` then makes `:running?` go false — **not** because the thread
+stopped, but because the session was forgotten. The thread is a daemon, so it
+keeps burning CPU after that. Nothing in the JVM can preempt it safely, and
+nREPL's own `interrupt` has the same limit.
+
+Infinite recursion is a different case and does terminate:
+
+```clojure
+(defn boom [n] (inc (boom (inc n)))) (boom 0)
+  settled?        true
+  error present?  true
+  error head      #error { ... :type java.lang.StackOverflowError ...
+```
+
+Stack depth bounds it, and the failure arrives through `:error` like any other.
+
 ## Invariants that keep streaming a later addition
 
 Four things are built in so that push-based streaming is an additive change

@@ -52,6 +52,11 @@ The bridge receives a `HookEvent` record — `:spec-id`, `:self`, `:args`,
 `(self, args, method-name)` and whose return value *becomes* the method's return
 value, because the original body does not run at all.
 
+Under `:redefine` and `:modify` a numeric return value is narrowed to the target
+method's return type, so `(fn [] 7)` is fine against an `int`-returning method.
+A value that cannot represent the target type is rejected with
+`:nihilite/invalid-modify-value`, naming the spec.
+
 | verb | |
 | --- | --- |
 | `(api/uninstall! id)` | remove the hook and retransform |

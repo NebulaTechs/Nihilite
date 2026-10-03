@@ -162,24 +162,21 @@
    Resolved through RT/var rather than required: the worker thread brings
    Clojure-side state up on its own schedule, and this must not race it."
   [args]
-  (try
-    ;; The worker deliberately does not require boot: boot is startup, not
-    ;; worker state. RT/var resolves a var but does not load its namespace,
-    ;; so the require has to happen here or the var comes back unbound.
-    (require (quote nihilite.boot))
-    (let [v (clojure.lang.RT/var "nihilite.boot" "run-startup!")]
-      (when-not (.isBound v)
-        (log-error "[Nihilite] nihilite.boot/run-startup! is not present; abort"))
-      (when (.isBound v)
-        ;; Pass the value, do not pack it. IFn.invoke(Object) is the
-        ;; single-argument call, so handing it an Object[] would deliver the
-        ;; array itself as the argument -- eval-request? then saw a non-String
-        ;; and dropped the request without a word. And RT/vector is no help
-        ;; either: it is varargs, so interop hands a nil agent-args straight
-        ;; through as the array and the call dies on array length.
-        (.invoke ^clojure.lang.IFn v args)))
-    (catch Throwable t
-      (log-error (str "[Nihilite] startup failed: " (.toString t))))))
+  ;; The worker deliberately does not require boot: boot is startup, not
+  ;; worker state. RT/var resolves a var but does not load its namespace,
+  ;; so the require has to happen here or the var comes back unbound.
+  (require (quote nihilite.boot))
+  (let [v (clojure.lang.RT/var "nihilite.boot" "run-startup!")]
+    (when-not (.isBound v)
+      (log-error "[Nihilite] nihilite.boot/run-startup! is not present; abort"))
+    (when (.isBound v)
+      ;; Pass the value, do not pack it. IFn.invoke(Object) is the
+      ;; single-argument call, so handing it an Object[] would deliver the
+      ;; array itself as the argument -- eval-request? then saw a non-String
+      ;; and dropped the request without a word. And RT/vector is no help
+      ;; either: it is varargs, so interop hands a nil agent-args straight
+      ;; through as the array and the call dies on array length.
+      (.invoke ^clojure.lang.IFn v args))))
 
 (defn- run-startup-async!
   "Runs the init script on its own thread.
