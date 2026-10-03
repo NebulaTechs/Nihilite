@@ -26,8 +26,7 @@
    | :action           | no       | `:observe` / `:replace` / `:modify`           |
    |                   |          | (defaults to `:observe`)                       |
    | :tag              | no       | free-form grouping label                      |"
-  (:require [nihilite.eval :as eval]
-            [nihilite.registry :as reg]
+  (:require [nihilite.registry :as reg]
             [nihilite.registry.stats :as stats]))
 
 (defn install!
@@ -116,54 +115,3 @@
    [action-key]
   (reg/register-action! action-key))
 
-;;; ------------------------------------------------------------------- eval
-
-(defn open-session
-  "Opens an eval session and returns its id.
-
-   A session evaluates in its own namespace and keeps it, so `(def x 1)` is
-   still there for the next `eval-in`. Two sessions cannot see each other.
-
-   Sessions are how out-of-process code drives this JVM. See
-   `nihilite.eval.protocol` for the wire format an attaching process uses,
-   and examples/nrepl_service.clj for starting a full REPL from an init
-   script instead."
-  []
-  (eval/open-session))
-
-(defn eval-in
-  "Starts evaluating `code` in the session and returns an eval id right away.
-
-   Asynchronous on purpose: the usual caller is an attacher holding a
-   `loadAgent` call open, and a form that never returns must not wedge it.
-   Poll `snapshot` for the result.
-
-   Returns nil when the session id is unknown."
-  [session-id code]
-  (eval/eval-in session-id code))
-
-(defn snapshot
-  "Reads a session's output and state: `:events` (one ordered log, tagged
-   `:out` or `:err`, each with a `:seq`), `:cursor`, `:value`, `:error`,
-   `:running?` and `:ns`.
-
-   Pass the `:cursor` from the previous read as the second argument to get
-   only what is new since then."
-  ([session-id] (eval/snapshot session-id))
-  ([session-id since] (eval/snapshot session-id since)))
-
-(defn interrupt!
-  "Asks the session's running eval to stop.
-
-   This is `Thread.interrupt`: it unblocks a thread waiting on I/O, sleep or
-   a monitor. It cannot stop a tight `(loop [] (recur))`, because Clojure's
-   `recur` never checks the interrupt flag and `Thread.stop` was removed in
-   JDK 20."
-  [session-id]
-  (eval/interrupt session-id))
-
-(defn close-session!
-  "Drops a session and interrupts anything still running in it. Returns true
-   when the session existed."
-  [session-id]
-  (eval/close-session session-id))
