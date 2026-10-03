@@ -31,7 +31,7 @@
    :action :observe
    :bridge (fn [_] nil)})
 
-(use-fixtures :each fx/reg-cleanup)
+(use-fixtures :each fx/reg-cleanup-with-dispatcher)
 
 (deftest install-rejects-redefine-modify
   (let [spec (redefine-modify-spec "redefine-modify-test")]
@@ -78,3 +78,34 @@
          clojure.lang.ExceptionInfo
          #":position .* is reserved/removed"
          (reg/install! spec)))))
+
+(deftest install-redefine-waits-for-the-dispatcher-rather-than-weaving-a-dead-hook
+  ;; A :redefine hook replaces the method body, so the advice's only route to
+  ;; its bridge is the dispatcher. arm-agent! arms the transformer and then
+  ;; starts the worker that installs the dispatcher, so an install landing in
+  ;; that gap produced a method returning the stub default -- a wrong answer,
+  ;; silently. install! now waits, and gives up loudly rather than weaving a
+  ;; hook that cannot work.
+  (let [ref-var   (clojure.lang.RT/var "nihilite.registry.dispatch"
+                                       "redefine-dispatcher-ref")
+        saved     @(.deref ^clojure.lang.Var ref-var)
+        timeout   (ns-resolve 'nihilite.registry 'redefine-dispatcher-timeout-ms)]
+    (try
+      (reset! (.deref ^clojure.lang.Var ref-var) nil)
+      (with-redefs-fn {timeout 50}
+        (fn []
+          (is (thrown-with-msg?
+                clojure.lang.ExceptionInfo
+                #"the redefine dispatcher is not installed"
+                (reg/install! {:id "no-dispatcher"
+                               :target-internal "java/lang/String"
+                               :method-name "hashCode"
+                               :descriptor "()I"
+                               :position :redefine
+                               :action :observe
+                               :bridge (fn [& _] 1)}))
+              "install! refuses rather than weaving a :redefine hook that cannot dispatch")))
+      (is (nil? (reg/lookup "no-dispatcher"))
+          "the refused spec is not left half-registered")
+      (finally
+        (reset! (.deref ^clojure.lang.Var ref-var) saved)))))

@@ -57,6 +57,12 @@ method's return type, so `(fn [] 7)` is fine against an `int`-returning method.
 A value that cannot represent the target type is rejected with
 `:nihilite/invalid-modify-value`, naming the spec.
 
+`install!` waits for the redefine dispatcher before weaving a `:redefine` hook,
+and throws `:nihilite/redefine-dispatcher-unavailable` if it never arrives. That
+position replaces the method body, so a hook woven before the dispatcher is
+ready would return the stub default instead of the bridge's value. Nothing is
+half-registered when it gives up.
+
 | verb | |
 | --- | --- |
 | `(api/uninstall! id)` | remove the hook and retransform |

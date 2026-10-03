@@ -98,6 +98,63 @@
 
 (defn next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
 
+(def ^:private redefine-dispatcher-timeout-ms
+  "How long install! waits for the redefine dispatcher before giving up.
+   The worker installs it a moment after premain returns; measured at 0-150ms
+   on a cold JVM, so this is generous by two orders of magnitude."
+  5000)
+
+(defn- redefine-dispatcher-ready?
+  "Whether the :redefine advice has something to call.
+
+   Resolved through RT/var because registry cannot require dispatch --
+   dispatch requires registry. Same reasoning as the agent's dynamic lookups:
+   the reference has to survive a class loader that may not have loaded
+   dispatch yet."
+  []
+  (let [v (clojure.lang.RT/var "nihilite.registry.dispatch"
+                              "redefine-dispatcher-ref")]
+    (and (some? v)
+         (.isBound ^clojure.lang.Var v)
+         (some? @(.deref ^clojure.lang.Var v)))))
+
+(defn- await-redefine-dispatcher!
+  "Blocks until the redefine dispatcher is installed, or throws.
+
+   A :redefine hook REPLACES the method body, so the advice can only return
+   the target's value by calling the bridge through the dispatcher. arm-agent!
+   arms the transformer and then starts the worker that installs the
+   dispatcher, so a :redefine install landing in that gap produces a method
+   that returns the stub default until the worker catches up -- a wrong
+   answer, not a missing one.
+
+   Measured, the gap is 0-150ms on a cold JVM and a real retransform costs
+   100ms+, so the normal path does not land inside it. Waiting anyway makes
+   that a guarantee rather than a timing observation, and costs nothing when
+   the dispatcher is already there, which is every install after the first.
+
+   Bounded, then it throws: a missing dispatcher means no :redefine hook can
+   work, and silently installing one that returns the stub default is the
+   failure this project has already paid for."
+  [spec-id]
+  (if (redefine-dispatcher-ready?)
+    true
+    (let [deadline (+ (System/currentTimeMillis)
+                      redefine-dispatcher-timeout-ms)]
+      (loop []
+        (cond
+          (redefine-dispatcher-ready?) true
+          (> (System/currentTimeMillis) deadline)
+          (throw (ex-info
+                   (str "the redefine dispatcher is not installed, so a "
+                        ":redefine hook cannot dispatch to its bridge (id="
+                        spec-id "). Nothing installs it unless the agent is "
+                        "mounted with -javaagent: or attached to.")
+                   {:nihilite/kind :nihilite/redefine-dispatcher-unavailable
+                    :nihilite/id spec-id
+                    :nihilite/timeout-ms redefine-dispatcher-timeout-ms}))
+          :else (do (Thread/sleep 20) (recur)))))))
+
 (defn- get-or-create-bucket ^java.util.List [^ConcurrentHashMap m k]
   (or (.get m k)
       (let [fresh (CopyOnWriteArrayList.)]
@@ -403,6 +460,13 @@
                            :method-key spec-method-key
                            :source-class spec-source-class
                            :source-descriptor spec-desc)]
+       ;; A :redefine hook replaces the method body, so from the moment the
+       ;; retransform lands the advice's only route to the bridge is the
+       ;; dispatcher. Wait before touching any index, so a timeout leaves
+       ;; nothing half-registered: a spec that is in by-id but never woven is
+       ;; indistinguishable from a live hook until someone checks.
+       (when (= :redefine spec-pos)
+         (await-redefine-dispatcher! spec-id))
        (locking registry-lock
          (bump-revision!)
          (let [prev (.put by-id (:id norm-spec) norm-spec)

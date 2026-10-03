@@ -31,7 +31,7 @@
    :action :observe
    :bridge (fn [_ctx] nil)})
 
-(use-fixtures :each fx/reg-cleanup)
+(use-fixtures :each fx/reg-cleanup-with-dispatcher)
 
 (deftest redefine-and-entry-register-on-same-method
   (reg/install! (entry-spec "comp-entry"))
