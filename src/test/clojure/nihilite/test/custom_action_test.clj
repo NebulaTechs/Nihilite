@@ -24,7 +24,6 @@
   (reg/register-action! :audit)
   (let [spec {:id              "audit-hook"
               :target-internal "com/example/Foo"
-              :source-class    "java/lang/Object"
               :method-name     "bar"
               :descriptor      "(I)V"
               :position        :entry
@@ -36,7 +35,6 @@
 (deftest unknown-action-still-rejected
   (let [spec {:id              "bad-hook"
               :target-internal "com/example/Foo"
-              :source-class    "java/lang/Object"
               :method-name     "bar"
               :descriptor      "(I)V"
               :position        :entry

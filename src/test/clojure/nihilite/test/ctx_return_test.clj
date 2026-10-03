@@ -61,8 +61,7 @@
                                      :position            :return
                                      :target-internal     "java/lang/String"
                                      :method-name         "toString"
-                                     :source-descriptor   "()Ljava/lang/String;"
-                                     :source-class        "java/lang/String"}
+                                     :method-descriptor   "()Ljava/lang/String;"}
                                     "self" (object-array 0) "rv")
           ctx (dispatch/->ctx ev)]
       (is (instance? nihilite.registry.HookContext ctx))

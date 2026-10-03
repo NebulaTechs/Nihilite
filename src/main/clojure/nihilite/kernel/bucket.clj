@@ -49,7 +49,7 @@
                            (let [p    (spec-field spec :position)
                                  name (spec-field spec :method-name)]
                              (when (and p name)
-                               (let [desc (spec-field spec :source-descriptor)
+                               (let [desc (spec-field spec :method-descriptor)
                                      bucket-key (if (keyword? p) p (keyword p))
                                      key [name desc]]
                                  (assoc-in acc [bucket-key]

@@ -112,6 +112,14 @@
    eval's. An eval that throws is reported to the session and the loop moves on
    to the next one, which is the whole point of having a queue."
   [^Session s ^String code]
+  ;; Clear the previous failure before running, not after. A session
+  ;; outlives one eval by design -- that is what makes it a REPL rather
+  ;; than a function call -- so an eval that succeeds after one that threw
+  ;; would otherwise keep reporting the old throwable, and a caller
+  ;; polling :error could not tell "this failed" from "this failed last
+  ;; time". Measured: (/ 1 0) then (* 6 7) reported the divide by zero
+  ;; alongside a correct :value of 42.
+  (reset! (:error s) nil)
   (try
     (binding [*ns*  (:ns-obj s)
               *out* (session-writer s :out)

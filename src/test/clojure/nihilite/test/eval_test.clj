@@ -119,6 +119,35 @@
       (is (str/includes? (text-of s) "boom")))
     (ev/close-session sid)))
 
+(deftest a-successful-eval-clears-the-previous-failure
+  ;; A session outlives one eval -- that is what makes it a REPL. If a
+  ;; successful eval left :error alone, a caller polling it could not tell
+  ;; "this failed" from "this failed last time", and a driver checking
+  ;; :error before a step would see a failure that had already passed.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(/ 1 0)")
+    (let [s (settle sid)]
+      (is (some? (:error s)) "the divide by zero is reported"))
+    (ev/eval-in sid "(* 6 7)")
+    (let [s (settle sid)]
+      (is (nil? (:error s))
+          "the next successful eval reports no error, not the old one")
+      (is (= "42" (:value s))))
+    (ev/close-session sid)))
+
+(deftest the-error-checks-out-and-exception-records-still-accumulate
+  ;; Clearing :error must not touch the runtime counters, which are
+  ;; cumulative across the session rather than per-eval.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(throw (ex-info \"boom\" {}))")
+    (settle sid)
+    (ev/eval-in sid "(+ 1 1)")
+    (let [s (settle sid)]
+      (is (nil? (:error s)))
+      (is (str/includes? (text-of s) "boom")
+          "the earlier failure is still in the ordered output log"))
+    (ev/close-session sid)))
+
 (deftest unknown-session-is-reported-not-thrown
   (is (nil? (ev/eval-in "no-such-session" "(+ 1 1)")))
   (is (= "unknown session" (:error (ev/snapshot "no-such-session"))))

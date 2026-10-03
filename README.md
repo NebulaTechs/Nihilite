@@ -42,9 +42,24 @@ a dynamic attach get a real one.
 ```
 
 `:descriptor` is required; without it `install!` throws
-`:nihilite/missing-descriptor`. `:position` is `:entry`, `:return`, `:throw` or
+`:nihilite/missing-descriptor`, and one that is not a valid JVM method
+descriptor throws `:nihilite/bad-descriptor`. The descriptor decides which loaded
+method the hook matches, so a malformed one would otherwise register
+successfully and never fire. `:position` is `:entry`, `:return`, `:throw` or
 `:redefine`, and `:action` is `:observe` (default), `:modify`, `:cancel` or
 `:subscriber`.
+
+`:arity` is optional: the descriptor already says how many parameters the method
+takes, so omitting it derives the count, and supplying one that disagrees
+throws `:nihilite/arity-descriptor-mismatch` rather than registering a hook
+that can never match.
+
+`api/lookup` returns a `HookSpec` whose `:internal-class` and
+`:method-descriptor` are computed by `install!` from `:target-internal` and
+`:descriptor`. They were called `:source-class` and `:source-descriptor`, which
+read as if a hook could target some method other than the one named; the old
+names are no longer present, and passing them in had always been silently
+overwritten.
 
 The bridge receives a `HookEvent` record — `:spec-id`, `:self`, `:args`,
 `:return-value`, `:throwable`, `:cancelled?`, `:cancel!`, `:thread-name`,
@@ -54,8 +69,17 @@ value, because the original body does not run at all.
 
 Under `:redefine` and `:modify` a numeric return value is narrowed to the target
 method's return type, so `(fn [] 7)` is fine against an `int`-returning method.
-A value that cannot represent the target type is rejected with
-`:nihilite/invalid-modify-value`, naming the spec.
+A value that does not fit that type is rejected rather than truncated — the
+JVM's own narrowing saturates silently, which would change what the woven
+method returns with no signal — with `:nihilite/invalid-modify-value` under
+`:modify` and `:nihilite/invalid-redefine-value` under `:redefine`, naming the
+spec and echoing the descriptor. A value of the wrong shape entirely (a String
+against a `MyThing` return) is rejected the same way.
+
+Reference types are not converted, only checked: the bridge must return the
+target's declared type or a subtype of it. Build that value in the bridge —
+`(fn [_] (MyThing. (compute)))` — since there is no numeric-style coercion for
+a type the Clojure reader has no opinion about.
 
 `install!` waits for the redefine dispatcher before weaving a `:redefine` hook,
 and throws `:nihilite/redefine-dispatcher-unavailable` if it never arrives. That

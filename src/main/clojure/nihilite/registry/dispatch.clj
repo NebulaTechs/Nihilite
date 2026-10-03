@@ -26,11 +26,11 @@
         cancelled-fn (fn [] (.get cell))]
     (reg/map->HookEvent
       {:spec-id      (:id spec)
-       :source       {:class         (or (:source-class spec)
-                                         (:target-internal spec))
+       :source       {:class         (or (:internal-class spec)
+                                          (:target-internal spec))
                        :internal      (:target-internal spec)
                        :method        (:method-name spec)
-                       :descriptor    (:source-descriptor spec)
+                       :descriptor    (:method-descriptor spec)
                        :action        (:action spec)
                        :method-key    (:method-key spec)}
        :phase        pos
@@ -125,25 +125,6 @@
     (catch nihilite.kernel.HookCancelledException _
       (throw (exc/cancelled!)))))
 
-(defn- modify-value-compatible?
-  "Whether `rv` can legally replace `original` as the target method's
-   return value.
-
-   The advice is woven with @Advice.Return(typing = DYNAMIC), so whatever
-   the bridge returns is cast by the JVM to the target method's return
-   type. A bridge that returns the wrong shape (the common slip is
-   returning `ctx` itself) would otherwise surface as a bare
-   ClassCastException from inside the woven method, with no hint about
-   which hook or which spec caused it. Checked here instead so the error
-   names the spec.
-
-   Null and primitives-unboxing cases: a primitive target is only
-   compatible when the value is a boxed instance of the wrapper."
-  [rv original]
-  (or (nil? rv)
-      (nil? original)
-      (instance? (class original) rv)))
-
 (def ^:private boxed-primitives
   "descriptor return char -> the wrapper class, so a bridge value can be
    narrowed to what the target method actually returns."
@@ -155,6 +136,66 @@
    \S Short
    \F Float
    \D Double})
+
+(defn- bi
+  ([s] (java.math.BigInteger. ^String s))
+  ([lo hi] [(java.math.BigInteger. ^String lo) (java.math.BigInteger. ^String hi)]))
+
+(def ^:private min-max
+  "The exact value range of each boxed primitive return type, as
+   BigIntegers. Written as literals because a BigDecimal built from a
+   double carries that double's approximation, which would make
+   Integer/MAX_VALUE itself look out of range. Float and Double are
+   absent: they can hold anything, so narrowing to them cannot truncate."
+  {Integer (bi "-2147483648" "2147483647")
+   Long    (bi "-9223372036854775808" "9223372036854775807")
+   Short   (bi "-32768" "32767")
+   Byte    (bi "-128" "127")})
+
+(defn- exact-rv
+  "The value of rv as an exact BigDecimal, or nil when it has no exact
+   integer form and so cannot be range-checked.
+
+   A Double or Float is checked only when it is mathematically integral:
+   1e20 narrows to Integer/MAX_VALUE silently, which is exactly the bug
+   this guards, and its double value IS the integer 10^20 exactly enough
+   to compare against the range. A non-integral Double (1.5) has no
+   integer value to check, so it narrows as the JVM does."
+  [rv]
+  (cond
+    (instance? java.math.BigInteger rv) (bigdec rv)
+    (instance? java.math.BigDecimal rv)
+    (if (== (.compareTo (biginteger rv) (.toBigInteger rv)) 0)
+      (bigdec rv)
+      nil)
+    (instance? Long rv)   (bigdec rv)
+    (instance? Integer rv) (bigdec rv)
+    (instance? Short rv)  (bigdec rv)
+    (instance? Byte rv)   (bigdec rv)
+    (instance? clojure.lang.BigInt rv) (bigdec rv)
+    (instance? Double rv)
+    (if (or (Double/isNaN rv) (Double/isInfinite rv)
+            (not (== rv (Math/floor (double rv)))))
+      nil
+      (bigdec rv))
+    (instance? Float rv)
+    (if (or (Float/isNaN rv) (Float/isInfinite rv)
+            (not (== rv (Math/floor (double rv)))))
+      nil
+      (bigdec (double rv)))
+    :else nil))
+
+(defn- representable?
+  "Whether the exact value fits the target wrapper type. Widening always
+   fits, so only the narrowing direction is checked. A target with no
+   range (Boolean, Character, Float, Double) can never truncate."
+  [^java.math.BigDecimal exact ^Class target]
+  (let [bounds (min-max target)]
+    (if (nil? bounds)
+      true
+      (let [[^java.math.BigInteger lo ^java.math.BigInteger hi] bounds
+            i (.toBigIntegerExact exact)]
+        (and (>= (compare i lo) 0) (<= (compare i hi) 0))))))
 
 (defn- descriptor-return-class
   "The class a method with this descriptor returns, or nil when the
@@ -178,6 +219,71 @@
             (contains? boxed-primitives c) (boxed-primitives c)
             :else rt))))))
 
+
+(defn- resolve-type-name
+  "Resolves a JVM type name from a descriptor to a Class, or nil when it
+   cannot be resolved. Used only where a return-value check needs the
+   declared type and has no other source for it.
+
+   Loads with initialize=false so resolving a name never runs the type's
+   static initialiser: a :return bridge is inside the target method when
+   this runs, so a static initialiser that touches the hooked method
+   would re-enter the advice.
+
+   Accepts both the internal slash form a descriptor carries
+   (java/util/BitSet) and the binary dotted form (java.util.BitSet);
+   Class/forName only understands the latter."
+  [^String name]
+  (try
+    (when (seq name)
+      (Class/forName (.replace ^String name "/" ".") false
+                     (clojure.lang.RT/baseLoader)))
+    (catch Throwable _ nil)))
+
+(defn- modify-value-compatible?
+  "Whether `rv` can legally replace the target method's return value.
+
+   The advice is woven with @Advice.Return(typing = DYNAMIC), so whatever
+   the bridge returns is cast by the JVM to the target method's return
+   type. A bridge that returns the wrong shape (the common slip is
+   returning `ctx` itself) would otherwise surface as a bare
+   ClassCastException from inside the woven method, with no hint about
+   which hook or which spec caused it. Checked here instead so the error
+   names the spec.
+
+   `descriptor` is the target method's own descriptor and is the only
+   trustworthy source of the declared return type. An earlier version
+   took the previous call's value instead, which meant that whenever the
+   target returned null the check degenerated to `(instance? nil rv)` --
+   true for every rv, so a bridge returning an Integer against a
+   MyThing-returning method passed here and then threw a bare CCE from
+   inside the woven method. A method may return null on one call and a
+   real value on the next, so the check passed or failed depending on
+   data, not on the bridge.
+
+   Falls back to comparing against `original` only when the declared
+   type cannot be determined, which is the case for an array or a
+   malformed descriptor."
+  [rv original ^String descriptor]
+  (or (nil? rv)
+      (let [target (descriptor-return-class descriptor)]
+        (cond
+          (string? target)
+          (if-let [cls (resolve-type-name target)]
+            (instance? cls rv)
+            (or (nil? original) (instance? (class original) rv)))
+
+          (some? target)
+          ;; A primitive target. coerce-return already narrowed a Number
+          ;; to the target's own wrapper, so only a non-Number can still
+          ;; be wrong here -- a String passes through coerce-return
+          ;; untouched and would reach the woven method as a CCE.
+          (instance? target rv)
+
+          :else
+          ;; void, or no descriptor to read: nothing to check against.
+          true))))
+
 (defn coerce-return
   "Narrows a bridge's return value to the target method's return type.
 
@@ -189,9 +295,13 @@
    method, naming neither the hook nor the spec.
 
    Numeric narrowing is what a caller means here, so do it in Clojure where the
-   error can name the spec. A value that genuinely cannot represent the target
-   type is left alone, and the caller rejects it with
-   :nihilite/invalid-modify-value."
+   error can name the spec. A value that cannot represent the target type is
+   REJECTED, not truncated: JVM's .byteValue/.intValue saturate silently
+   (300 -> 44, 1e20 -> Integer/MAX_VALUE, NaN -> 0), so a bridge asking for a
+   byte and handing back 300 would otherwise change what the woven method
+   returns with no signal at all. Rejection carries the same
+   :nihilite/invalid-modify-value kind the caller's own check uses, so one
+   handler covers both."
   [rv ^String descriptor]
   (let [target (descriptor-return-class descriptor)]
     (cond
@@ -201,14 +311,27 @@
       (instance? target rv) rv
       ;; rv is a Number standing in for a narrower or wider numeric return
       (and (number? rv) (contains? (set (vals boxed-primitives)) target))
-      (condp identical? target
-        Integer (.intValue ^Number rv)
-        Long (.longValue ^Number rv)
-        Short (.shortValue ^Number rv)
-        Byte (.byteValue ^Number rv)
-        Double (.doubleValue ^Number rv)
-        Float (.floatValue ^Number rv)
-        rv)
+      (let [narrowed (condp identical? target
+                       Integer (.intValue ^Number rv)
+                       Long (.longValue ^Number rv)
+                       Short (.shortValue ^Number rv)
+                       Byte (.byteValue ^Number rv)
+                       Double (.doubleValue ^Number rv)
+                       Float (.floatValue ^Number rv)
+                       rv)
+            exact    (exact-rv rv)]
+        (if (and exact (not (representable? exact target)))
+          (throw (ex-info
+                   (str ":modify bridge returned " (pr-str rv) " ("
+                        (.getName (class rv)) "), which does not fit the target's "
+                        (.getName ^Class target) " return type. Narrowing would "
+                        "truncate it silently, so the value is rejected instead.")
+                   {:nihilite/kind :nihilite/invalid-modify-value
+                    :nihilite/returned (class rv)
+                    :nihilite/narrowed (class narrowed)
+                    :nihilite/target target
+                    :nihilite/descriptor descriptor}))
+          narrowed))
       :else rv)))
 
 (defn dispatch-return-for-spec
@@ -230,21 +353,21 @@
             (cond
               (and (= action :modify) (some? rv))
               (do
-                (let [rv' (coerce-return rv (or (:source-descriptor s)
-                                                 (:source-descriptor spec)))]
-                  (when-not (modify-value-compatible? rv' original)
+                (let [desc (or (:method-descriptor s) (:method-descriptor spec))
+                      rv'  (coerce-return rv desc)]
+                  (when-not (modify-value-compatible? rv' original desc)
                     (throw (ex-info
                              (str ":modify bridge for spec " (:id s) " returned "
                                   (.getName (class rv'))
                                   ", which cannot replace the target's "
-                                  (.getName (class original))
-                                  ". A :modify bridge must RETURN the"
+                                  (:method-descriptor spec)
+                                  " return value. A :modify bridge must RETURN the"
                                   " replacement value (it may take ctx as its"
                                   " single argument, but must not return it).")
                              {:nihilite/kind :nihilite/invalid-modify-value
                               :nihilite/id (:id s)
                               :nihilite/returned (class rv')
-                              :nihilite/original (class original)})))
+                              :nihilite/descriptor desc})))
                   (reset! result rv')
                   (reset! modified? true)
                   (reset! decided? true)))
@@ -324,7 +447,14 @@
 
    The return value is what the woven method returns. Returning nil keeps
    the advice's own fallback (the method returns null), so a :redefine
-   bridge that wants a value must return one."
+   bridge that wants a value must return one.
+
+   The value is checked against the target method's declared return type
+   the same way a :modify bridge's is. A :redefine hook has no previous
+   value to compare against -- it replaced the body, so nothing ran
+   before it -- which made this the one path where a wrong-shaped return
+   reached the woven method unchecked and surfaced as a bare
+   ClassCastException naming neither the hook nor the spec."
   [host-internal method-name self args descriptor]
   (try
     (let [param-count (count args)
@@ -333,8 +463,20 @@
         (if-let [bridge-fn (safe-bridge spec)]
           (try
             (stats/bump-fired! spec-id)
-            (coerce-return (bridge-fn self args method-name)
-                           (or (:source-descriptor spec) descriptor))
+            (let [desc (or (:method-descriptor spec) descriptor)
+                  rv   (coerce-return (bridge-fn self args method-name) desc)]
+              (when-not (modify-value-compatible? rv nil desc)
+                (throw (ex-info
+                         (str ":redefine bridge for spec " spec-id " returned "
+                              (.getName (class rv))
+                              ", which cannot be the target's " desc
+                              " return value. A :redefine bridge must RETURN"
+                              " a value the target method can return.")
+                         {:nihilite/kind :nihilite/invalid-redefine-value
+                          :nihilite/id spec-id
+                          :nihilite/returned (class rv)
+                          :nihilite/descriptor desc})))
+              rv)
             (catch Throwable t
               (log/error t "bridge redefine-fire failed (id=" spec-id ")")
               (throw t)))

@@ -46,6 +46,14 @@ HOSTILE_TARGET_INDEX=3 clojure -T:build hostile-target-driver
 a woven count and nothing throws, so every driver asserts a real firing rather
 than a successful install.
 
+One route to it is now closed. The `:descriptor` decides which loaded method a
+hook matches — ByteBuddy matches on it and `nihilite.registry.index` keys its
+buckets by it — so a descriptor that is not a valid JVM method descriptor used
+to register successfully and then match nothing. `install!` now rejects one
+with `:nihilite/bad-descriptor`, checked at install time rather than left to
+surface as silence. The targets measured above all had correct descriptors; the
+untestable ones (a method that cannot be hooked) still cannot.
+
 ## FileInputStream.read, in detail
 
 Its outcome is a function of the classpath shape, not of the method. Same code,

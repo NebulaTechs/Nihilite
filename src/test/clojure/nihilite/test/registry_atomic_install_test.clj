@@ -18,7 +18,6 @@
   [id seed]
   {:id              id
    :target-internal target-internal
-   :source-class    "java/lang/Object"
    :method-name     method-name
    :descriptor      descriptor
    :position        :entry

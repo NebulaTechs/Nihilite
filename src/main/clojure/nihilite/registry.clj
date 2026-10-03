@@ -9,7 +9,8 @@
    atomicity (locking over by-id / by-target / by-method). This file
    is the single source of truth for the records (HookSpec /
    HookContext / HookEvent) and the position/action normalization."
-  (:require [clojure.tools.logging :as log]
+  (:require [clojure.string :as str]
+            [clojure.tools.logging :as log]
             [nihilite.registry.index :as index]
             [nihilite.registry.stats :as stats])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
@@ -32,9 +33,20 @@
   (swap! actions-registry conj action-key)
   action-key)
 
+;; One installed hook.
+;;
+;; `internal-class` and `method-descriptor` are DERIVED, not read from the
+;; spec map: install! computes them from `:target-internal` and
+;; `:descriptor`, which are the fields a caller actually supplies. They
+;; were called `source-class` and `source-descriptor`, which read as if a
+;; hook could name some method other than the one it targets -- it cannot.
+;; `method-descriptor` holds the same string as `:descriptor`.
+;;
+;; Renamed from `source-class`/`source-descriptor`; a caller reading
+;; api/lookup sees the new names.
 (defrecord HookSpec
   [id target-internal method-name position arity bridge note
-   action method-key source-class source-descriptor tag])
+   action method-key internal-class method-descriptor tag])
 
 (defrecord HookContext
   [hook-id self args phase return-value cancelled])
@@ -364,6 +376,122 @@
              :cancelled  (counter-value rec :cancelled)
              :exceptions (counter-value rec :exceptions)))))
 
+(def ^:private primitive-descriptor-chars
+  "The JVM's type codes a descriptor may spell directly. V is here
+   because a return type may be void; it is not a legal parameter type,
+   which valid-descriptor? does not distinguish, since a spec whose
+   descriptor claims otherwise cannot match a real method either."
+  #{\B \C \D \F \I \J \S \V \Z})
+
+(defn- valid-object-type-name?
+  "Whether a `L...;` body is a well-formed internal class name: a
+   sequence of `/`-separated identifiers, each starting with a letter or
+   `_` or `$`. Deliberately does not resolve the name -- resolving means
+   loading the type, and a hook installed to observe a class-loading path
+   would re-enter the advice."
+  [^String n]
+  (and (pos? (count n))
+       ;; Every character must be legal in an identifier. Checking each
+       ;; one, rather than only the first of each slash-separated part,
+       ;; is what rejects the dotted binary form: a descriptor spells
+       ;; java.lang.String as Ljava/lang/String;, and a name carrying a
+       ;; dot could never match a method.
+       (every? #(or (Character/isLetterOrDigit %)
+                    (= % \_)
+                    (= % \$)
+                    (= % \/))
+              n)
+       (not (Character/isDigit (.charAt n 0)))
+       (every? #(pos? (count %))
+               (str/split n #"/" -1))))
+
+(defn- valid-type-token?
+  "Whether `tok` is one JVM type: `[` prefixes (any number) followed by
+   a primitive letter, an object name in `L...;`, or -- for a return type
+   only, which this cannot tell -- nothing else."
+  [^String tok]
+  (and (pos? (count tok))
+       (let [i (loop [i 0]
+                 (if (and (< i (count tok)) (= \[ (.charAt tok i)))
+                   (recur (inc i))
+                   i))]
+         (if (< i (count tok))
+           (let [c (.charAt tok i)]
+             (cond
+               (contains? primitive-descriptor-chars c)
+               (= i (dec (count tok)))
+
+               (= \L c)
+               (let [semi (.lastIndexOf tok (int \;))]
+                 (and (= semi (dec (count tok)))
+                      (> semi (inc i))
+                      (valid-object-type-name? (subs tok (inc i) semi))))
+
+               :else false))
+           false))))
+
+(defn- split-type-tokens
+  "Splits a run of concatenated JVM types into one string per type.
+
+   Scanning by hand rather than by regex: a `L...;` name can contain
+   letters that look like type codes, so only the grammar knows where a
+   name ends, and a regex would have to encode the same grammar anyway."
+  [^String s]
+  (let [n (count s)]
+    (loop [i 0
+           start 0
+           out []]
+      (cond
+        (>= i n)
+        (if (= start n) out (conj out (subs s start)))
+
+        (= \[ (.charAt s i))
+        (recur (inc i) start out)
+
+        (= \L (.charAt s i))
+        (let [semi (.indexOf s (int \;) i)]
+          (if (neg? semi)
+            (conj out (subs s start))
+            (recur (inc semi) (inc semi) (conj out (subs s start (inc semi))))))
+
+        :else
+        (recur (inc i) (inc i) (conj out (subs s start (inc i))))))))
+
+(defn- valid-descriptor?
+  "Whether `s` is a syntactically valid JVM method descriptor: `(`
+   followed by zero or more parameter types, `)`, then exactly one return
+   type.
+
+   A malformed descriptor is not a harmless slip. It becomes the spec's
+   :method-key and its :method-descriptor, and both decide which loaded
+   method a hook matches: ByteBuddy matches on the descriptor and
+   nilhotite.registry.index keys its buckets by it. A descriptor this
+   rejects is one ByteBuddy cannot match either, so the hook would
+   register successfully and never fire -- the 'registers but never
+   fires' mode docs/hook-limits.md documents, reached by a route the
+   reader would not expect.
+
+   Parses only, never resolves."
+  [^String s]
+  (and (>= (count s) 3)
+       (= 40 (int (.charAt s 0)))
+       (let [close (.indexOf s (int 41))]
+         (and (pos? close)
+              (let [params (split-type-tokens (subs s 1 close))]
+                (and (every? valid-type-token? params)
+                     ;; V names void, which is a return type only.
+                     (not-any? #(= 86 (int (.charAt ^String % 0))) params)))
+              (valid-type-token? (subs s (inc close)))))))
+
+(defn- descriptor-param-count
+  "How many parameters `descriptor` declares, or nil when it declares none
+   that could be counted. A descriptor is the authority on a method's
+   shape, so this is the authority on arity too."
+  [^String s]
+  (let [close (.indexOf s (int 41))]
+    (when (pos? close)
+      (count (split-type-tokens (subs s 1 close))))))
+
 (defn install!
   [spec]
   (let [{:keys [id target-internal method-name position arity
@@ -372,14 +500,23 @@
         spec-target (some-> target-internal str)
         spec-method (some-> method-name str)
         spec-pos    (normalize-position position)
-        spec-arity  (when arity (int arity))
+        ;; The descriptor already states the parameter count, so an
+        ;; omitted :arity is redundant rather than unknown. Falling back
+        ;; to it makes the two agree by construction, and
+        ;; lookup-spec-for-call's (or (nil? ar) (= ar pcnt)) check
+        ;; actually run for a caller that left :arity out.
+        spec-arity  (cond
+                      (some? arity) (int arity)
+                      (and (string? descriptor) (pos? (count descriptor)))
+                      (descriptor-param-count descriptor)
+                      :else nil)
         spec-desc   (some-> descriptor str)
         spec-action (if (contains? spec :action) (normalize-action action) :observe)
         spec-tag    (some-> tag str)
         desc-missing? (or (nil? spec-desc) (empty? spec-desc))
         spec-method-key (when-not desc-missing?
                           (method-key spec-target spec-method spec-desc))
-        spec-source-class (when-not desc-missing?
+        spec-internal-class (when-not desc-missing?
                             (.replace ^String spec-target "/" "."))]
     (when (empty? spec-id)
       (throw (ex-info ":id required for HookSpec"
@@ -407,6 +544,28 @@
                        :nihilite/id spec-id
                        :nihilite/target spec-target
                        :nihilite/method spec-method})))
+    (when-not (valid-descriptor? spec-desc)
+      (throw (ex-info (str ":descriptor is not a valid JVM method descriptor (id="
+                            spec-id "): " (pr-str spec-desc))
+                      {:nihilite/kind :nihilite/bad-descriptor
+                       :nihilite/id spec-id
+                       :nihilite/descriptor spec-desc
+                       :nihilite/target spec-target
+                       :nihilite/method spec-method})))
+    (let [declared (descriptor-param-count spec-desc)]
+      (when-not (nil? declared)
+        (when (and (some? spec-arity) (not= spec-arity declared))
+          (throw (ex-info
+                   (str ":arity " spec-arity " contradicts " (pr-str spec-desc)
+                        ", which declares " declared " parameter"
+                        (when (not= 1 declared) "s") " (id=" spec-id ")")
+                   {:nihilite/kind :nihilite/arity-descriptor-mismatch
+                    :nihilite/id spec-id
+                    :nihilite/arity spec-arity
+                    :nihilite/descriptor spec-desc
+                    :nihilite/declared-params declared
+                    :nihilite/target spec-target
+                    :nihilite/method spec-method})))))
     (when (and (some? spec-action) (not (contains? (registered-actions) spec-action)))
       (throw (ex-info (str ":action must be one of " (vec (registered-actions)))
                       {:nihilite/kind :nihilite/invalid-action
@@ -458,8 +617,8 @@
                            :action spec-action
                            :tag spec-tag
                            :method-key spec-method-key
-                           :source-class spec-source-class
-                           :source-descriptor spec-desc)]
+                           :internal-class spec-internal-class
+                           :method-descriptor spec-desc)]
        ;; A :redefine hook replaces the method body, so from the moment the
        ;; retransform lands the advice's only route to the bridge is the
        ;; dispatcher. Wait before touching any index, so a timeout leaves

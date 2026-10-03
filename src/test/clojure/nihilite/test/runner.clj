@@ -21,6 +21,8 @@
    "nihilite.test.install-redefine-reject-test"
    "nihilite.test.dispatch-exception-test"
    "nihilite.test.dispatch-modified-test"
+   "nihilite.test.return-type-check-test"
+   "nihilite.test.descriptor-grammar-test"
    "nihilite.test.dispatch-common-test"
    "nihilite.test.dispatch-entry-cancel-test"
    "nihilite.test.agent-worker-once-test"
