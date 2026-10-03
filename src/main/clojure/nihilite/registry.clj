@@ -501,12 +501,6 @@
   ^java.util.List [target-internal]
   (index/matching target-internal))
 
-(defn revision
-  "Current index revision. Increments on every mutating operation
-   (install!/uninstall!/clear!)."
-  []
-  (index/revision))
-
 (defn list-ids
   []
   (sort (vec (.keySet by-id))))

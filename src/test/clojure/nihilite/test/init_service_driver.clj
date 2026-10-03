@@ -3,11 +3,10 @@
    that Nihilite was attached to, deploy a network service that a client
    outside the JVM can reach?
 
-   This is the load-bearing assumption behind removing the embedded nREPL
-   server. If init can start a plain socket service and addURL a jar onto
-   Compiler/LOADER, then a user who wants an interactive control plane
-   brings their own, and `java -jar nihilite.jar` does not have to open a
-   port on its own. If it cannot, the idea is dead and the server stays.
+   This is the load-bearing assumption behind Nihilite opening no port. If
+   init can start a plain socket service and addURL a jar onto Compiler/LOADER,
+   then a user who wants an interactive control plane brings their own, and the
+   agent never has to bind anything itself. If it cannot, that design is dead.
 
    The probe answers four things, in order, and prints one line each:
 
@@ -22,14 +21,14 @@
    main that outlives the probe, because the probe's own echo thread is a
    daemon and nothing else would hold the JVM up.
 
-   This file is the second thing the nREPL deletion invalidated, and it rotted
-   quietly because it is not in `check`. It used to run under `java -jar`,
-   where Main-Class evaluated the init form; when that entry was reduced to
-   printing usage there was no path left to run on. It also used to rely on
-   the embedded server's non-daemon thread to keep the JVM alive after init
-   returned -- that thread went away with the server. A characterisation pass
-   outside `check` gets no failure signal, so both changes had to be found by
-   reading rather than by a red build.
+   This file has already been invalidated twice by unrelated changes and rotted
+   both times, because it is not in `check` and so has no failure signal. It
+   used to run under `java -jar`, and when that entry was reduced to printing
+   usage there was no path left to run on; before that it relied on a
+   non-daemon thread from an embedded server to keep the JVM alive after init
+   returned, and that thread went away with the server. Both had to be found by
+   reading rather than by a red build. A characterisation pass outside `check`
+   is only worth as much as the last time someone ran it.
 
    The init script is written to a temp file and loaded via
    `(load-file \"...\")` so the -Dnihilite.init property stays short and no

@@ -158,7 +158,7 @@
   "Entry point for an agent's argument string. Returns nil when the args are
    not an eval request, so the caller can keep its previous behaviour."
   [^String args]
-  (if-let [{:keys [transport code] :as req} (parse-request args)]
+  (if-let [{:keys [transport] :as req} (parse-request args)]
     (let [reply (assoc (run-request! req) :token (:token transport))]
       (reply! transport (pr-str reply))
       reply)

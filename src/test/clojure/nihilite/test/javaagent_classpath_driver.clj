@@ -190,19 +190,6 @@
 (defn- host-java-major []
   (Integer/parseInt (first (re-seq #"\d+" (System/getProperty "java.version")))))
 
-(defn- drain
-  "Reads proc's merged output to EOF and returns it as a string."
-  ^String [^Process proc]
-  (let [is   (.getInputStream proc)
-        pipe (ByteArrayOutputStream.)
-        buf  (byte-array 4096)]
-    (loop []
-      (let [n (try (.read is buf) (catch Throwable _ -1))]
-        (when (not= -1 n)
-          (.write pipe buf 0 n)
-          (recur))))
-    (.toString pipe "UTF-8")))
-
 (defn spawn-jar-smoke [argv]
   (let [nihilite-jar (nth argv 1)
         init-script (when (> (count argv) 2) (nth argv 2))

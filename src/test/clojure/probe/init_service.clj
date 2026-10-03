@@ -14,9 +14,10 @@
 ;;   service        a plain loopback echo service, and whether a client in
 ;;                  another process can reach it.
 ;;
-;; Nothing here uses NREPL, a middleware, or anything from Nihilite's transport.
-;; That is the point: if this works, a user who wants a control plane brings
-;; their own, and Nihilite does not have to open a port.
+;; Nothing here uses a REPL server, a middleware, or anything from Nihilite --
+;; a plain loopback socket and one addURL is the entire mechanism. That is the
+;; point: a user who wants a control plane brings their own, and the agent does
+;; not have to bind anything.
 ;;
 ;; The host directory arrives as a system property rather than being interpolated
 ;; into this file, so this file stays readable Clojure instead of an escaped

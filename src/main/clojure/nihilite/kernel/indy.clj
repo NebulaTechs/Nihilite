@@ -26,9 +26,6 @@
 
 (def bootstrap-dispatcher-name "nihilite.kernel.IndyBootstrapDispatcher")
 
-(def bootstrap-descriptor
-  "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;")
-
 (defn- emitter
   "Wraps an ASM-emitting function into an Implementation. `n-locals` sizes the
    frame; `fn` receives the MethodVisitor and emits the body."

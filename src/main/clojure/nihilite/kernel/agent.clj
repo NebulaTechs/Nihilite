@@ -143,9 +143,11 @@
                           (try
                             (require (quote nihilite.kernel.worker))
                             ((resolve (quote nihilite.kernel.worker/init-and-bind)))
-                            (catch Throwable t
-                              (log-error (str "[Nihilite Agent] worker failed: "
-                                              (.toString t))))
+                            ;; No catch. The worker thread is non-daemon, so a
+                            ;; throw here prints a stack trace and kills only
+                            ;; this thread, and the latch still counts down so
+                            ;; premain is not wedged. This was the third place a
+                            ;; real startup failure disappeared into.
                             (finally
                               (agent-signalWorkerReady))))))
           worker (Thread. ^Runnable proxy-fn "nihilite-agent-worker")]

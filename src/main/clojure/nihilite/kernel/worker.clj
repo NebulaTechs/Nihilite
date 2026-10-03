@@ -26,12 +26,6 @@
 (defn- log-info [^String msg]
   (.info worker-log msg))
 
-(defn- log-warn [msg]
-  (.warning worker-log msg))
-
-(defn- log-error [msg]
-  (.severe worker-log msg))
-
 (defn- clojure-var
   "Returns the IFn for a (ns-name, var-name) pair, without requiring
    `clojure.java.api` at compile- or load-time. Uses clojure.lang.RT/var
@@ -44,21 +38,56 @@
 (defn- require-ns [sym]
   (.invoke ^clojure.lang.IFn (clojure-var "clojure.core" "require") sym))
 
+(def ^:private dispatch-ready-timeout-ms
+  "How long init-clojure waits for a var that another thread is still loading."
+  5000)
+
+(defn- await-var
+  "Waits for a var to become bound, then returns it.
+
+   require-ns is not a synchronization point. clojure.core/load-one evaluates
+   the whole file first and only then records the lib, so a thread requiring a
+   namespace another thread is already loading sees it as not loaded, calls
+   load-one again, and RT/var can then land while that second load is still
+   evaluating -- handing back a var whose root is Var$Unbound, which throws
+   IllegalStateException on invoke.
+
+   The transformer needs this namespace for spec lookup and runs on whichever
+   thread is loading a class, so it really does load concurrently with the
+   worker. Waiting is not a guess: the other thread's load will finish and bind
+   the var. Bounded, then a throw -- an agent with no redefine dispatcher cannot
+   redefine anything, and a :redefine method body that cannot reach its bridge
+   returns the stub default instead, silently."
+  ^clojure.lang.Var [^String ns-name ^String var-name]
+  (let [v (clojure-var ns-name var-name)
+        deadline (+ (System/currentTimeMillis) dispatch-ready-timeout-ms)]
+    (loop []
+      (cond
+        (.isBound v) v
+        (< (System/currentTimeMillis) deadline)
+        (do (Thread/sleep 20) (recur))
+        :else
+        (throw (ex-info (str "var never became bound: " ns-name "/" var-name)
+                        {:ns ns-name
+                         :var var-name
+                         :timeout-ms dispatch-ready-timeout-ms}))))))
+
 (defn- init-clojure
   "Loads the core Clojure namespaces and installs the redefine dispatcher
-   bridge. Errors are caught and logged so the worker can still complete
-   the loader binding below."
+   bridge.
+
+   Nothing here is caught. This runs before the dispatcher exists, so a
+   swallowed failure leaves every :redefine hook wired to a method body that
+   cannot reach its bridge: the method returns the stub default and nothing
+   reports it. That is the failure mode this namespace used to have."
   []
   (require-ns 'clojure.core)
   (require-ns 'nihilite.registry)
   (require-ns 'nihilite.registry.dispatch)
-  (try
-    (let [install-redisp (clojure-var "nihilite.registry.dispatch" "install-redefine-dispatcher!")
-          result (.invoke ^clojure.lang.IFn install-redisp)]
-       (log-info (str "[Nihilite] redefine dispatcher installed: " result)))
-    (catch Throwable t
-      (log-warn (str "[Nihilite] install-redefine-dispatcher! failed: "
-                     (.toString t))))))
+  (let [install-redisp (await-var "nihilite.registry.dispatch"
+                                   "install-redefine-dispatcher!")
+        result (.invoke ^clojure.lang.IFn install-redisp)]
+    (log-info (str "[Nihilite] redefine dispatcher installed: " result))))
 
 (defn resolve-host-class-loader
   "Returns the classloader the Clojure Compiler should use."
@@ -78,11 +107,13 @@
 (defn init-and-bind
   "Brings Clojure-side state online. Called from the agent worker thread.
    Binds *ns* to this namespace so log calls resolve the logger name to
-   `nihilite.worker` instead of a stack-frame class name."
+   `nihilite.worker` instead of a stack-frame class name.
+
+   Not caught. The caller counts the worker-ready latch down in a finally, so a
+   throw here surfaces as a stack trace without wedging premain -- which is the
+   point: a worker that failed leaves the agent half installed, and swallowing
+   that is how the redefine dispatcher went missing for weeks."
   []
   (binding [*ns* (find-ns 'nihilite.kernel.worker)]
-    (try
-      (init-clojure)
-      (bind-compiler-loader)
-      (catch Throwable t
-        (log-error (str "[Nihilite] worker failed: " (.toString t)))))))
+    (init-clojure)
+    (bind-compiler-loader)))

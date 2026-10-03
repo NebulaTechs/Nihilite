@@ -246,7 +246,7 @@ jobs:
           # `java -jar` reaches Main-Class, which is handed a nil
           # Instrumentation: it can never weave, so it does not try. It prints
           # a stub notice and returns 0. This used to wait for a server banner
-          # that went away with the embedded nREPL, so the step failed on a jar
+          # from a feature that no longer exists, so the step failed on a jar
           # that was working exactly as designed.
           java -jar target/nihilite.jar > /tmp/nihilite-main.log 2>&1
           echo "--- java -jar output ---"

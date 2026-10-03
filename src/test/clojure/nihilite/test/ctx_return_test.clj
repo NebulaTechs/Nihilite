@@ -5,9 +5,8 @@
    those, so it compiled and then threw
    `IllegalArgumentException: No matching field found: getReturnValue` on
    every invocation -- once per read in a real `java -javaagent` JVM, which
-   produced 122MB of ERROR logs before the nREPL connection stopped
-   answering. Nothing caught it because no test called it and the only
-   caller was an example.
+   produced 122MB of ERROR logs and made the process unusable. Nothing caught
+   it because no test called it and the only caller was an example.
 
    These cases exist so the accessor form cannot come back unnoticed."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]

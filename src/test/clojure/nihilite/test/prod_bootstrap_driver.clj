@@ -74,9 +74,25 @@
                                                        java.lang.instrument.Instrumentation]))]
     (.setAccessible premain true)
     (.invoke premain nil (object-array [nil inst]))
-    ;; The :redefine advice dispatches through this. Without it the advice runs,
-    ;; finds its spec, and returns the default value instead of the bridge's.
-    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+    ;; The :redefine advice dispatches through redefine-dispatcher-ref, which
+    ;; the worker installs on its own thread. This driver used to install it
+    ;; again right here, which masked a real failure: the worker lost a require
+    ;; race, never installed it, and the driver quietly supplied the missing
+    ;; piece -- so the one thing this driver exists to prove was the thing it
+    ;; was papering over. Wait for the worker's install instead of supplying
+    ;; it; the :redefine assertion below is then a real gate.
+    (let [deadline (+ (System/currentTimeMillis) 30000)
+          ready?  (fn []
+                    (let [v (clojure.lang.RT/var "nihilite.registry.dispatch"
+                                                  "redefine-dispatcher-ref")]
+                      (and (.isBound v)
+                           (some? @(.deref ^clojure.lang.Var v)))))]
+      (loop []
+        (when-not (ready?)
+          (when (> (System/currentTimeMillis) deadline)
+            (throw (ex-info "worker never installed the redefine dispatcher" {})))
+          (Thread/sleep 50)
+          (recur))))
 
     ;; Loaded before install!, otherwise there is nothing to retransform and
     ;; the woven count would be 0 for an uninteresting reason.

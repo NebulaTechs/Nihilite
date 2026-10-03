@@ -2,9 +2,9 @@
   "Startup work that is not the transformer: run the init script, and serve
    an eval request that arrived on the agent args.
 
-   This namespace used to own the embedded nREPL server and its middleware
-   stack. Both are gone. Nihilite opens no port; a process that wants to
-   evaluate code in an attached JVM sends an eval request (see
+   This namespace used to own an embedded server and its middleware stack.
+   Both are gone. Nihilite opens no port; a process that wants to evaluate
+   code in an attached JVM sends an eval request (see
    nihilite.eval.protocol), and a process that wants a full control plane
    starts its own service from its init script (see
    examples/nrepl_service.clj)."
