@@ -52,26 +52,37 @@
      {:session sid :error "unknown session" :running? false})))
 
 (defn interrupt
-  "Asks the session's running eval to stop.
+  "Asks the session to stop what it is doing.
 
-   This is Thread.interrupt, so it unblocks a thread waiting on I/O, sleep or a
-   monitor, and throws InterruptedException into it. It does NOT stop a tight
-   `(loop [] (recur))`: Clojure recur never checks the interrupt flag, and
-   Thread.stop, which would, was removed in JDK 20. A CPU-bound eval that must
-   be killed has to cooperate -- poll `snapshot` and check :running? from the
-   code being evaluated."
+   This is Thread.interrupt against the session's thread, so it unblocks a
+   thread waiting on I/O, sleep or a monitor, and throws InterruptedException
+   into it. Queued evals are dropped rather than run.
+
+   It does NOT stop a tight `(loop [] (recur))`: Clojure's recur never checks
+   the interrupt flag, and Thread.stop, which would, was removed in JDK 20.
+   Nothing platform-independent can. Code that must be stoppable has to check
+   something of its own -- an eval that spawns a thread and holds it manages its
+   own cancellation, and eval-in returns immediately enough for that to be
+   cheap.
+
+   `:interrupted? true` means the request was delivered, not that the eval
+   stopped. Poll `snapshot` for `:running?` to find out."
   [^String sid]
   (if-let [s (session/lookup sid)]
-    (if-let [^Thread t (session/running-thread s)]
-      (do (.interrupt t) {:session sid :interrupted? true})
+    (if (:running? (session/read-state s nil))
+      (do (session/stop-running! s)
+          {:session sid :interrupted? true})
       {:session sid :interrupted? false :reason :not-running})
     {:session sid :interrupted? false :reason :unknown-session}))
 
 (defn close-session
-  "Drops a session and interrupts anything still running in it."
+  "Stops the session's thread, drops its queued work, and forgets it.
+
+   An eval already executing keeps running to completion; interrupt is
+   cooperative. See the `interrupt` docstring for what that does not cover."
   [^String sid]
-  (if (session/registered? sid)
-    (do (interrupt sid)
+  (if-let [s (session/lookup sid)]
+    (do (session/stop! s)
         (session/drop! sid)
         true)
     false))

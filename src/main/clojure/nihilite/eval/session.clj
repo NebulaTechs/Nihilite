@@ -25,9 +25,11 @@
    rather than in the API namespace. The API's own rationale is in
    nihilite.eval."
   (:import [java.io Writer]
+           [java.util.concurrent LinkedBlockingQueue]
            [java.util.concurrent.atomic AtomicLong]))
 
-(defrecord Session [id ns-obj eval-ids counter events value error running])
+(defrecord Session [id ns-obj eval-ids counter events value error
+                    running queue thread])
 
 (defonce ^:private sessions (atom {}))
 
@@ -104,9 +106,11 @@
     n))
 
 (defn- run-eval!
-  "The body of one eval, on its own thread. Split out of start-eval! so the
-   try/catch/finally nesting does not have to share a binding vector with the
-   thread plumbing."
+  "The body of one eval, run on the session's own thread.
+
+   Does not touch :running -- that is the session thread's state, not this
+   eval's. An eval that throws is reported to the session and the loop moves on
+   to the next one, which is the whole point of having a queue."
   [^Session s ^String code]
   (try
     (binding [*ns*  (:ns-obj s)
@@ -120,14 +124,36 @@
             (emit! s :out (str (render v) "\n"))))))
     (catch Throwable t
       (emit! s :err (str (type t) ": " (.getMessage ^Throwable t) "\n"))
-      (reset! (:error s) (render t)))
-    (finally
-      (reset! (:running s) nil))))
+      (reset! (:error s) (render t)))))
+
+(defn- session-loop
+  "Drains the session's queue on one thread, forever.
+
+   One thread per session rather than one per eval, which is what nREPL does
+   and what the semantics need: a session's namespace belongs to the session, so
+   two evals running at once in it would race on the same *ns* and on the same
+   binding vector. Serialising also means :running? means 'this session has work
+   left' rather than 'the most recent eval has a thread', which is a question a
+   caller can actually act on.
+
+   InterruptedException ends the thread. Nothing else does: an eval that
+   ignores interrupts keeps running, and the loop stays behind it. That is
+   honest -- a tight (loop [] (recur)) cannot be stopped from outside, because
+   recur never checks the flag and Thread.stop was removed in JDK 20."
+  [^Session s]
+  (let [^LinkedBlockingQueue q (:queue s)]
+    (loop []
+      (let [task (.take q)]
+        (when task
+          (run-eval! s (:code task))
+          (reset! (:running s) nil)
+          (recur))))))
 
 (defn register!
-  "Creates a session, stores it, and returns its id."
+  "Creates a session, starts its thread, stores it, and returns its id."
   ^String []
   (let [sid (str "s" (.incrementAndGet id-counter))
+        q   (LinkedBlockingQueue.)
         s   (->Session sid
                        (session-ns sid)
                        (AtomicLong. 0)
@@ -135,8 +161,17 @@
                        (atom [])
                        (atom nil)
                        (atom nil)
-                       (atom nil))]
-    (swap! sessions assoc sid s)
+                       ;; the eval id currently executing, or nil
+                       (atom nil)
+                       q
+                       nil)
+        ;; The thread closes over `s`, which does not yet carry the thread.
+        ;; It never needs it: the loop only reads the queue and the atoms.
+        t   (doto (Thread. ^Runnable #(session-loop s)
+                        (str "nihilite-eval-" sid))
+              (.setDaemon true))]
+    (swap! sessions assoc sid (assoc s :thread t))
+    (.start t)
     sid))
 
 (defn lookup
@@ -155,17 +190,39 @@
   nil)
 
 (defn start-eval!
-  "Starts evaluating code in the session's namespace on a fresh daemon thread
-   and returns the eval id. Asynchronous on purpose: see nihilite.eval/eval-in
-   for why the caller must not be made to wait."
+  "Queues code for evaluation on the session's thread and returns the eval id.
+
+   Asynchronous on purpose: see nihilite.eval/eval-in for why the caller must
+   not be made to wait. Enqueued rather than run on a thread of its own, so
+   that two evals in one session cannot race on its namespace -- and so that
+   interrupt has a thread to reach even when several evals are queued."
   ^String [^Session s ^String code]
-  (let [eid (.incrementAndGet ^AtomicLong (:eval-ids s))
-        t   (doto (Thread. ^Runnable #(run-eval! s code)
-                        (str "nihilite-eval-" (:id s) "-" eid))
-              (.setDaemon true))]
-    (reset! (:running s) t)
-    (.start t)
+  (let [eid (.incrementAndGet ^AtomicLong (:eval-ids s))]
+    ;; :running is set at enqueue time, not when the thread picks the task up.
+    ;; Marking it on take would leave a window where the queue is empty and
+    ;; nothing is marked -- the eval is running but :running? says otherwise,
+    ;; and a caller polling for completion reads the session too early.
+    (reset! (:running s) eid)
+    (.put ^LinkedBlockingQueue (:queue s) {:eid eid :code code})
     (str (:id s) "/" eid)))
+
+(defn running?
+  "Whether the session has an eval executing or one still queued."
+  [^Session s]
+  (boolean (or @(:running s)
+               (pos? (.size ^LinkedBlockingQueue (:queue s))))))
+
+(defn stop-running!
+  "Interrupts the current eval and discards anything queued behind it.
+
+   The thread itself survives: it goes back to .take and serves the next eval.
+   Use stop! to end the session."
+  [^Session s]
+  (when-let [^Thread t (:thread s)]
+    (.interrupt t))
+  (when-let [^LinkedBlockingQueue q (:queue s)]
+    (.clear q))
+  nil)
 
 (defn read-state
   "Reads the session's accumulated output and state.
@@ -190,11 +247,24 @@
      :cursor (long (max lower (:seq (peek events) 0)))
      :value @(:value s)
      :error @(:error s)
-     :running? (some? @(:running s))}))
+     :running? (running? s)}))
 
 (defn running-thread
-  "The Thread currently running in this session, or nil. Held onto by the
-   session rather than looked up, because a Thread cannot be recovered once
-   dropped -- which is the only reason an interrupt can exist at all."
+  "The session's thread, or nil if it is not started. One thread per session
+   rather than per eval, which is what makes interrupt reach queued work.
+
+   A Thread cannot be recovered once dropped, which is the only reason the
+   session holds this reference at all."
   ^Thread [^Session s]
-  @(:running s))
+  (:thread s))
+
+(defn stop!
+  "Interrupts the session's thread and drops any queued work. The thread ends
+   on the InterruptedException .take throws; anything already executing keeps
+   running to completion, which is the cooperative limit, not a bug."
+  [^Session s]
+  (when-let [^Thread t (:thread s)]
+    (.interrupt t))
+  (when-let [^LinkedBlockingQueue q (:queue s)]
+    (.clear q))
+  nil)

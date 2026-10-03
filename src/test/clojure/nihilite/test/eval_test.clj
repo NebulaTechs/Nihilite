@@ -162,3 +162,34 @@
       (is (str/includes? printed "sp 2\n"))
       (is (str/includes? printed "one\n")))
     (ev/close-session sid)))
+(deftest two-evals-in-one-session-run-in-order
+  ;; One thread per session, not per eval. Two evals in the same session
+  ;; share its namespace, so running them at once raced on *ns* -- and the
+  ;; second thread's binding vector replaced the first's, so the first eval
+  ;; either read the wrong namespace or wrote its output through the wrong
+  ;; writer. Serialising is what makes a session a session.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(def order (atom []))")
+    (settle sid)
+    (ev/eval-in sid "(swap! order conj :first)")
+    (ev/eval-in sid "(swap! order conj :second)")
+    (ev/eval-in sid "(swap! order conj :third)")
+    (let [s (settle sid)]
+      (is (nil? (:error s)) "no eval in the batch failed")
+      (is (= "[:first :second :third]" (:value s))
+          "three concurrent submissions ran in submission order"))
+    (ev/close-session sid)))
+
+(deftest running-is-true-from-enqueue-not-just-from-take
+  ;; :running? is what a caller polls to know an eval finished. If it went
+  ;; true only when the thread picked the task up, a poll landing between the
+  ;; enqueue and the take would see false and read the session too early.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(Thread/sleep 150)")
+    (Thread/sleep 20)
+    (is (:running? (ev/snapshot sid))
+        "a submitted eval reads as running straight away")
+    (settle sid)
+    (is (not (:running? (ev/snapshot sid)))
+        "and stops once it is done")
+    (ev/close-session sid)))

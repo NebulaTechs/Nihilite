@@ -75,6 +75,18 @@ is a control plane, so requiring one does not drag in the other.
 Each session keeps its own namespace, so `(def x 1)` survives into the next
 `eval-in` and is invisible to other sessions.
 
+A session owns **one thread and a queue**, not one thread per eval. Two evals
+submitted to the same session run in submission order, because they share its
+namespace: concurrently they would race on `*ns*`, and the second thread's
+binding vector would replace the first's, so the first eval could read the wrong
+namespace or write its output through the wrong writer. This is the same shape
+nREPL uses.
+
+`:running?` is therefore "this session has an eval executing or one still
+queued", and it goes true at enqueue time rather than when the thread picks the
+task up — a poll landing between those two would otherwise read the session too
+early.
+
 `eval-in` is asynchronous because the usual caller is an attacher holding a
 `loadAgent` open: a form that never returns must not wedge it.
 
@@ -93,37 +105,41 @@ comes back monotonic.
 
 ### What interrupt cannot do
 
-`interrupt` is `Thread.interrupt`. It unblocks a thread waiting on I/O, sleep or
-a monitor, and throws `InterruptedException` into it. It does **not** stop a
-tight `(loop [] (recur))`: Clojure's `recur` never checks the interrupt flag,
-and `Thread.stop`, which would, was removed in JDK 20. A CPU-bound eval that
-must be killed has to cooperate — poll `snapshot` and check `:running?` from the
-code being evaluated.
+`interrupt` delivers `Thread.interrupt` to the session's thread and discards
+anything queued behind it. The thread itself survives and serves the next eval.
+It unblocks a thread waiting on I/O, sleep or a monitor, and throws
+`InterruptedException` into it.
 
-Measured, because the two cases are not the same:
+It does **not** stop a tight `(loop [] (recur))`: Clojure's `recur` never checks
+the interrupt flag, and `Thread.stop`, which would, was removed in JDK 20.
+Measured here rather than assumed:
+
+| JDK | `Thread.stop()` on a Clojure tight loop |
+| --- | --- |
+| 17 | accepted, thread dies |
+| 25 | `UnsupportedOperationException`, thread lives |
+
+nREPL's answer to the same problem is a scheduled reaper that force-kills after
+5s, using `Thread.stop` before JDK 20 and a JVMTI native agent after. We do not:
+it needs a platform `.so` unpacked and the target attaching to itself, it risks
+state corruption, and it buys the ability to kill code the user wrote wrongly.
+`:interrupted? true` therefore means the request was delivered, not that the
+eval stopped — poll `snapshot` for `:running?` to find out.
+
+Code that must be stoppable manages that itself. `eval-in` returns immediately,
+so spawning a thread and holding it is cheap.
+
+Infinite recursion is a different case and does terminate, bounded by stack
+depth:
 
 ```text
-(loop [] (recur))     running after 1.5s?      true
-                      interrupt -> {:interrupted? true}
-                      running after int+1.5s?  true      <- still running
-                      still running?           true
-```
-
-`close-session` then makes `:running?` go false — **not** because the thread
-stopped, but because the session was forgotten. The thread is a daemon, so it
-keeps burning CPU after that. Nothing in the JVM can preempt it safely, and
-nREPL's own `interrupt` has the same limit.
-
-Infinite recursion is a different case and does terminate:
-
-```clojure
 (defn boom [n] (inc (boom (inc n)))) (boom 0)
   settled?        true
   error present?  true
   error head      #error { ... :type java.lang.StackOverflowError ...
 ```
 
-Stack depth bounds it, and the failure arrives through `:error` like any other.
+The failure arrives through `:error` like any other.
 
 ## Invariants that keep streaming a later addition
 
