@@ -43,14 +43,17 @@ There is deliberately no port setting any more: nothing binds.
 
 ### `java -jar` versus `-javaagent`
 
-`java -jar target/nihilite.jar` runs the init script and **returns**; it does
-not block. It used to wait forever on a latch that only existed to hold the
-nREPL server open. The JVM now lives as long as your own non-daemon threads
-keep it alive, so a bare `java -jar` with no init script exits immediately.
+`java -jar target/nihilite.jar` prints three lines saying this is a stub and
+points at the repository, then returns. It does not run an init script and it
+cannot weave anything: `Main-Class` is handed a `nil` `Instrumentation`, so
+`installer/install` never runs and every hook stays at `:pending? true`. It
+used to evaluate `-Dnihilite.init`, which looked like it worked — that entry
+existed to hold the nREPL server open, and both the server and the latch are
+gone.
 
-That path also cannot weave anything: `Main-Class` is handed a `nil`
-`Instrumentation`, so `installer/install` never runs and every hook stays at
-`:pending? true`. Use `-javaagent:` for real work.
+Use `-javaagent:` for real work. The banner stays three lines on purpose:
+everything it would otherwise explain changes with the project, and a message
+baked into a shipped jar cannot be updated the way this repository can.
 
 ## Evaluating code in an attached JVM
 

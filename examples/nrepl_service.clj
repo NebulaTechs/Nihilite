@@ -16,7 +16,13 @@
 
           java -Dnihilite.example.nrepl.jar=/path/to/nrepl.jar \\
                -Dnihilite.init=\"(load-file \\\"examples/nrepl_service.clj\\\")\" \\
-               -jar target/nihilite.jar
+               -javaagent:target/nihilite.jar -jar your-app.jar
+
+        Any JVM will do as the host -- the point is only that Nihilite is
+        mounted as an agent, because Main-Class does not evaluate
+        -Dnihilite.init. There is no app here to instrument, so if you have
+        nothing to attach to, `clojure -M -m your.main` with the agent
+        mounted is enough.
 
         add-libs is not in clojure.core -- it belongs to core.async -- but
         the effect is one addURL away, because worker.clj binds

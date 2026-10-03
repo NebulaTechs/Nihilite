@@ -18,13 +18,18 @@
      PROBE service-port       the port the init-started service bound
      PROBE service-echo       bytes round-tripped from this process
 
-   Everything runs in a real JVM through `java -jar`, because that is the only
-   path where the init form is evaluated at all. A first run of this probe
-   under `-javaagent:` produced no init output whatsoever: agent-premain arms
-   the transformer and starts the worker, and nothing evaluates
-   `-Dnihilite.init`. boot/-main does that, and only Main-Class reaches it.
-   So `-Dnihilite.init` is currently dead on the -javaagent path, which is
-   the primary deployment mode.
+   Everything runs in a real JVM, mounted with -javaagent: and given a host
+   main that outlives the probe, because the probe's own echo thread is a
+   daemon and nothing else would hold the JVM up.
+
+   This file is the second thing the nREPL deletion invalidated, and it rotted
+   quietly because it is not in `check`. It used to run under `java -jar`,
+   where Main-Class evaluated the init form; when that entry was reduced to
+   printing usage there was no path left to run on. It also used to rely on
+   the embedded server's non-daemon thread to keep the JVM alive after init
+   returned -- that thread went away with the server. A characterisation pass
+   outside `check` gets no failure signal, so both changes had to be found by
+   reading rather than by a red build.
 
    The init script is written to a temp file and loaded via
    `(load-file \"...\")` so the -Dnihilite.init property stays short and no
@@ -110,13 +115,16 @@
         _             (write-file! host-ns-dir "ns.clj" (host-app-source))
         init-file     (write-file! host-dir "init.clj" (probe-init-source))
         init-form     (str "(load-file \"" (.getPath init-file) "\")")
-        ;; -jar, not -javaagent: boot/-main is what evaluates the init form, and
-        ;; it only runs on the Main-Class path. This is itself a finding -- see
-        ;; the ns docstring.
+        ;; -javaagent: is the only path that both mounts the agent and
+        ;; evaluates -Dnihilite.init. The host main sleeps past the probe's
+        ;; deadline: the echo thread is a daemon, and the JVM would otherwise
+        ;; exit the moment init returned, taking the service with it.
         cmd           ["java"
                        (str "-Dnihilite.init=" init-form)
                        (str "-Dnihilite.probe.hostdir=" (.getPath host-dir))
-                       "-jar" (.getPath jar-file)]
+                       (str "-javaagent=" (.getPath jar-file))
+                       "-cp" (System/getProperty "java.class.path")
+                       "clojure.main" "-e" "(do (Thread/sleep 60000))"]
         pb            (ProcessBuilder. ^java.util.List cmd)
         _             (.redirectErrorStream pb true)
         proc          (.start pb)

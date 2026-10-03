@@ -1,5 +1,5 @@
-;; Probe init script. Loaded by boot/-main through -Dnihilite.init, inside a
-;; real JVM that Nihilite was attached to.
+;; Probe init script. Loaded through -Dnihilite.init, inside a real JVM that
+;; Nihilite was attached to with -javaagent.
 ;;
 ;; Four things are measured, each printed as one PROBE line:
 ;;
@@ -23,7 +23,7 @@
 ;; string literal.
 
 (ns probe.init-service
-  "Probe init script, loaded by boot/-main via -Dnihilite.init."
+  "Probe init script, evaluated by the agent startup path via -Dnihilite.init."
   (:require [nihilite.api :as api]))
 
 (def host-dir (System/getProperty "nihilite.probe.hostdir"))

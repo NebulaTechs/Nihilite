@@ -24,7 +24,6 @@
    "nihilite.test.dispatch-common-test"
    "nihilite.test.dispatch-entry-cancel-test"
    "nihilite.test.agent-worker-once-test"
-   "nihilite.test.version-resolution-test"
    "nihilite.test.uninstall-retransform-test"
    "nihilite.test.api-facade-test"
    "nihilite.test.swap-bridge-test"

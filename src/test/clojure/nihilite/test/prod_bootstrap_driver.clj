@@ -15,9 +15,10 @@
    instance per position. Three constraints shaped that choice: BitSet.length
    cannot be replaced because other BitSet methods consult it, and the matrix
    needs one target per position with independent bodies. ReentrantLock.lock
-   is deliberately absent even though it would work -- it is used by the nREPL
-   transport, so hooking it makes the agent's own machinery re-enter the
-   advice.
+   is deliberately absent even though it would work -- Clojure's own runtime
+   takes it (clojure.lang.Reflector, which appears throughout the log output
+   here, and the agent/locking machinery), so hooking it makes the advice's own
+   dependencies re-enter it.
 
    The last section hooks java.io.FileInputStream.read on purpose: that is the
    class loading path, and it is where a reentrancy guard earns its keep. It

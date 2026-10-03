@@ -2,11 +2,12 @@
   "Java agent entry points, generated from Clojure.
 
    nihilite.kernel.Agent replaces the original nihilite.agent.Agent + Worker
-   pair. It exposes the four static entry points that JVM instrumentation
-   resolves via the JAR manifest (Premain-Class, Agent-Class):
-     premain(String, Instrumentation)
-     agentmain(String, Instrumentation)
-     main(String[])                       driver entry; awaited by tools
+   pair. It exposes the static entry points the JVM resolves via the JAR
+   manifest:
+     premain(String, Instrumentation)    Premain-Class, the -javaagent path
+     agentmain(String, Instrumentation)  Agent-Class, the attach path
+     main(String[])                      Main-Class, which only prints how to
+                                         mount the jar -- see agent-main
      awaitWorkerReady()                  blocks until Clojure runtime
                                          is up and the registry has
                                          install-redefine-dispatcher
@@ -183,9 +184,10 @@
 
    premain has to return promptly: on the -javaagent path the JVM is holding
    the application's main thread, and a slow init script would be charged to
-   application startup. This is also the fix for init being dead on that path
-   -- it used to run only under boot/-main, which Main-Class reaches and
-   -javaagent does not."
+   application startup. Running it here rather than on the premain thread is
+   also what makes -Dnihilite.init reachable at all on this path -- it used to
+   be evaluated only from the Main-Class entry, so -javaagent: silently skipped
+   it."
   [args]
   (doto (Thread. ^Runnable #(do (agent-awaitWorkerReady)
                                 (run-startup! args))
@@ -251,66 +253,47 @@
       (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
         (log-info (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms))))))
 
-(defn- flatten-args
-  "Normalize the variadic `args` of agent-aMain so `into-array String`
-   always sees a flat ISeq of String. Two calling conventions exist:
+(def ^:const usage-banner
+  "What `java -jar nihilite.jar` prints.
 
-     1. Via the gen-class `:main true` forwarder (Agent.main) →
-        IFn.applyTo(ISeq<String>) — each String is unpacked, so args is
-        an ISeq<String>.
-     2. Via the gen-class `:methods` forwarder (Agent.aMain) →
-        IFn.invoke(Object) — the whole String[] arrives as a single arg,
-        so args is a 1-element ISeq wrapping String[].
+   The jar is an agent, not an application, and this entry point says so and
+   stops. It used to evaluate -Dnihilite.init here, which looked like it
+   worked and could not weave anything: Main-Class is handed a nil
+   Instrumentation, so every hook stayed at :pending? true with woven-count 0
+   and fired 0. Only premain and agentmain receive a real Instrumentation.
 
-   If args has exactly one element that is itself a String[], unwrap
-   it. Otherwise pass args through unchanged."
-  [args]
-  (let [a (seq args)]
-    (if (and a (nil? (next a))
-             (instance? (Class/forName "[Ljava.lang.String;") (first a)))
-      (seq (first a))
-      a)))
-
-(defn agent-aMain
-  "Driver entry used by nihilite.kernel.Agent.aMain. Performs the same
-   work as premain then awaits the worker before handing control to
-   nihilite.boot/-main. Accepts `args` in either calling convention
-   (see flatten-args): a flat ISeq<String> from the :main forwarder, or
-   a 1-element ISeq wrapping the raw String[] from the :methods
-   forwarder. Always coerces to a flat ISeq<String> before building
-   the boot-main argv."
-  [& args]
-  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
-    (let [t0     (System/nanoTime)
-          fresh? (arm-agent! "main" nil)]
-      (when-not fresh?
-        (log-info "[Nihilite] main no-op (HookInstaller already registered)"))
-      (agent-awaitWorkerReady)
-      (run-startup! (first (flatten-args args)))
-      (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
-        (log-info (format "[Nihilite] main returned in %.0f ms" elapsed-ms))))))
+   Kept to three lines on purpose. Everything else -- how to mount it, what an
+   init script can do, how to drive an attached JVM -- changes with the
+   project, and a message baked into a shipped jar cannot be updated the way
+   the repository can. So it points at the repository instead of restating it."
+  (str "Nihilite -- bytecode hook agent for the JVM\n"
+       "\n"
+       "This is a stub: there is nothing to run here.\n"
+       "\n"
+       "For more information, see https://github.com/NebulaTechs/Nihilite\n"))
 
 (defn agent-main
-  "The JVM-lookup main(String[]) entry point. gen-class :main true looks
-   up `(str prefix main)` which equals `agent-main`. The gen-class
-   forwarder invokes `IFn.applyTo(ISeq<String>)` on this var — variadic
-   args receive each String from String[] as a separate parameter, so
-   `args` here is an ISeq<String>. Forward to aMain which expects the
-   same shape."
-  [& args]
-  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
-    (apply agent-aMain args)))
+  "The JVM-lookup main(String[]) entry point -- the jar's Main-Class.
 
-(defn- generate-class!
-  "Generate nihilite.kernel.Agent with the standard five static entry
-   points. All methods are forwarded to Clojure vars with prefix agent-."
+   Prints the usage banner and returns. It does not arm the installer, does
+   not start the worker, and does not evaluate -Dnihilite.init: all three are
+   reachable only from premain, where a real Instrumentation exists. gen-class
+   :main true looks up `(str prefix main)`, which is this var, and forwards
+   argv as ISeq<String>."
+  [& _args]
+  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+    (println usage-banner)
+    (flush)
+    nil))(defn- generate-class!
+  "Generate nihilite.kernel.Agent with its static entry points: premain and
+   agentmain for the JVM, main for the jar's Main-Class, plus the worker's
+   handshake methods. All are forwarded to Clojure vars with prefix agent-."
   []
   (let [string-cls (Class/forName "java.lang.String")
         instrumentation-cls (Class/forName "java.lang.instrument.Instrumentation")
         void-sym (symbol "void")
         object-cls (Class/forName "java.lang.Object")
-        boolean-cls (Class/forName "java.lang.Boolean")
-        string-array-cls (Class/forName "[Ljava.lang.String;")]
+        boolean-cls (Class/forName "java.lang.Boolean")]
     (cg/generate-class-bytes!
      {:name "nihilite.kernel.Agent"
       :prefix "agent-"
@@ -328,10 +311,6 @@
                    {:static true})
         (with-meta (vector (symbol "agentmain")
                            [string-cls instrumentation-cls]
-                           void-sym)
-                   {:static true})
-        (with-meta (vector (symbol "aMain")
-                           [string-array-cls]
                            void-sym)
                    {:static true})]})))
 

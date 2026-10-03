@@ -4,8 +4,6 @@
             [clojure.tools.build.api :as b])
   (:import [java.util.jar JarFile]))
 
-(def lib 'nihilite/nihilite)
-(def version "0.1")
 (def class-dir "target/classes")
 (def test-class-dir "target/test-classes")
 (def uber-file "target/nihilite.jar")
