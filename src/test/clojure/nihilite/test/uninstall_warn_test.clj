@@ -1,6 +1,21 @@
 (ns nihilite.test.uninstall-warn-test
+  "The two WARNs a spec removal makes when nothing can be retransformed.
+
+   The first assertion's message used to say \"Bridge.uninstallSpec\" — that
+   class is gone (the Java layer was removed entirely; kernel/installer.clj
+   replaced it). What it actually checks is installer/uninstall-spec-with-
+   target!, so this namespace requires the installer itself. It used to pass
+   without that require only because the contract runner shares one JVM with
+   every other namespace, and something else had already loaded installer by
+   the time this ran; run alone, `resolve` answered nil and uninstall! threw
+   a NullPointerException instead of warning.
+
+   The second assertion is the registry's own half of the same report."
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.api :as api]
+            ;; required for its side effect: the WARN under test is
+            ;; installer/log-warn's, so installer has to be loaded
+            [nihilite.kernel.installer]
             [nihilite.test.capturing-log-handler :as clh]
             [nihilite.test.fixtures :as fx])
   (:import [java.util.logging Logger Level LogRecord]))
@@ -37,7 +52,7 @@
       (api/uninstall! "warn-test")
       (let [captured (clh/captured handler)]
         (is (pos? (count captured))
-            "Bridge.uninstallSpec should emit at least one WARN record when no Instrumentation is registered")
+            "installer/uninstall-spec-with-target! should emit at least one WARN record when no Instrumentation is registered")
         (is (some #(re-find #"no Instrumentation" (.getMessage ^LogRecord %)) captured)
             "at least one WARN message should mention 'no Instrumentation'")))))
 

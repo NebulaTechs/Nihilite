@@ -678,9 +678,24 @@
                (when (and mb (.isEmpty mb))
                  (.remove by-method mk mb))))
            (stats/remove-stats (:id removed))
-           (let [count (try
-                         ((resolve 'nihilite.kernel.installer/uninstall-spec-with-target!)
-                          (str id) target)
+           (let [installer (resolve 'nihilite.kernel.installer/uninstall-spec-with-target!)
+                 ;; installer is resolved, not required: registry cannot
+                 ;; require the kernel (installer requires registry back),
+                 ;; and in a JVM that never mounted the agent the namespace
+                 ;; is not loaded at all, so `resolve` answers nil. Calling
+                 ;; that nil is an NPE out of a path documented to WARN --
+                 ;; which is the shape the uninstall_warn_test asserts, and
+                 ;; the only reason it passed is that the full contract
+                 ;; runner shares one JVM with every other namespace, so
+                 ;; something else had already loaded installer. No
+                 ;; Instrumentation and no installer are the same situation
+                 ;; as far as the caller is concerned: nothing to
+                 ;; retransform, so the count is 0 and the existing zero
+                 ;; branch below says so.
+                 count (try
+                         (if installer
+                           (installer (str id) target)
+                           0)
                          (catch Throwable t
                            (mark-error! (:id removed) (.getMessage t))
                            (throw (ex-info (str "uninstall retransform failed for id=" id)
