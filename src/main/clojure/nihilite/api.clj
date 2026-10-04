@@ -9,8 +9,9 @@
    guarantees (id-keyed uniqueness, target/method indexing, atomic
    install/uninstall) are inherited unchanged.
 
-   Spec map shape — see `nihilite.registry/spec` for the constructor
-   and the field-level validation. Quick reference:
+   Spec map shape. `install!` normalises the map and returns a HookSpec
+   record; the fields it computes rather than copies are `:internal-class`
+   and `:method-descriptor`.
 
    | key               | required | meaning                                       |
    | ----------------- | -------- | --------------------------------------------- |
@@ -18,28 +19,43 @@
    | :target-internal  | yes      | JVM internal name of the target class, e.g.   |
    |                   |          | `\"java/lang/String\"`                          |
    | :method-name      | yes      | method name (string)                          |
-   | :descriptor       | no       | raw method descriptor (e.g. `\"()I\"`)          |
-   | :position         | yes      | `:entry` / `:return` / `:throw` / `:redefine` |
-   | :arity            | no       | expected arg count (informational)            |
+   | :descriptor       | yes      | raw method descriptor, e.g. `\"()I\"`          |
+   | :position         | no       | `:entry` / `:return` / `:throw` / `:redefine` |
+   |                   |          | (defaults to `:entry`)                        |
+   | :arity            | no       | expected arg count; derived from the          |
+   |                   |          | descriptor when omitted, and rejected when it |
+   |                   |          | disagrees with it                             |
    | :bridge           | yes      | 1-arg fn called from the advice/delegator     |
    | :note             | no       | free-form description                         |
-   | :action           | no       | `:observe` / `:replace` / `:modify`           |
-   |                   |          | (defaults to `:observe`)                       |
+   | :action           | no       | `:observe` (default) / `:modify` / `:cancel`  |
+   |                   |          | / `:subscriber`                               |
    | :tag              | no       | free-form grouping label                      |"
-  (:require [nihilite.registry :as reg]
-            [nihilite.registry.stats :as stats]))
+  (:require [nihilite.registry :as reg]))
 
 (defn install!
   "Install a hook spec under `:id`. Atomic: validation, indexing by
    target/method, and (when an `Instrumentation` is registered)
    ByteBuddy retransform all happen under a single lock.
 
-   Throws `ex-info` with `:nihilite/kind :nihilite/missing-id` /
-   `:nihilite/missing-target` when the spec is missing required keys,
-   and `:nihilite/kind :nihilite/duplicate-spec` when `:id` is already
-   registered.
+   Re-installing an id that is already registered REPLACES it: the previous
+   spec leaves the target and method indexes, the class is retransformed so
+   the new bridge reaches the JVM, and the return value is `false` (a
+   `true` means the id was new). The counter record is kept across the
+   replacement, so `:fired` does not restart.
 
-   Returns the registered `HookSpec` record on success.
+   Returns `true` when the id was newly registered, `false` when it replaced
+   an existing spec. Use `lookup` for the record.
+
+   Throws `ex-info` when the spec is missing required keys
+   (`:nihilite/missing-id` / `:nihilite/missing-target` /
+   `:nihilite/missing-method` / `:nihilite/missing-descriptor`) or carries a
+   value the registry rejects (`:nihilite/bad-descriptor`,
+   `:nihilite/bad-arity`, `:nihilite/bad-tag`,
+   `:nihilite/arity-descriptor-mismatch`, `:nihilite/invalid-action`,
+   `:nihilite/invalid-position`, and the per-position action rules).
+   `nihilite.registry/install-fresh!` is the variant that refuses a
+   duplicate id instead of replacing it, throwing
+   `:nihilite/duplicate-spec-id`.
 
    Examples:
      (api/install! {:id \"trace-hello\"
@@ -80,9 +96,14 @@
 
 (defn list-specs
   "Return a vector of all currently registered hook ids, sorted
-   alphabetically. Empty when the registry is empty."
+   alphabetically. Empty when the registry is empty.
+
+   Reads the registry, not the counter table. The two are not the same
+   thing: `uninstall!` drops a counter record as part of removal, but the
+   registry is what `lookup` answers from, so this has to agree with that
+   rather than with a side table."
   []
-  (vec (sort (keys (stats/stats-snapshot)))))
+  (reg/list-ids))
 
 (defn install-status!
   "Report a spec's install-side and runtime-side status.
@@ -101,17 +122,28 @@
   (reg/install-status! id))
 
 (defn swap-bridge!
-  "Atomically replace the bridge fn on the spec with `:id`. Useful for
-   hot-patching observed behaviour without uninstalling and reinstalling
-   the whole hook. Returns the updated `HookSpec` record."
+  "Replace the bridge fn on the spec with `:id`, in place. Useful for
+   hot-patching observed behaviour without uninstalling and reinstalling the
+   whole hook.
+
+   Only `:bridge` changes: `:action`, `:position` and the rest of the spec are
+   untouched, and the class is not retransformed, because the shape a
+   transform matches on has not changed. The already-woven call site is the
+   point — the next call runs the new bridge.
+
+   Returns `true` when the spec was found and rewritten, `false` when no
+   spec has that id."
   [id new-impl]
   (reg/replace-bridge! id new-impl))
 
 (defn register-action!
-  "Register a custom action keyword in the registry's action table.
-   After registration the keyword can be used in `:action` fields of
-   new specs. Returns `true` when the action was newly registered,
-   `false` when it was already known."
-   [action-key]
+  "Register a custom action keyword so it can be used in the `:action` field
+   of new specs. Returns the keyword.
+
+   A registered keyword still has to mean something: `install!` validates
+   what it does at the spec's `:position`, and an action the dispatch layer
+   does not recognise simply runs as `:observe`. Throws
+   `:nihilite/invalid-action-key` when `action-key` is not a keyword."
+  [action-key]
   (reg/register-action! action-key))
 
