@@ -14,13 +14,21 @@
 
    Targets are real signatures so the descriptor is not the only thing
    under test: java/util/BitSet size()I for the primitive path, and
-   valueOf([J)Ljava/util/BitSet; for the reference path."
+   valueOf([J)Ljava/util/BitSet; for the reference path.
+
+   The :redefine cases need the redefine dispatcher, and the fixture asks for
+   it rather than relying on another namespace having installed it: install!
+   blocks on that dispatcher before it will weave a :redefine hook, reg/clear!
+   does not remove it, and the contract runner happens to list
+   install-redefine-reject-test just above this one. Run alone, without
+   reg-cleanup-with-dispatcher, all five :redefine tests errored on
+   :nihilite/redefine-dispatcher-unavailable."
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
-(use-fixtures :each fx/reg-cleanup)
+(use-fixtures :each fx/reg-cleanup-with-dispatcher)
 
 (def ^:private SIZE-DESC "()I")
 (def ^:private VALUE-OF-DESC "([J)Ljava/util/BitSet;")
