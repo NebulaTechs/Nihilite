@@ -220,25 +220,65 @@
             :else rt))))))
 
 
+(def ^:private descriptor-primitive-codes
+  "JVM descriptor type code -> the primitive's Class, for building an
+   array type one dimension at a time. Names match boxed-primitives."
+  {\I Integer/TYPE
+   \J Long/TYPE
+   \Z Boolean/TYPE
+   \B Byte/TYPE
+   \C Character/TYPE
+   \S Short/TYPE
+   \F Float/TYPE
+   \D Double/TYPE})
+
+(defn- resolve-component-type
+  "Resolves one non-array type name, or nil. Accepts both the internal
+   slash form a descriptor carries (java/util/BitSet) and the binary
+   dotted form, because Class/forName only understands the latter."
+  [^String name]
+  (try
+    (when (seq name)
+      (Class/forName (.replace name "/" ".") false (clojure.lang.RT/baseLoader)))
+    (catch Throwable _ nil)))
+
 (defn- resolve-type-name
-  "Resolves a JVM type name from a descriptor to a Class, or nil when it
-   cannot be resolved. Used only where a return-value check needs the
-   declared type and has no other source for it.
+  "Resolves a JVM type from a descriptor to a Class, or nil when it cannot
+   be resolved. Used only where a return-value check needs the declared
+   type and has no other source for it.
+
+   Handles the array forms a descriptor spells `[I` / `[[Lfoo;`. Those are
+   not class names: Class/forName rejects every array spelling, so an
+   array return type has to be built a dimension at a time with
+   Class/arrayClass. Missing that left a String bridge value unchecked
+   against an int[]-returning method.
+
+   Returns nil for a type no loader here can see, which the caller treats
+   as 'cannot check' rather than 'must reject' -- the alternative would
+   reject every hook on a class the hook's own loader has not loaded yet.
 
    Loads with initialize=false so resolving a name never runs the type's
    static initialiser: a :return bridge is inside the target method when
    this runs, so a static initialiser that touches the hooked method
-   would re-enter the advice.
-
-   Accepts both the internal slash form a descriptor carries
-   (java/util/BitSet) and the binary dotted form (java.util.BitSet);
-   Class/forName only understands the latter."
+   would re-enter the advice."
   [^String name]
-  (try
-    (when (seq name)
-      (Class/forName (.replace ^String name "/" ".") false
-                     (clojure.lang.RT/baseLoader)))
-    (catch Throwable _ nil)))
+  (if (and (seq name) (= \[ (.charAt name 0)))
+    (let [dims  (count (take-while #(= \[ %) name))
+          comp  (subs name dims)
+          inner (if (= \L (.charAt comp 0))
+                   (when-let [semi (.indexOf comp (int \;))]
+                     (subs comp 1 semi))
+                   comp)]
+      (if-let [base (or (descriptor-primitive-codes (.charAt inner 0))
+                        (resolve-component-type inner))]
+        (loop [k dims c base]
+          ;; Array/newInstance hands back an instance; its class is the
+          ;; array type, and the instance is discarded.
+          (if (pos? k)
+            (recur (dec k) (.getClass ^Object (java.lang.reflect.Array/newInstance c 0)))
+            c))
+        nil))
+    (resolve-component-type name)))
 
 (defn- modify-value-compatible?
   "Whether `rv` can legally replace the target method's return value.

@@ -77,9 +77,11 @@ spec and echoing the descriptor. A value of the wrong shape entirely (a String
 against a `MyThing` return) is rejected the same way.
 
 Reference types are not converted, only checked: the bridge must return the
-target's declared type or a subtype of it. Build that value in the bridge —
-`(fn [_] (MyThing. (compute)))` — since there is no numeric-style coercion for
-a type the Clojure reader has no opinion about.
+target's declared type or a subtype of it. That covers array returns too, which
+are built a dimension at a time because no class name spells `[I`. Build the
+value in the bridge — `(fn [_] (int-array 3))` or `(fn [_] (MyThing. x))` —
+since there is no numeric-style coercion for a type the Clojure reader has no
+opinion about.
 
 `install!` waits for the redefine dispatcher before weaving a `:redefine` hook,
 and throws `:nihilite/redefine-dispatcher-unavailable` if it never arrives. That
