@@ -733,14 +733,43 @@
   (.get by-id (str id)))
 
 (defn replace-bridge!
+  "Swaps a registered spec's bridge for `new-bridge`, in place.
+
+   The spec value itself is immutable, so a new map is built and every place
+   that holds the old one has to be rewritten. There are three, and all
+   three matter:
+
+   - `by-id` is what a fire-time lookup reads for the spec itself.
+   - `index/by-target` and `by-method` are what `spec-bucket` walks, and the
+     walk reads `:bridge` off the spec it finds there. A dispatch therefore
+     looks the spec up in one map and calls the bridge out of another, so
+     rewriting only `by-id` swapped the map the caller can see while every
+     real invocation kept running the previous bridge.
+
+   It runs under the same lock and in the same remove-then-add shape as the
+   replace branch of `install!` (see above), which is what keeps one spec
+   value per id in all three maps.
+
+   Deliberately does NOT bump the revision or retransform: the shape a
+   transform matches on -- class, method, arity, position -- is unchanged, so
+   the already-woven call sites are still correct and the next fire picks the
+   new bridge up through the lookup. That is what makes this a hot rewrite."
   [id new-bridge]
-  (let [by-id ^java.util.concurrent.ConcurrentHashMap by-id
+  (let [by-id ^ConcurrentHashMap by-id
         k (str id)]
-    (loop []
-      (let [cur ^clojure.lang.IPersistentMap (.get by-id k)]
+    (locking registry-lock
+      (let [cur (.get by-id k)]
         (if (nil? cur)
           false
           (let [updated (assoc cur :bridge new-bridge)]
-            (if (.replace by-id k cur updated)
-              (do (log/info "hook bridge swapped:" k) true)
-              (recur))))))))
+            (when-let [tb (index/live-bucket (:target-internal cur))]
+              (.remove tb cur))
+            (when-let [pmk (:method-key cur)]
+              (when-let [pmb (.get by-method pmk)]
+                (.remove pmb cur)))
+            (.put by-id k updated)
+            (.add (index/bucket (:target-internal updated)) updated)
+            (when-let [mk (:method-key updated)]
+              (.add (method-bucket mk) updated))
+            (log/info "hook bridge swapped:" k)
+            true))))))

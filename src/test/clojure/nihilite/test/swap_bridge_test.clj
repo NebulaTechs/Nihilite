@@ -71,3 +71,58 @@
     (api/swap-bridge! "concurrent-swap" bridge-b)
     (dispatch/dispatch-for-spec "concurrent-swap" nil (object-array 0))
     (is (= 2 @counter))))
+
+(deftest swap-bridge-reaches-the-dispatch-path
+  (let [calls (atom [])]
+    (api/install! (assoc (entry-spec "swap-dispatch")
+                         :bridge (fn [_] (swap! calls conj :old) :old)))
+    (dispatch/dispatch-for-spec "swap-dispatch" nil (object-array 0))
+    (api/swap-bridge! "swap-dispatch" (fn [_] (swap! calls conj :new) :new))
+    (dispatch/dispatch-for-spec "swap-dispatch" nil (object-array 0))
+    (is (= [:old :new] @calls)
+        "the second dispatch must run the swapped-in bridge, not the one the
+         method bucket still holds")))
+
+(deftest swap-bridge-reaches-the-return-path
+  (let [seen (atom [])]
+    (api/install! (assoc (entry-spec "swap-return")
+                         :target-internal "java/lang/Integer"
+                         :descriptor "(I)I"
+                         :position :return
+                         :action :modify
+                         :bridge (fn [_] (swap! seen conj :old) 1)))
+    (is (= 1 (dispatch/dispatch-return-for-spec "swap-return" nil (object-array [7]) 7)))
+    (api/swap-bridge! "swap-return" (fn [_] (swap! seen conj :new) 2))
+    (is (= 2 (dispatch/dispatch-return-for-spec "swap-return" nil (object-array [7]) 7))
+        ":return walks the same method bucket, so a swap that only rewrites
+         by-id leaves the old bridge in place there too")
+    (is (= [:old :new] @seen))))
+
+(deftest swap-bridge-preserves-the-action
+  (let [seen (atom [])
+        mark (fn [tag]
+               (fn [ctx] (swap! seen conj tag) ((:cancel! ctx) true) nil))]
+    (api/install! (assoc (entry-spec "swap-action") :action :cancel :bridge (mark :old)))
+    (is (= :nihilite/short-circuit
+           (dispatch/dispatch-for-spec "swap-action" nil (object-array 0))))
+    (api/swap-bridge! "swap-action" (mark :new))
+    (is (= :nihilite/short-circuit
+           (dispatch/dispatch-for-spec "swap-action" nil (object-array 0))))
+    (is (= [:old :new] @seen)
+        "the swap rewrites the bridge, never the action: a re-pointed bridge
+         must not silently change what the hook does to the call")))
+
+(deftest swap-bridge-keeps-one-spec-per-bucket
+  (api/install! (entry-spec "bucket-dedup"))
+  (api/swap-bridge! "bucket-dedup" (fn [_] :new))
+  (let [ours (filter #(= "bucket-dedup" (:id %))
+                     (reg/matching "java/lang/String"))]
+    (is (= 1 (count ours))
+        "the swapped spec must replace the old one in the target bucket, not
+         sit beside it")
+    (let [s (first ours)]
+      (is (identical? (:bridge (api/lookup "bucket-dedup")) (:bridge s))
+          "by-id and the target bucket must hold the same spec value")
+      (is (= 1 (count (filter #(= "bucket-dedup" (:id %))
+                             (reg/spec-bucket s))))
+          "the method bucket must also hold exactly one entry for the id"))))

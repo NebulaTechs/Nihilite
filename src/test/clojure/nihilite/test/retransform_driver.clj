@@ -107,6 +107,7 @@
 (def ^:private reentry-depth (atom 0))
 (def ^:private reentrant-fires (atom 0))
 (def ^:private probe-method-ref (atom nil))
+(def ^:private swapped-fires (atom 0))
 
 (defn- entry-handler [_ctx]
   (swap! entered inc)
@@ -286,16 +287,40 @@
                   " RETURN_MUTATED=" @return-mutated " REDEFINED=" @redefined) 10))
 
     ;; swap-bridge
-    (let [entered-before @entered
-          swapped-handler (fn [_ctx] (swap! entered inc) nil)]
+    ;;
+    ;; The two bridges must be distinguishable through something the CALL can
+    ;; observe, not through a counter they both bump. An earlier version of
+    ;; this section swapped in a handler that also did (swap! entered inc) and
+    ;; asserted the counter went up by one -- which is exactly what the ORIGINAL
+    ;; bridge would have done too, so the assertion passed whether or not the
+    ;; swap reached the woven call site at all. The observable is
+    ;; install-status!'s per-spec :fired counter, and each spec gets its own.
+    (let [entered-before  @entered
+          fired-before    (:fired (reg/install-status! "driver-entry"))
+          swapped-handler (fn [_ctx]
+                            (swap! entered inc)
+                            (swap! swapped-fires inc)
+                            nil)]
+      (reset! swapped-fires 0)
       (api/swap-bridge! "driver-entry" swapped-handler)
       (.invoke probe nil (object-array [(int 3)]))
       (when (not= @entered (inc entered-before))
         (fail! (str "ENTERED after swap-bridge = " @entered " expected " (inc entered-before)) 24))
+      (when (not= 1 @swapped-fires)
+        (fail! (str "after swap-bridge the call ran the ORIGINAL bridge"
+                    " (swapped-bridge fired " @swapped-fires " time(s), expected 1)."
+                    " A dispatch reads the spec out of by-id but calls the bridge"
+                    " out of the method bucket, so a swap that rewrites only"
+                    " by-id leaves every real invocation on the old bridge.") 25))
       (let [looked-spec (reg/lookup "driver-entry")
-            current-bridge (:bridge looked-spec)]
+            current-bridge (:bridge looked-spec)
+            fired-after (:fired (reg/install-status! "driver-entry"))]
         (when (not (clojure.lang.Util/identical current-bridge swapped-handler))
-          (fail! "post-swap bridge is not swappedHandler" 25))))
+          (fail! "post-swap bridge is not swappedHandler" 26))
+        (when (not= (inc (long fired-before)) (long fired-after))
+          (fail! (str ":fired went " fired-before " -> " fired-after
+                      " across the post-swap call, expected exactly +1"
+                      " (a counter that under-reports hides a dead hook)") 27))))
 
     ;; post-retransform cancel + throw
     (try
