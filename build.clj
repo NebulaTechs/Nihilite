@@ -117,14 +117,31 @@
                                                      nihilite.kernel.agent])]}))
   nil)
 
-(defn- compile-test-driver-script []
+(defn- compile-test-driver-script
+  "The AOT list, as a Clojure form to be evaluated by a child `clojure -M`.
+
+   Kept as a string rather than a vector spliced at run time because it IS
+   code: the child has to resolve and compile each namespace, and comments
+   inside the form would be parsed as code by that child. Anything to say
+   about a driver's status belongs here, in this docstring.
+
+   `nihilite.test.hostile-target-driver` is compiled but never run by
+   `check`, and deliberately so: several of its targets overflow the stack
+   by design, which would take the whole run down. It is the source of the
+   README's Limits table, so it has to stay runnable -- see
+   docs/hook-limits.md for driving one target per JVM."
+  []
   (str "(binding [*compile-path* \"target/test-classes\"]"
        " (doseq [n '[nihilite.test.retransform-driver"
        "               nihilite.test.redefine-instance-driver"
        "               nihilite.test.indy-driver"
        "               nihilite.test.prod-bootstrap-driver"
        "               nihilite.test.javaagent-classpath-driver"
-       "               nihilite.test.eval-attach-driver]]"
+       "               nihilite.test.eval-attach-driver"
+       "               nihilite.test.dual-loader-driver"
+       "               nihilite.test.concurrent-invoke-driver"
+       "               nihilite.test.multi-hook-fanout-driver"
+       "               nihilite.test.hostile-target-driver]]"
        "   (require n) (compile n)))"))
 
 (defn- compile-test-drivers!
@@ -207,8 +224,9 @@
     (ensure-success!
      label
      (b/process {:command-args
-                 (into ["java"]
-                       (concat extra-jvm-opts
+                 (mapv str
+                       (concat ["java"]
+                               extra-jvm-opts
                                ["-cp" classpath main-class]
                                args))})))
   nil)
