@@ -31,15 +31,22 @@ a dynamic attach get a real one.
 (require '[nihilite.api :as api])
 
 (api/install!
-  {:id              "fis-read"
-   :target-internal "java/io/FileInputStream"
-   :method-name     "read"
-   :descriptor      "([BII)I"
+  {:id              "fos-write"
+   :target-internal "java/io/FileOutputStream"
+   :method-name     "write"
+   :descriptor      "([BII)V"
    :position        :return
    :action          :observe
    :bridge          (fn [ctx] ...)
    :note            "..."})
 ```
+
+The target here is `FileOutputStream.write`, deliberately: it is a bootstrap
+classloader class, so the advice is reached through an invokedynamic call site
+rather than a direct call, and it is not on the class loading path. Pick a
+method that the advice's own machinery does not need — see [Limits](#limits)
+before picking one at all. A runnable version is in
+[`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj).
 
 `:descriptor` is required; without it `install!` throws
 `:nihilite/missing-descriptor`, and one that is not a valid JVM method
@@ -174,8 +181,14 @@ the init script.
 | [`examples/nrepl_service.clj`](examples/nrepl_service.clj) | bring your own control plane |
 
 ```sh
-java -Dnihilite.init=examples/jdkstdlib/init.clj -javaagent:target/nihilite.jar -jar your-app.jar
+java -Dnihilite.init='(load-file "examples/jdkstdlib/init.clj")' \
+     -javaagent:target/nihilite.jar -jar your-app.jar
 ```
+
+The property value is read as a Clojure **form**, not as a path. A bare
+`examples/jdkstdlib/init.clj` is analysed as a symbol and fails with
+`No such namespace: examples`, which is the same reason the form has to be
+quoted at all.
 
 Measured: an init script can deploy its own network service, and can put a jar
 the agent has never seen onto the classloader and `require` from it —
@@ -188,7 +201,7 @@ core.async's `add-libs` does (`add-libs` is not in `clojure.core`).
 clojure -T:build check
 ```
 
-Contract tests plus six drivers that go through a real `Instrumentation`, which
+Contract tests plus nine drivers that go through a real `Instrumentation`, which
 the contract tests cannot reach. What each driver proves and why it asserts what
 it does: [docs/drivers.md](docs/drivers.md).
 
