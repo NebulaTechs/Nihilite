@@ -105,10 +105,12 @@
                 (cond
                   (= action :cancel)
                   (do (call-cancel! event)
+                      (stats/bump-cancelled! (:id s))
                       :nihilite/short-circuit)
 
                   (= action :subscriber)
                   (do (call-cancel! event)
+                      (stats/bump-cancelled! (:id s))
                       nil)
 
                   :else nil))))
@@ -410,11 +412,15 @@
               (reset! modified? true)
               (reset! decided? true))
 
-            (= action :cancel)
-            (do (call-cancel! event) (reset! decided? true))
-
+            ;; No :cancel branch here, unlike walk-bucket: install! rejects
+            ;; :cancel outside :position :entry with
+            ;; :nihilite/cancel-requires-entry, so a return-position spec can
+            ;; never carry it. :subscriber is legal at :return and is the
+            ;; branch that decides without contributing a value.
             (= action :subscriber)
-            (do (call-cancel! event) (reset! decided? true))
+            (do (call-cancel! event)
+                (stats/bump-cancelled! (:id s))
+                (reset! decided? true))
             :else nil)))
       (when @modified?
         (when-let [r (stats/get-stats spec-id)]

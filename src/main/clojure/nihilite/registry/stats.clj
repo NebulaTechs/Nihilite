@@ -7,7 +7,10 @@
   (:import [java.util.concurrent ConcurrentHashMap]))
 
 (defrecord StatsRecord
-  [fired modified cancelled exceptions last-ns max-ns])
+  ;; last-ns and max-ns were timing fields for a latency measurement that
+  ;; nothing performs. :fired, :modified, :cancelled and :exceptions are the
+  ;; four install-status! reports, and all four are incremented.
+  [fired modified cancelled exceptions])
 
 (defonce ^:private stats-index
   (ConcurrentHashMap.))
@@ -35,7 +38,7 @@
   (reset! driver-redefine-body-executed? false))
 
 (defn- fresh-record ^StatsRecord []
-  (->StatsRecord (atom 0) (atom 0) (atom 0) (atom 0) (atom 0) (atom 0)))
+  (->StatsRecord (atom 0) (atom 0) (atom 0) (atom 0)))
 
 (defn ensure-stats ^StatsRecord [spec-id]
   (let [id (str spec-id)
@@ -63,3 +66,4 @@
 
 (defn bump-fired!      [spec-id] (when-let [r (get-stats spec-id)] (swap! (:fired r) inc)))
 (defn bump-exception!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:exceptions r) inc)))
+(defn bump-cancelled!  [spec-id] (when-let [r (get-stats spec-id)] (swap! (:cancelled r) inc)))
