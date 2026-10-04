@@ -376,53 +376,51 @@
 
 (defn dispatch-return-for-spec
   [spec-id self args original]
-  (try
-    (if-let [spec (reg/lookup spec-id)]
-      (let [bucket (reg/spec-bucket spec)
-            event  (->hook-event spec self args original)
-            result (atom original)
-            decided? (atom false)
-            modified? (atom false)]
-        (doseq [s bucket
-                :while (and (not @decided?)
-                            (not (ctx-cancelled? event)))]
-          (let [action (or (:action s) :observe)
-                f (safe-bridge s)
-                rv (dispatch-one! f event)]
-            (stats/bump-fired! (:id s))
-            (cond
-              (and (= action :modify) (some? rv))
-              (do
-                (let [desc (or (:method-descriptor s) (:method-descriptor spec))
-                      rv'  (coerce-return rv desc)]
-                  (when-not (modify-value-compatible? rv' original desc)
-                    (throw (ex-info
-                             (str ":modify bridge for spec " (:id s) " returned "
-                                  (.getName (class rv'))
-                                  ", which cannot replace the target's "
-                                  (:method-descriptor spec)
-                                  " return value. A :modify bridge must RETURN the"
-                                  " replacement value (it may take ctx as its"
-                                  " single argument, but must not return it).")
-                             {:nihilite/kind :nihilite/invalid-modify-value
-                              :nihilite/id (:id s)
-                              :nihilite/returned (class rv')
-                              :nihilite/descriptor desc})))
-                  (reset! result rv')
-                  (reset! modified? true)
-                  (reset! decided? true)))
+  (if-let [spec (reg/lookup spec-id)]
+    (let [bucket (reg/spec-bucket spec)
+          event  (->hook-event spec self args original)
+          result (atom original)
+          decided? (atom false)
+          modified? (atom false)]
+      (doseq [s bucket
+              :while (and (not @decided?)
+                          (not (ctx-cancelled? event)))]
+        (let [action (or (:action s) :observe)
+              f (safe-bridge s)
+              rv (dispatch-one! f event)]
+          (stats/bump-fired! (:id s))
+          (cond
+            (and (= action :modify) (some? rv))
+            (let [desc (or (:method-descriptor s) (:method-descriptor spec))
+                  rv'  (coerce-return rv desc)]
+              (when-not (modify-value-compatible? rv' original desc)
+                (throw (ex-info
+                         (str ":modify bridge for spec " (:id s) " returned "
+                              (.getName (class rv'))
+                              ", which cannot replace the target's "
+                              (:method-descriptor spec)
+                              " return value. A :modify bridge must RETURN the"
+                              " replacement value (it may take ctx as its"
+                              " single argument, but must not return it).")
+                         {:nihilite/kind :nihilite/invalid-modify-value
+                          :nihilite/id (:id s)
+                          :nihilite/returned (class rv')
+                          :nihilite/descriptor desc})))
+              (reset! result rv')
+              (reset! modified? true)
+              (reset! decided? true))
 
-              (= action :cancel)
-              (do (call-cancel! event) (reset! decided? true))
+            (= action :cancel)
+            (do (call-cancel! event) (reset! decided? true))
 
-              (= action :subscriber)
-              (do (call-cancel! event) (reset! decided? true))
-              :else nil)))
-        (when @modified?
-          (when-let [r (stats/get-stats spec-id)]
-            (swap! (:modified r) inc)))
-        @result)
-      original)))
+            (= action :subscriber)
+            (do (call-cancel! event) (reset! decided? true))
+            :else nil)))
+      (when @modified?
+        (when-let [r (stats/get-stats spec-id)]
+          (swap! (:modified r) inc)))
+      @result)
+    original))
 
 (defn dispatch-throw-for-spec
   [spec-id self args throwable]

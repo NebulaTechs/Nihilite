@@ -14,7 +14,7 @@
    The grammar itself is checked here rather than trusted: a validator
    that accepts a malformed descriptor is the same failure it was added
    to prevent."
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.registry :as reg]
             [nihilite.test.fixtures :as fx]))
 
