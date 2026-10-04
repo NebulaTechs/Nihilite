@@ -25,14 +25,18 @@ Two classes, and only the first is hopeless:
 JDK 25, each target through the production `install!` path in its own JVM:
 
 ```sh
-clojure -T:build hostile-target-driver          # one target per JVM
+clojure -T:build hostile-target-driver                # all of them
 HOSTILE_TARGET_INDEX=3 clojure -T:build hostile-target-driver
+HOSTILE_TARGET_INDEX=-1 clojure -T:build hostile-target-driver   # backwards
 ```
+
+The index is an environment variable, not an argument: `clojure -T:build`
+does not forward positional arguments to the task. The last `HOSTILE_BEGIN`
+line in the log names whichever target killed the JVM.
 
 | Target | Outcome |
 | --- | --- |
 | `java.io.FileOutputStream.write([BII)V` | fires, re-entrancy cut |
-| `java.util.BitSet` `isEmpty` / `size` / `cardinality` / `get` | all four positions fire |
 | `java.io.FileInputStream.read([BII)I` | classpath-dependent — see below |
 | `java.lang.Object.hashCode()I` | registers, reports woven count 1, **never fires** |
 | `java.util.zip.ZipFile.getEntry` | registers, reports woven count 1, **never fires** |
@@ -41,6 +45,13 @@ HOSTILE_TARGET_INDEX=3 clojure -T:build hostile-target-driver
 | `java.lang.Object.equals(Object)` | StackOverflowError |
 | `java.lang.StringBuilder.append(String)` | JVM assertion failure in `libinstrument`, then StackOverflowError |
 | `java.lang.ClassLoader.loadClass(String)` | `ClassCircularityError` at install time |
+| `java.util.zip.Inflater.inflate([B)I` | in the driver's table, not measured — the hammer's gzip stream does not match a default `Inflater` |
+
+`java.util.BitSet` (`isEmpty` / `size` / `cardinality` / `get`) fires at all
+four positions, but it is not in this table's source: it is measured by
+`clojure -T:build prod-bootstrap-driver`, which is where the four-position
+matrix lives. The two passes answer different questions — this one looks for
+targets that defeat the machinery, that one for targets that survive it.
 
 "Registers but never fires" is the failure mode to watch for. `install!` returns
 a woven count and nothing throws, so every driver asserts a real firing rather
@@ -64,14 +75,17 @@ same driver:
 | directories (`src/main/clojure`, `target/classes`) | registers, never fires (4/4); StackOverflowError on other runs |
 | jar only (`target/nihilite.jar` + `target/test-classes`) | fires every run, 1–2 calls, no overflow |
 
-In the never-fires case the advice is never entered at all: an `AtomicLong`
-counter placed as the first statement of `nihilite.kernel.advice/hk-onEntry`,
-before the guard and before `lookup-spec`, stays at 0 across every run, while
-the hooked method returns bytes normally and `install!` still reports success.
-So this is not "advice ran but the spec did not match" — the guard was never
-consulted and `lookup-spec` was never reached. The call site is woven but its
-invokedynamic is never linked. This is the same silent shape recorded when the
-BitSet `redefine` bridge was fixed in `26ad354`.
+In the never-fires case the advice is never entered at all. That was
+established by temporarily inserting an `AtomicLong` counter as the first
+statement of `nihilite.kernel.advice/hk-onEntry` — before the guard, before
+`lookup-spec` — and watching it stay at 0 across every run while the hooked
+method returned bytes normally and `install!` still reported success. The
+counter is not in the tree now; the characterisation driver's `:fired 0` is
+the standing evidence for the same thing. So this is not "advice ran but the
+spec did not match" — the guard was never consulted and `lookup-spec` was
+never reached. The call site is woven but its invokedynamic is never linked.
+This is the same silent shape recorded when the BitSet `redefine` bridge was
+fixed in `26ad354`.
 
 Two hypotheses were ruled out rather than left standing:
 
