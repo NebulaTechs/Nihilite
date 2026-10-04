@@ -88,7 +88,7 @@
                           ;; built-in server.
                           :handler (default-handler))]
     (println (str "[nihilite-example] nREPL listening on 127.0.0.1:"
-                  (.getLocalPort ^java.net.ServerSocket (.getPort srv))
+                  (.getLocalPort ^java.net.ServerSocket srv)
                   " -- connect Calva to 127.0.0.1 and that port"))
     (flush)
     srv))

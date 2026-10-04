@@ -1,6 +1,6 @@
 # Drivers
 
-`clojure -T:build check` runs the contract tests plus six drivers. The drivers
+`clojure -T:build check` runs the contract tests plus nine drivers. The drivers
 exist because the contract tests run in-process and cannot reach a real
 `Instrumentation`, and the two failure modes this project has actually suffered
 — weaving that silently never fires, and an install that reports success while
@@ -14,9 +14,12 @@ the agent is half-built — are both invisible from inside.
 | `redefine-instance` | an instance method redefined such that the body captures `self` via `@This` |
 | `indy` | an invokedynamic call site woven into a bootstrap-loader method actually firing |
 | `prod-bootstrap` | all four positions installing and firing on a bootstrap-loader class through the production `install!` path, with the worker itself supplying the redefine dispatcher |
+| `dual-loader` | one class name under two ClassLoaders: a single spec serves both, `:woven-count` reports how many loaded Classes share the name rather than how many hooks exist, and nothing records which loader an event came from |
+| `concurrent-invoke` | 8 threads in one advice body: Nihilite's `:fired` atom and `:sequence` `AtomicLong` are exact under contention, a user bridge's own unsynchronized state loses 5–9% of its increments, and the per-thread reentrancy guard does not protect it |
+| `multi-hook-fanout` | one woven call site reaches every hook on the method, in install order; `:cancel` ends the walk *and* skips the host body, `:subscriber` does neither |
 
 ```sh
-clojure -T:build clojure-contract-test   # 190 cases
+clojure -T:build clojure-contract-test   # prints its own pass/fail/error summary
 clojure -T:build check                   # build + verify + all drivers
 clojure -T:build retransform-driver      # one driver on its own
 ```
@@ -58,7 +61,9 @@ number varies between runs, so it is reported and not asserted — see
 
 `clojure -T:build hostile-target-driver` is the characterisation pass behind the
 limits table. It asserts nothing, because some of its targets are unsafe on
-purpose, and it is deliberately not part of `check`.
+purpose, and it is deliberately not part of `check`. Use
+`HOSTILE_TARGET_INDEX` to run one target per JVM — a target that overflows the
+stack ends the run, and the rest of the table goes unmeasured with it.
 
 `nihilite.test.init-service-driver` measures that an init script can deploy its
 own network service and put a jar the agent has never seen onto the classloader.
