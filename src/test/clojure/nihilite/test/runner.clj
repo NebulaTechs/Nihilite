@@ -32,6 +32,7 @@
    "nihilite.test.install-status-test"
    "nihilite.test.uninstall-warn-test"
    "nihilite.test.redefine-advice-composition-test"
+   "nihilite.test.multi-hook-fanout-test"
    "nihilite.test.retransform-batch-atomicity-test"
    "nihilite.test.ctx-return-test"
    "nihilite.test.eval-test"])
