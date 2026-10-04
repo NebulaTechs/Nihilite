@@ -75,6 +75,9 @@ jobs:
           clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
+          clojure -T:build dual-loader-driver
+          clojure -T:build concurrent-invoke-driver
+          clojure -T:build multi-hook-fanout-driver
 
   test-17:
     runs-on: ubuntu-latest
@@ -117,6 +120,9 @@ jobs:
           clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
+          clojure -T:build dual-loader-driver
+          clojure -T:build concurrent-invoke-driver
+          clojure -T:build multi-hook-fanout-driver
 
   test-21:
     runs-on: ubuntu-latest
@@ -159,6 +165,9 @@ jobs:
           clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
+          clojure -T:build dual-loader-driver
+          clojure -T:build concurrent-invoke-driver
+          clojure -T:build multi-hook-fanout-driver
 
   test-25:
     runs-on: ubuntu-latest
@@ -201,6 +210,9 @@ jobs:
           clojure -T:build eval-attach-driver
           clojure -T:build indy-driver
           clojure -T:build prod-bootstrap-driver
+          clojure -T:build dual-loader-driver
+          clojure -T:build concurrent-invoke-driver
+          clojure -T:build multi-hook-fanout-driver
 
   publish:
     runs-on: ubuntu-latest
