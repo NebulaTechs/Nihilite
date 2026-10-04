@@ -213,6 +213,11 @@
   nil)
 
 (defn- java-command!
+  "Runs `main-class` in a child JVM on the AOT + source classpath.
+
+   `args` is stringified: `clojure -T:build task -- 3` hands the task a Long,
+   and ProcessBuilder rejects anything that is not a String with an
+   ArrayStoreException naming the MapEntry it choked on."
   [label main-class args extra-jvm-opts]
   (compile-clj nil)
   (compile-test-drivers!)
@@ -286,6 +291,61 @@
                  "nihilite.test.prodBootstrapDriver" [] (driver-jvm-opts))
   nil)
 
+(defn dual-loader-driver
+  "Characterises one class name under two ClassLoaders: the registry has no
+   ClassLoader dimension, so one spec serves both and a woven count reports
+   how many loaded Classes share a name rather than how many hooks exist."
+  [_]
+  (java-command! "Dual loader driver"
+                 "nihilite.test.dualLoaderDriver" [] (driver-jvm-opts))
+  nil)
+
+(defn concurrent-invoke-driver
+  "Characterises N threads inside one advice body: Nihilite's own :fired atom
+   and :sequence AtomicLong are exact under contention, a user bridge's own
+   unsynchronized state is not, and the per-thread reentrancy guard does not
+   protect it."
+  [_]
+  (java-command! "Concurrent invoke driver"
+                 "nihilite.test.concurrentInvokeDriver" [] (driver-jvm-opts))
+  nil)
+
+(defn multi-hook-fanout-driver
+  "Proves that ONE woven call site reaches every hook on the method, in
+   install order, and pins the one place fan-out is not total: :cancel ends
+   the walk, :subscriber only cancels the event."
+  [_]
+  (java-command! "Multi hook fanout driver"
+                 "nihilite.test.multiHookFanoutDriver" [] (driver-jvm-opts))
+  nil)
+
+(defn hostile-target-driver
+  "The characterisation pass behind the README's Limits table: walks a table
+   of methods Nihilite's own machinery runs on, installs an :entry hook on
+   each through the production install! path, and records what actually
+   happens. It asserts nothing, because some of its targets are unsafe on
+   purpose.
+
+   Deliberately NOT part of `check`: `String.length` and friends overflow the
+   stack, and a target that kills the JVM ends the run with every later
+   target unmeasured. HOSTILE_TARGET_INDEX selects one target so that a
+   lethal one costs you one measurement instead of the rest of the table;
+   a negative index walks backwards.
+
+   The index arrives as an environment variable, not a command-line
+   argument, because `clojure -T:build` does not forward positional
+   arguments to the task: `clojure -T:build hostile-target-driver 3` looks
+   like a task named `3`, and even with `--` the task receives an empty
+   args vector. HOSTILE_WARM_CALLS works the same way, for the same reason.
+
+   The list order and each target's measured outcome are in
+   docs/hook-limits.md. The last HOSTILE_BEGIN line in the log names whatever
+   target killed the JVM."
+  [_]
+  (java-command! "Hostile target driver"
+                 "nihilite.test.hostileTargetDriver" [] (driver-jvm-opts))
+  nil)
+
 (defn probe
   "Runs a test driver and reports its real exit code instead of swallowing it.
    ensure-success! raises on any non-zero status and clojure -T then exits 1,
@@ -325,5 +385,8 @@
   (redefine-instance-driver nil)
   (indy-driver nil)
   (prod-bootstrap-driver nil)
+  (dual-loader-driver nil)
+  (concurrent-invoke-driver nil)
+  (multi-hook-fanout-driver nil)
   (println "All tools.build checks passed")
   nil)
