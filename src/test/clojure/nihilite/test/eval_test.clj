@@ -1,7 +1,8 @@
 (ns nihilite.test.eval-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
-            [nihilite.eval :as ev]))
+            [nihilite.eval :as ev]
+            [nihilite.eval.session :as session]))
 
 (defn- settle
   "Polls a session until it stops running. eval-in is asynchronous, so a
@@ -21,6 +22,39 @@
 
 (defn- text-of [snapshot]
   (apply str (map :text (:events snapshot))))
+
+(deftest running-stays-true-while-a-later-eval-runs
+  ;; A second eval submitted while the first was executing used to make
+  ;; :running? report false for the whole of the second. The thread cleared
+  ;; :running when the first finished, and by then the second was already
+  ;; off the queue, so both of running?'s signals -- the atom and the queue
+  ;; size -- read empty. A caller waiting on it was told the work was done
+  ;; while it was still running.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(+ 1 1)")
+    (ev/eval-in sid "(Thread/sleep 500)")
+    (Thread/sleep 150)
+    (is (:running? (ev/snapshot sid))
+        "the first finished, the second is still sleeping")
+    (is (= 2 @(:running (session/lookup sid)))
+        "and :running names the eval that is actually executing")
+    (let [s (settle sid 4000)]
+      (is (not (:running? s)) "both are done")
+      (is (= "2" (:value s)) "the first result; the second returned nil"))
+    (ev/close-session sid)))
+
+(deftest a-caller-waiting-on-a-later-eval-is-not-released-early
+  ;; The same defect seen through the thing a caller actually does: poll
+  ;; until :running? is false. It returned on the first poll, before the
+  ;; sleeping eval had produced anything.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(+ 1 1)")
+    (ev/eval-in sid "(Thread/sleep 400)")
+    (let [s (settle sid 3000)]
+      (is (not (:running? s)))
+      (is (str/includes? (text-of s) "2")
+          "both evals ran; the sleeping one was not abandoned"))
+    (ev/close-session sid)))
 
 (deftest open-session-returns-unique-ids
   (let [a (ev/open-session)

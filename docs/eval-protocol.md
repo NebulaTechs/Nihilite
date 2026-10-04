@@ -87,6 +87,14 @@ queued", and it goes true at enqueue time rather than when the thread picks the
 task up — a poll landing between those two would otherwise read the session too
 early.
 
+The mirror of that is when it goes false. Not when an eval finishes: the thread
+hands `:running` straight to the next queued eval instead of clearing it, because
+clearing it left a window where a second eval submitted during the first was
+already off the queue (so the queue-size half of the check read empty) and not
+yet finished (so the atom read empty too). Measured: `(+ 1 1)` then
+`(Thread/sleep 600)` reported `:running?` false for the whole 600ms, and a caller
+polling it was told the work was done while it was running.
+
 `eval-in` is asynchronous because the usual caller is an attacher holding a
 `loadAgent` open: a form that never returns must not wedge it.
 

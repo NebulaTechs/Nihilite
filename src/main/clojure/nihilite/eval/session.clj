@@ -154,7 +154,17 @@
       (let [task (.take q)]
         (when task
           (run-eval! s (:code task))
-          (reset! (:running s) nil)
+          ;; Mark the next queued eval as the running one, rather than
+          ;; clearing :running and letting start-eval! set it. Clearing
+          ;; was wrong the moment a second eval was submitted while the
+          ;; first was executing: this thread finished the first, nil'd
+          ;; the atom, and the second -- already taken off the queue, so
+          ;; queue.size was 0 too -- was invisible to running?. Measured:
+          ;; eval "(+ 1 1)" then "(Thread/sleep 600)" reported
+          ;; :running? false for the whole 600ms, so a caller waiting on
+          ;; it was told the work was done while it was still running.
+          (let [next (.peek q)]
+            (reset! (:running s) (some-> next :eid)))
           (recur))))))
 
 (defn register!
