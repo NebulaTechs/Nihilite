@@ -62,14 +62,6 @@
   (b/delete {:path "target"})
   nil)
 
-(defn javac-java
-  "Stub kept for tools.build task compatibility. There is no longer any
-   Java source under src/main/java (or src/test/java) -- the build is
-   pure Clojure + gen-class-driven AOT. This task is a no-op."
-  [_]
-  (.mkdirs (io/file class-dir))
-  nil)
-
 (defn- reset-derived-dir!
   "Deletes `dir` and recreates it empty.
 
