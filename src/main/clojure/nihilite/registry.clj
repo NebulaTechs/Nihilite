@@ -52,8 +52,13 @@
   [hook-id self args phase return-value cancelled])
 
 (defrecord HookEvent
+  ;; `stack` was the one field nothing ever put a value in: ->hook-event builds
+  ;; the map without it, so a bridge reading (:stack ctx) got nil and had no
+  ;; way to tell that from a stack trace that was never taken. Dropping the
+  ;; field is the same thing (:stack still answers nil), minus the pretence.
+  ;; The rest are filled by ->hook-event and are read from user bridges.
   [spec-id source phase self args return-value throwable
-   cancelled? cancel! thread-name timestamp-ns sequence note stack])
+   cancelled? cancel! thread-name timestamp-ns sequence note])
 
 (defn method-key
   [class-internal method-name descriptor]

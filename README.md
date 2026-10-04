@@ -70,7 +70,7 @@ overwritten.
 
 The bridge receives a `HookEvent` record — `:spec-id`, `:self`, `:args`,
 `:return-value`, `:throwable`, `:cancelled?`, `:cancel!`, `:thread-name`,
-`:timestamp-ns`, `:sequence`, `:stack` — except under `:redefine`, which gets
+`:timestamp-ns`, `:sequence` — except under `:redefine`, which gets
 `(self, args, method-name)` and whose return value *becomes* the method's return
 value, because the original body does not run at all.
 

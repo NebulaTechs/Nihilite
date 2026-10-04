@@ -267,15 +267,6 @@
      :error @(:error s)
      :running? (running? s)}))
 
-(defn running-thread
-  "The session's thread, or nil if it is not started. One thread per session
-   rather than per eval, which is what makes interrupt reach queued work.
-
-   A Thread cannot be recovered once dropped, which is the only reason the
-   session holds this reference at all."
-  ^Thread [^Session s]
-  (:thread s))
-
 (defn stop!
   "Interrupts the session's thread and drops any queued work. The thread ends
    on the InterruptedException .take throws; anything already executing keeps
