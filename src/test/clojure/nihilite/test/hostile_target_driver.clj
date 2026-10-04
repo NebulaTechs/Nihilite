@@ -186,8 +186,19 @@
                           {:hammer-error (str (.getName (class t)) ": " (.getMessage t))})))))]
     (try (reg/uninstall! id) (catch Throwable _ nil))
     outcome))
-(defn- select-targets [args]
-  (let [idx (try (Integer/parseInt (first args)) (catch Throwable _ nil))]
+(defn- select-targets
+  "Which targets to probe: the whole table, or one of them.
+
+   The index comes from HOSTILE_TARGET_INDEX, not from a command-line
+   argument. `clojure -T:build` does not forward positional arguments to the
+   task, so the only thing that survives the trip is the environment — the
+   same reason HOSTILE_WARM_CALLS below is an env var. An argument is still
+   honoured, for the `java -cp ... hostileTargetDriver 3` invocation that
+   bypasses build.clj."
+  [args]
+  (let [idx (or (try (Integer/parseInt (first args)) (catch Throwable _ nil))
+                (some-> (System/getenv "HOSTILE_TARGET_INDEX") str not-empty
+                        (as-> $ (try (Integer/parseInt $) (catch Throwable _ nil)))))]
     (cond
       (nil? idx) targets
       (neg? idx) (vec (reverse targets))

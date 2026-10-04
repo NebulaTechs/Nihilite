@@ -56,7 +56,7 @@
    this from the outside. Depending on classpath shape it either overflows, or
    registers with a woven count of 1 and never runs the advice at all -- the
    entry point is never reached, so this guard is never consulted. Both look
-   identical through the API. nilhotite.test.prod-bootstrap-driver prints the
+   identical through the API. nihilite.test.prod-bootstrap-driver prints the
    measurement; it is not a gate, because a coin flip is not a test."
   [body]
   (if (.get ^ThreadLocal in-advice)

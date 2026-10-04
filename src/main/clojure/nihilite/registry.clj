@@ -470,7 +470,7 @@
    A malformed descriptor is not a harmless slip. It becomes the spec's
    :method-key and its :method-descriptor, and both decide which loaded
    method a hook matches: ByteBuddy matches on the descriptor and
-   nilhotite.registry.index keys its buckets by it. A descriptor this
+   nihilite.registry.index keys its buckets by it. A descriptor this
    rejects is one ByteBuddy cannot match either, so the hook would
    register successfully and never fire -- the 'registers but never
    fires' mode docs/hook-limits.md documents, reached by a route the
