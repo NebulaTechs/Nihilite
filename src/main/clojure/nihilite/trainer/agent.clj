@@ -29,7 +29,8 @@
   (:require [clojure.tools.logging :as log]
             [clojure.tools.logging.impl :as logimpl]
             [nihilite.builder.registry :as registry]
-            [nihilite.crafter.classgen :as cg]))
+            [nihilite.crafter.classgen :as cg]
+            [nihilite.crafter.jul :as jul]))
 
 (def ^:private agent-log
   "Java.util.logging.Logger named `nihilite.agent`. Obtained via
@@ -42,15 +43,6 @@
    source available inside the fat jar."
   (let [^Logger l (logimpl/get-logger log/*logger-factory* "nihilite.agent")]
     l))
-
-(defn- log-info [msg]
-  (.info agent-log msg))
-
-(defn- log-warn [msg]
-  (.warning agent-log msg))
-
-(defn- log-error [msg]
-  (.severe agent-log msg))
 
 (defonce ^:private registered-on
   (AtomicReference.))
@@ -130,11 +122,11 @@
             (when (.isFile jar)
               (with-open [jf (java.util.jar.JarFile. jar)]
                 (.appendToSystemClassLoaderSearch inst jf)
-                (log-info (str "[Nihilite Agent] appended"
+                (jul/info agent-log (str "[Nihilite Agent] appended"
                                " " (.getName jar)
                                " to system classloader search")))))))
       (catch Exception _
-        (log-warn "[Nihilite Agent] appendToSystemClassLoaderSearch failed")))))
+        (jul/warn agent-log "[Nihilite Agent] appendToSystemClassLoaderSearch failed")))))
 
 (defn- start-worker-once
   "Spawns the worker thread the first time it is called; subsequent
@@ -173,7 +165,7 @@
   (require (quote nihilite.builder.boot))
   (let [v (clojure.lang.RT/var "nihilite.builder.boot" "run-startup!")]
     (when-not (.isBound v)
-      (log-error "[Nihilite] nihilite.builder.boot/run-startup! is not present; abort"))
+      (jul/error agent-log "[Nihilite] nihilite.builder.boot/run-startup! is not present; abort"))
     (when (.isBound v)
       ;; Pass the value, do not pack it. IFn.invoke(Object) is the
       ;; single-argument call, so handing it an Object[] would deliver the
@@ -210,7 +202,7 @@
     (when fresh?
       (require (quote nihilite.trainer.installer))
       ((resolve (quote nihilite.trainer.installer/install)) inst)
-      (log-info (str "[Nihilite Agent] " label
+      (jul/info agent-log (str "[Nihilite Agent] " label
                     " armed HookInstaller (ByteBuddy AgentBuilder)")))
     (start-worker-once)
     fresh?))
@@ -229,10 +221,10 @@
           fresh? (arm-agent! "premain" inst)]
       (run-startup-async! args)
       (when-not fresh?
-        (log-info (format "[Nihilite Agent] premain no-op (HookInstaller already registered for %s)"
+        (jul/info agent-log (format "[Nihilite Agent] premain no-op (HookInstaller already registered for %s)"
                           (str (.get registered-on)))))
       (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
-        (log-info (format "[Nihilite Agent] premain returned in %.0f ms" elapsed-ms))))))
+        (jul/info agent-log (format "[Nihilite Agent] premain returned in %.0f ms" elapsed-ms))))))
 
 (defn agent-agentmain
   "Forwarded by nihilite.trainer.Agent.agentmain (JVM dynamic-attach entry).
@@ -246,12 +238,12 @@
     (let [t0     (System/nanoTime)
           fresh? (arm-agent! "agentmain" inst)]
       (when-not fresh?
-        (log-info (format "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)"
+        (jul/info agent-log (format "[Nihilite Agent] agentmain no-op (HookInstaller already registered for %s)"
                           (str (.get registered-on)))))
       (agent-awaitWorkerReady)
       (run-startup! args)
       (let [elapsed-ms (/ (- (System/nanoTime) t0) 1000000.0)]
-        (log-info (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms))))))
+        (jul/info agent-log (format "[Nihilite Agent] agentmain returned in %.0f ms" elapsed-ms))))))
 
 (def ^:const usage-banner
   "What `java -jar nihilite.jar` prints.

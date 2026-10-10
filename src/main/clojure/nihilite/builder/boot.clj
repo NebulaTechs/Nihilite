@@ -9,12 +9,13 @@
    starts its own service from its init script (see
    examples/nrepl_service.clj)."
   (:require [nihilite.builder.eval :as ev]
+            [nihilite.crafter.jul :as jul]
             [nihilite.builder.eval.protocol :as proto])
   (:import [java.util.concurrent.atomic AtomicBoolean]
            [java.util.logging Logger Level]))
 
 (defonce ^:private log
-  (doto (Logger/getLogger "Nihilite.Boot")
+  (doto (jul/logger "nihilite.builder.boot")
     (.setLevel Level/WARNING)))
 
 (def ^:private init-property-name "nihilite.init")
@@ -62,7 +63,7 @@
   []
   (if-not (.compareAndSet init-ran false true)
     (do
-      (.log ^Logger log Level/FINE "init already ran in this JVM; skipping")
+      (jul/fine log "init already ran in this JVM; skipping")
       true)
     (if-let [form (System/getProperty init-property-name)]
     (let [sid (ev/open-session)]
@@ -75,12 +76,12 @@
           (when (seq err) (binding [*out* *err*] (print err)) (flush))
           (cond
             (:error s)
-            (do (.log ^Logger log Level/WARNING
+            (do (jul/warn log
                       (str "[Nihilite] init failed: " (:error s)))
                 false)
 
             (:running? s)
-            (do (.log ^Logger log Level/WARNING
+            (do (jul/warn log
                       "[Nihilite] init did not finish within 30s")
                 false)
 

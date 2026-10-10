@@ -8,19 +8,14 @@
    wiring and the install / uninstall / uninstall-spec! entry points that
    the registry and the agent worker call into."
   (:require [nihilite.builder.registry :as reg]
+            [nihilite.crafter.jul :as jul]
             [nihilite.trainer.advice :as advice]
             [nihilite.trainer.indy :as indy]
             [nihilite.trainer.transformer :as transformer])
-  (:import [java.lang.instrument Instrumentation]
-           [java.util.logging Logger]))
+  (:import [java.lang.instrument Instrumentation]))
 
-(def ^:private installer-log (Logger/getLogger "nihilite.trainer.installer"))
+(def ^:private installer-log (jul/logger "nihilite.trainer.installer"))
 
-(defn- log-info [& msgs] (.info installer-log (apply str msgs)))
-(defn- log-warn [& msgs] (.warning installer-log (apply str msgs)))
-(defn- log-error [t & msgs]
-  (let [msg (apply str msgs)]
-    (.log installer-log java.util.logging.Level/SEVERE msg t)))
 
 (defn- base-builder []
   (let [retransformation (let [^net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy s net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy/RETRANSFORMATION]
@@ -32,7 +27,7 @@
                     (onTransformation [_ _ _ _ _ _])
                     (onIgnored [_ _ _ _ _])
                     (onError [_ _ _ _ _ e]
-                      (log-error e "AgentBuilder onError"))
+                      (jul/error installer-log e "AgentBuilder onError"))
                     (onComplete [_ _ _ _ _]))
         ^net.bytebuddy.agent.builder.AgentBuilder$Default base (net.bytebuddy.agent.builder.AgentBuilder$Default.)]
     (-> base
@@ -80,7 +75,7 @@
   (indy/install-bridge!)
   (doseq [[class-name method-name] advice-classes]
     (indy/preload-advice! class-name method-name))
-  (log-info "HookInstaller armed invokedynamic dispatch for"
+  (jul/info installer-log "HookInstaller armed invokedynamic dispatch for"
             (count advice-classes) "advice classes")
   nil)
 
@@ -116,7 +111,7 @@
    agent silently inert, which is far worse than a loud startup failure."
   [^Instrumentation inst]
   (if (nil? inst)
-    (log-info "HookInstaller install skipped (no Instrumentation)")
+    (jul/info installer-log "HookInstaller install skipped (no Instrumentation)")
     (do
       (let [register-fn (requiring-resolve
                           'nihilite.trainer.agent/agent-registerInstrumentation)]
@@ -132,7 +127,7 @@
           (.type (base-builder) type-matcher)
           combined-xform)
          inst))
-      (log-info "HookInstaller armed (byte-buddy AgentBuilder, RETRANSFORMATION, Reiterating)")
+      (jul/info installer-log "HookInstaller armed (byte-buddy AgentBuilder, RETRANSFORMATION, Reiterating)")
       nil)))
 
 (defn uninstall
@@ -156,7 +151,7 @@
                               (.getAllLoadedClasses inst))]
       (when (seq candidates)
         (.retransformClasses inst (into-array Class candidates))
-        (log-info "HookInstaller uninstall: retransformed" dot-name))
+        (jul/info installer-log "HookInstaller uninstall: retransformed" dot-name))
       (count candidates))))
 
 (defn uninstall-spec-with-target!
@@ -171,9 +166,9 @@
     (if inst
       (if target-internal
         (uninstall inst target-internal)
-        (do (log-warn "HookInstaller uninstall-spec: spec id=" spec-id " has no target-internal")
+        (do (jul/warn installer-log "HookInstaller uninstall-spec: spec id=" spec-id " has no target-internal")
             0))
-      (do (log-warn "HookInstaller uninstall-spec: no Instrumentation for spec id=" spec-id)
+      (do (jul/warn installer-log "HookInstaller uninstall-spec: no Instrumentation for spec id=" spec-id)
           0))))
 
 ;; Publish the uninstall entry point upward. registry cannot require this

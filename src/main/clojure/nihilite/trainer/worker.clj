@@ -14,7 +14,8 @@
   (:import [java.util.logging Logger]
            [clojure.lang DynamicClassLoader Compiler])
   (:require [clojure.tools.logging :as log]
-            [clojure.tools.logging.impl :as logimpl]))
+            [clojure.tools.logging.impl :as logimpl]
+            [nihilite.crafter.jul :as jul]))
 
 (def ^:private worker-log
   "JUL Logger backing the worker lifecycle messages. Obtained via
@@ -22,9 +23,6 @@
    backend (JUL/SLF4J/Log4j2) without pulling in clojure.java.api."
   (let [^Logger l (logimpl/get-logger log/*logger-factory* "nihilite.worker")]
     l))
-
-(defn- log-info [^String msg]
-  (.info worker-log msg))
 
 (defn- clojure-var
   "Returns the IFn for a (ns-name, var-name) pair, without requiring
@@ -87,7 +85,7 @@
   (let [install-redisp (await-var "nihilite.builder.registry.dispatch"
                                    "install-redefine-dispatcher!")
         result (.invoke ^clojure.lang.IFn install-redisp)]
-    (log-info (str "[Nihilite] redefine dispatcher installed: " result))))
+    (jul/info worker-log (str "[Nihilite] redefine dispatcher installed: " result))))
 
 (defn resolve-host-class-loader
   "Returns the classloader the Clojure Compiler should use."
@@ -102,7 +100,7 @@
   (let [host-cl (resolve-host-class-loader)
         loader (DynamicClassLoader. host-cl)]
     (.bindRoot Compiler/LOADER loader)
-    (log-info (str "[Nihilite] Compiler/LOADER bound:" (.getName (class loader))))))
+    (jul/info worker-log (str "[Nihilite] Compiler/LOADER bound:" (.getName (class loader))))))
 
 (defn init-and-bind
   "Brings Clojure-side state online. Called from the agent worker thread.

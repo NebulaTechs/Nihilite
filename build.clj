@@ -239,91 +239,88 @@
                   :env extra-env})))
    nil))
 
-(defn clojure-contract-test
-  [_]
-  (java-command! "Clojure contract tests"
-                 "clojure.main"
-                 ["-m" "nihilite.test.runner"]
-                 [])
-  nil)
+(def ^:private driver-specs
+  "Every pass that runs a JVM, as data. def-drivers below turns each row
+   into a task var, so `clojure -T:build <name>` still works and adding a
+   pass is one row rather than a copied defn.
 
-(defn retransform-driver
-  [_]
-  (java-command! "Retransform driver"
-                 "nihilite.test.retransformDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn javaagent-driver
-  [_]
-  (when-not (.exists (io/file uber-file))
-    (uberjar nil))
-  (java-command! "Java agent classpath driver"
-                 "nihilite.test.javaagentClasspathDriver"
-                  ["spawn-jar-smoke" (.getAbsolutePath (io/file uber-file))
-                   "examples/jdkstdlib/init.clj"]
-                 (driver-jvm-opts))
-  nil)
-
-(defn eval-attach-driver
-  "Proves the eval wire protocol from another process: spawn a child with
+   :opts defaults to the shared driver JVM opts; [] means none, which is what
+   a pass running under clojure.main rather than as a -main class wants.
+   :uber? means the pass launches the packaged jar and so has to build it
+   first. :args-fn is called with the jar path so that path is written once.
+   :env reaches the child process, which is how HOSTILE_MODE selects the safe
+   subset -- `clojure -T:build` forwards neither positional arguments nor -D
+   flags to a task."
+  {:clojure-contract-test
+   {:label "Clojure contract tests"
+    :main "clojure.main"
+    :args ["-m" "nihilite.test.runner"]
+    :opts []
+   }
+  :retransform-driver
+   {:label "Retransform driver"
+    :main "nihilite.test.retransformDriver"
+    :args []
+   }
+  :javaagent-driver
+   {:label "Java agent classpath driver"
+    :main "nihilite.test.javaagentClasspathDriver"
+    :args-fn (fn [jar] ["spawn-jar-smoke" jar "examples/jdkstdlib/init.clj"])
+    :uber? true
+   }
+  :eval-attach-driver
+   {:label "Eval attach driver"
+    :main "nihilite.test.evalAttachDriver"
+    :args-fn (fn [jar] [jar])
+    :uber? true
+    :doc "Proves the eval wire protocol from another process: spawn a child with
    -javaagent, attach to it, and drive loadAgent with eval: requests."
-  [_]
-  (when-not (.exists (io/file uber-file))
-    (uberjar nil))
-  (java-command! "Eval attach driver"
-                 "nihilite.test.evalAttachDriver"
-                 [(.getAbsolutePath (io/file uber-file))]
-                 (driver-jvm-opts))
-  nil)
-
-(defn redefine-instance-driver
-  [_]
-  (java-command! "Redefine instance driver"
-                 "nihilite.test.redefineInstanceDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn indy-driver
-  [_]
-  (java-command! "Indy driver"
-                 "nihilite.test.indyDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn prod-bootstrap-driver
-  [_]
-  (java-command! "Production bootstrap driver"
-                 "nihilite.test.prodBootstrapDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn dual-loader-driver
-  "Characterises one class name under two ClassLoaders: the registry has no
+   }
+  :redefine-instance-driver
+   {:label "Redefine instance driver"
+    :main "nihilite.test.redefineInstanceDriver"
+    :args []
+   }
+  :indy-driver
+   {:label "Indy driver"
+    :main "nihilite.test.indyDriver"
+    :args []
+   }
+  :prod-bootstrap-driver
+   {:label "Production bootstrap driver"
+    :main "nihilite.test.prodBootstrapDriver"
+    :args []
+   }
+  :dual-loader-driver
+   {:label "Dual loader driver"
+    :main "nihilite.test.dualLoaderDriver"
+    :args []
+    :doc "Characterises one class name under two ClassLoaders: the registry has no
    ClassLoader dimension, so one spec serves both and a woven count reports
    how many loaded Classes share a name rather than how many hooks exist."
-  [_]
-  (java-command! "Dual loader driver"
-                 "nihilite.test.dualLoaderDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn concurrent-invoke-driver
-  "Characterises N threads inside one advice body: Nihilite's own :fired atom
+   }
+  :concurrent-invoke-driver
+   {:label "Concurrent invoke driver"
+    :main "nihilite.test.concurrentInvokeDriver"
+    :args []
+    :doc "Characterises N threads inside one advice body: Nihilite's own :fired atom
    and :sequence AtomicLong are exact under contention, a user bridge's own
    unsynchronized state is not, and the per-thread reentrancy guard does not
    protect it."
-  [_]
-  (java-command! "Concurrent invoke driver"
-                 "nihilite.test.concurrentInvokeDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn multi-hook-fanout-driver
-  "Proves that ONE woven call site reaches every hook on the method, in
+   }
+  :multi-hook-fanout-driver
+   {:label "Multi hook fanout driver"
+    :main "nihilite.test.multiHookFanoutDriver"
+    :args []
+    :doc "Proves that ONE woven call site reaches every hook on the method, in
    install order, and pins the one place fan-out is not total: :cancel ends
    the walk, :subscriber only cancels the event."
-  [_]
-  (java-command! "Multi hook fanout driver"
-                 "nihilite.test.multiHookFanoutDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn hostile-target-driver
-  "The characterisation pass behind the README's Limits table: walks a table
+   }
+  :hostile-target-driver
+   {:label "Hostile target driver"
+    :main "nihilite.test.hostileTargetDriver"
+    :args []
+    :doc "The characterisation pass behind the README's Limits table: walks a table
    of methods Nihilite's own machinery runs on, installs an :entry hook on
    each through the production install! path, and records what actually
    happens. It asserts nothing, because some of its targets are unsafe on
@@ -344,13 +341,13 @@
    The list order and each target's measured outcome are in
    docs/hook-limits.md. The last HOSTILE_BEGIN line in the log names whatever
    target killed the JVM."
-  [_]
-  (java-command! "Hostile target driver"
-                 "nihilite.test.hostileTargetDriver" [] (driver-jvm-opts))
-  nil)
-
-(defn hostile-safe-driver
-  "The part of the hostile-target table that can be a gate.
+   }
+  :hostile-safe-driver
+   {:label "Hostile target driver (safe subset)"
+    :main "nihilite.test.hostileTargetDriver"
+    :args []
+    :env {"HOSTILE_MODE" "safe"}
+    :doc "The part of the hostile-target table that can be a gate.
 
    The full table cannot be: several targets overflow the stack on purpose and
    a JVM that dies ends the run. The three targets tagged :check in
@@ -365,54 +362,75 @@
    makes them fire, this still passes.
 
    One JVM for the whole subset, driven by HOSTILE_MODE=safe."
-  [_]
-  (java-command! "Hostile target driver (safe subset)"
-                 "nihilite.test.hostileTargetDriver" [] (driver-jvm-opts)
-                 {"HOSTILE_MODE" "safe"})
-  nil)
+   }
 
-(defn probe
-  "Runs a test driver and reports its real exit code instead of swallowing it.
-   ensure-success! raises on any non-zero status and clojure -T then exits 1,
-   which makes a System/exit probe indistinguishable from a plain failure — a
-   diagnostic that cannot tell two outcomes apart is not a diagnostic.
+  ;; `check` runs these in order. hostile-target-driver is absent on purpose: it
+  ;; walks targets that overflow the stack on purpose, and a JVM that dies ends
+  ;; the run with every later target unmeasured. See docs/hook-limits.md.
+  :check-order [:clojure-contract-test
+               :retransform-driver
+               :javaagent-driver
+               :eval-attach-driver
+               :redefine-instance-driver
+               :indy-driver
+               :prod-bootstrap-driver
+               :dual-loader-driver
+               :concurrent-invoke-driver
+               :multi-hook-fanout-driver
+               :hostile-safe-driver]})
 
-   The main class comes from the PROBE_CLASS environment variable."
-  [_]
-  (compile-clj nil)
-  (compile-test-drivers!)
-  (let [result (b/process {:command-args
-                           (into ["java"]
-                                 (concat ["-cp" (str test-class-dir
-                                                     java.io.File/pathSeparator
-                                                     class-dir
-                                                     java.io.File/pathSeparator
-                                                     "src/main/clojure"
-                                                     java.io.File/pathSeparator
-                                                     "src/test/clojure"
-                                                     java.io.File/pathSeparator
-                                                     (basis-classpath @test-basis))]
-                                         [(System/getenv "PROBE_CLASS")]
-                                         (driver-jvm-opts)))})
-        code (:exit result)]
-    (println "PROBE-EXIT" (System/getenv "PROBE_CLASS") code)
-    (flush)
-    code))
+(defn- driver-fn
+  "The task body every pass shares. What differs between passes is the row."
+  [{:keys [label main args args-fn opts env uber?]}]
+  (fn [_]
+    (let [jar (when uber? (.getAbsolutePath (io/file uber-file)))]
+      (when uber?
+        (when-not (.exists (io/file uber-file))
+          (uberjar nil)))
+      (java-command! label main
+                     (if args-fn (args-fn jar) args)
+                     (or opts (driver-jvm-opts))
+                     env))
+    nil))
+
+(defn- def-drivers!
+  "Interns one task var per row of driver-specs, so `clojure -T:build <name>`
+   reaches it, and returns a map of task keyword to that var.
+
+   A function rather than a macro on purpose: a macro does not evaluate its
+   arguments, so the table would arrive as a Symbol.
+
+   intern copies no metadata onto the var it creates, so each row's :doc is
+   attached with alter-meta! -- otherwise (doc retransform-driver) would answer
+   nil for a task that has a page of explanation."
+  [specs]
+  (reduce
+   (fn [acc [task spec]]
+     (let [v (intern *ns* (symbol (name task)) (driver-fn spec))]
+       (when (:doc spec)
+         (alter-meta! v assoc :doc (:doc spec)))
+       (assoc acc task v)))
+   {}
+   specs))
+
+
+(def ^:private driver-fns
+  "task keyword -> the fn def-drivers! interned for it. `check` calls through
+   this rather than resolving a name: tools.build binds *ns* to the invoking
+   namespace when it calls a task, so a name resolved at call time would not
+   find these."
+  (def-drivers! driver-specs))
 
 (defn check
+  "Builds the jar, verifies it, then runs every pass in :check-order.
+
+   The order lives in driver-specs next to the passes themselves, so a pass
+   cannot be listed in the run without also being defined, and cannot be
+   defined without deciding whether it belongs in the run."
   [_]
   (uberjar nil)
   (verify-jar nil)
-  (clojure-contract-test nil)
-  (retransform-driver nil)
-  (javaagent-driver nil)
-  (eval-attach-driver nil)
-  (redefine-instance-driver nil)
-  (indy-driver nil)
-  (prod-bootstrap-driver nil)
-  (dual-loader-driver nil)
-  (concurrent-invoke-driver nil)
-  (multi-hook-fanout-driver nil)
-  (hostile-safe-driver nil)
+  (doseq [task (:check-order driver-specs)]
+    ((driver-fns task) nil))
   (println "All tools.build checks passed")
   nil)
