@@ -12,7 +12,7 @@
             [nihilite.crafter.jul :as jul]
             [nihilite.builder.eval.protocol :as proto])
   (:import [java.util.concurrent.atomic AtomicBoolean]
-           [java.util.logging Logger Level]))
+           [java.util.logging Level]))
 
 (defonce ^:private log
   (doto (jul/logger "nihilite.builder.boot")

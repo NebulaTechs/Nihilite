@@ -23,6 +23,7 @@
   (:require [clojure.test :refer [deftest is use-fixtures]]
             [nihilite.builder.registry :as reg]
             [nihilite.builder.registry.dispatch :as dispatch]
+            [clojure.string :as str]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)
