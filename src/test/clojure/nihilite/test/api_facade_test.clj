@@ -1,6 +1,6 @@
 (ns nihilite.test.api-facade-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.api :as api]
+            [nihilite.builder.api :as api]
             [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]

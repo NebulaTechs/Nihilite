@@ -1,8 +1,8 @@
 (ns nihilite.test.eval-test
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
-            [nihilite.eval :as ev]
-            [nihilite.eval.session :as session]))
+            [nihilite.builder.eval :as ev]
+            [nihilite.builder.eval.session :as session]))
 
 (defn- settle
   "Polls a session until it stops running. eval-in is asynchronous, so a
@@ -89,7 +89,7 @@
   (let [sid (ev/open-session)]
     (ev/eval-in sid "(def only-here 42)")
     (settle sid)
-    (is (str/includes? (:ns (settle sid)) "nihilite.eval.session."))
+    (is (str/includes? (:ns (settle sid)) "nihilite.builder.eval.session."))
     (ev/close-session sid)))
 
 (deftest sessions-are-isolated

@@ -1,9 +1,13 @@
-(ns nihilite.registry.stats
-  "Per-spec counter records + driver-observation atoms.
+(ns nihilite.builder.registry.stats
+  "Per-spec counter records.
    Pure data layer — depends on no other nihilite namespace. Used by
-   nihilite.registry (install! / uninstall! / clear! to seed/remove
-   counter records) and nihilite.registry.dispatch (bump-*/get-stats
-   during event firing)."
+   nihilite.builder.registry (install! / uninstall! / clear! to seed/remove
+   counter records) and nihilite.builder.registry.dispatch (bump-*/get-stats
+   during event firing).
+
+   The driver-observation atoms that used to live here moved to
+   nihilite.test.driver-observe on 2026-10-10 — no src/main code read
+   them, so they were test-only state shipping in the uberjar."
   (:import [java.util.concurrent ConcurrentHashMap]))
 
 (defrecord StatsRecord
@@ -14,28 +18,6 @@
 
 (defonce ^:private stats-index
   (ConcurrentHashMap.))
-
-(def driver-throw-observed (atom 0))
-(def driver-body-executed-after-cancel? (atom false))
-(def driver-redefine-body-executed?
-  "Set by the retransform driver's :redefine target body. A :redefine hook
-   wraps the method, so this must stay false — it is what proves the
-   original body is genuinely replaced rather than merely having its
-   return value overridden."
-  (atom false))
-
-(defn increment-throw-observed!
-  "Bumps the throw observation counter used by nihilite.test.retransformDriver.
-   Reset by clear-driver-state!."
-  []
-  (swap! driver-throw-observed inc))
-
-(defn clear-driver-state!
-  "Resets driver observation counters. Called between driver test phases."
-  []
-  (reset! driver-throw-observed 0)
-  (reset! driver-body-executed-after-cancel? false)
-  (reset! driver-redefine-body-executed? false))
 
 (defn- fresh-record ^StatsRecord []
   (->StatsRecord (atom 0) (atom 0) (atom 0) (atom 0)))

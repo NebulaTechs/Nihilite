@@ -32,9 +32,11 @@
 
    Either way the server binds loopback only and prints the port it took.
 
-   Measured working end to end by
-   src/test/clojure/nihilite/test/init_service_driver.clj, which starts a
-   socket service from an init script and reaches it from another process."
+   This path was measured working end to end by a driver that started a socket
+   service from an init script and reached it from another process. That driver
+   was deleted on 2026-10-10 — it had no gen-class form, so no AOT class, no
+   build.clj task, and no way to be run at all. Nothing here is executed by
+   `check`; treat the example as unverified unless you run it yourself."
   (:require [clojure.string :as str]))
 
 (def ^:private jar-property "nihilite.example.nrepl.jar")

@@ -1,11 +1,11 @@
-(ns nihilite.api
-  "Public facade over nihilite.registry — the verbs a user actually
+(ns nihilite.builder.api
+  "Public facade over nihilite.builder.registry — the verbs a user actually
    reaches for at the REPL or in a script.
 
    The 4-verb surface (`install!`, `uninstall!`, `lookup`,
    `install-status!`) plus the introspection helpers (`list-specs`,
    `swap-bridge!`, `register-action!`) are intentionally thin: every
-   function delegates straight to `nihilite.registry`, so contract
+   function delegates straight to `nihilite.builder.registry`, so contract
    guarantees (id-keyed uniqueness, target/method indexing, atomic
    install/uninstall) are inherited unchanged.
 
@@ -30,7 +30,7 @@
    | :action           | no       | `:observe` (default) / `:modify` / `:cancel`  |
    |                   |          | / `:subscriber`                               |
    | :tag              | no       | free-form grouping label                      |"
-  (:require [nihilite.registry :as reg]))
+  (:require [nihilite.builder.registry :as reg]))
 
 (defn install!
   "Install a hook spec under `:id`. Atomic: validation, indexing by
@@ -53,7 +53,7 @@
    `:nihilite/bad-arity`, `:nihilite/bad-tag`,
    `:nihilite/arity-descriptor-mismatch`, `:nihilite/invalid-action`,
    `:nihilite/invalid-position`, and the per-position action rules).
-   `nihilite.registry/install-fresh!` is the variant that refuses a
+   `nihilite.builder.registry/install-fresh!` is the variant that refuses a
    duplicate id instead of replacing it, throwing
    `:nihilite/duplicate-spec-id`.
 
@@ -73,7 +73,7 @@
    drops its advice/delegator wiring.
 
    Returns `true` on successful removal, `nil` when no spec with that
-   id was registered. May log a WARN through `nihilite.registry` when
+   id was registered. May log a WARN through `nihilite.builder.registry` when
    retransform finds no loaded class (typical in tests where the
    agent is not armed).
 

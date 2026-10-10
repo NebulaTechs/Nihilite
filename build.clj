@@ -11,11 +11,11 @@
 (def test-basis (delay (b/create-basis {:project "deps.edn" :aliases [:dev]})))
 
 (def manifest
-  {"Premain-Class" "nihilite.kernel.Agent"
-   "Agent-Class" "nihilite.kernel.Agent"
+  {"Premain-Class" "nihilite.trainer.Agent"
+   "Agent-Class" "nihilite.trainer.Agent"
    "Can-Redefine-Classes" "true"
    "Can-Retransform-Classes" "true"
-   "Main-Class" "nihilite.kernel.Agent"
+   "Main-Class" "nihilite.trainer.Agent"
    "Implementation-Title" "Nihilite"
    "Multi-Release" "true"})
 
@@ -102,8 +102,8 @@
     (b/process {:command-args ["clojure" "-Sdeps"
                                "{:paths [\"src/main/clojure\" \"target/classes\"]}"
                                "-M" "-e"
-                               (compile-script-for '[nihilite.kernel.exceptions
-                                                     nihilite.kernel.bucket
+                               (compile-script-for '[nihilite.crafter.exceptions
+                                                     nihilite.trainer.bucket
                                                      ;; advice is AOT'd as a side effect of
                                                      ;; installer but was never declared, so
                                                      ;; class-dir shipped whatever bytes were
@@ -111,10 +111,10 @@
                                                      ;; before src/main/clojure on the runner
                                                      ;; classpath, so an undeclared ns silently
                                                      ;; wins over the edited source.
-                                                     nihilite.kernel.advice
-                                                     nihilite.kernel.indy
-                                                     nihilite.kernel.installer
-                                                     nihilite.kernel.agent])]}))
+                                                     nihilite.trainer.advice
+                                                     nihilite.trainer.indy
+                                                     nihilite.trainer.installer
+                                                     nihilite.trainer.agent])]}))
   nil)
 
 (defn- compile-test-driver-script
@@ -181,10 +181,6 @@
   (println "Built" uber-file)
   nil)
 
-(defn agent-jar
-  [opts]
-  (uberjar opts))
-
 (defn- forbidden-entry?
   [entry]
   (some (fn [pattern]
@@ -217,24 +213,31 @@
 
    `args` is stringified: `clojure -T:build task -- 3` hands the task a Long,
    and ProcessBuilder rejects anything that is not a String with an
-   ArrayStoreException naming the MapEntry it choked on."
-  [label main-class args extra-jvm-opts]
-  (compile-clj nil)
-  (compile-test-drivers!)
-  (let [classpath (str test-class-dir java.io.File/pathSeparator
-                       class-dir java.io.File/pathSeparator
-                       "src/main/clojure" java.io.File/pathSeparator
-                       "src/test/clojure" java.io.File/pathSeparator
-                       (basis-classpath @test-basis))]
-    (ensure-success!
-     label
-     (b/process {:command-args
-                 (mapv str
-                       (concat ["java"]
-                               extra-jvm-opts
-                               ["-cp" classpath main-class]
-                               args))})))
-  nil)
+   ArrayStoreException naming the MapEntry it choked on.
+
+   `extra-env` is a map of environment variables for the child. Drivers read
+   their whole configuration from the environment because `clojure -T:build`
+   forwards neither positional arguments nor -D flags to the task."
+  ([label main-class args extra-jvm-opts]
+   (java-command! label main-class args extra-jvm-opts nil))
+  ([label main-class args extra-jvm-opts extra-env]
+   (compile-clj nil)
+   (compile-test-drivers!)
+   (let [classpath (str test-class-dir java.io.File/pathSeparator
+                        class-dir java.io.File/pathSeparator
+                        "src/main/clojure" java.io.File/pathSeparator
+                        "src/test/clojure" java.io.File/pathSeparator
+                        (basis-classpath @test-basis))]
+     (ensure-success!
+      label
+      (b/process {:command-args
+                  (mapv str
+                        (concat ["java"]
+                                extra-jvm-opts
+                                ["-cp" classpath main-class]
+                                args))
+                  :env extra-env})))
+   nil))
 
 (defn clojure-contract-test
   [_]
@@ -346,6 +349,28 @@
                  "nihilite.test.hostileTargetDriver" [] (driver-jvm-opts))
   nil)
 
+(defn hostile-safe-driver
+  "The part of the hostile-target table that can be a gate.
+
+   The full table cannot be: several targets overflow the stack on purpose and
+   a JVM that dies ends the run. The three targets tagged :check in
+   hostile_target_driver.clj do not, and they cover the property that actually
+   broke silently before -- that installing a hook on a bootstrap-loader
+   class neither throws nor reports an empty woven count -- plus one target
+   the project documents as working, which must really fire.
+
+   Firing is left unconstrained for the other two. Object.hashCode and
+   ZipFile.getEntry register and never fire today; asserting that would
+   freeze the bug instead of measuring the boundary, so if a future change
+   makes them fire, this still passes.
+
+   One JVM for the whole subset, driven by HOSTILE_MODE=safe."
+  [_]
+  (java-command! "Hostile target driver (safe subset)"
+                 "nihilite.test.hostileTargetDriver" [] (driver-jvm-opts)
+                 {"HOSTILE_MODE" "safe"})
+  nil)
+
 (defn probe
   "Runs a test driver and reports its real exit code instead of swallowing it.
    ensure-success! raises on any non-zero status and clojure -T then exits 1,
@@ -388,5 +413,6 @@
   (dual-loader-driver nil)
   (concurrent-invoke-driver nil)
   (multi-hook-fanout-driver nil)
+  (hostile-safe-driver nil)
   (println "All tools.build checks passed")
   nil)

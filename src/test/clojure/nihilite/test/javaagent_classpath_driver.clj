@@ -33,7 +33,7 @@
    Invoked from build.clj as `java nihilite.test.javaagentClasspathDriver`."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [nihilite.eval.protocol :as proto])
+            [nihilite.builder.eval.protocol :as proto])
   (:import [java.io ByteArrayOutputStream File]
            [java.net URLClassLoader]
            [java.util Base64]
@@ -74,10 +74,10 @@
         worker-thread (Thread.
                        (fn []
                          (try
-                           (require 'nihilite.registry)
-                           (require 'nihilite.registry.dispatch)
-                           (require 'nihilite.eval)
-                           (require 'nihilite.eval.protocol)
+                           (require 'nihilite.builder.registry)
+                           (require 'nihilite.builder.registry.dispatch)
+                           (require 'nihilite.builder.eval)
+                           (require 'nihilite.builder.eval.protocol)
                            (catch Throwable t
                              (reset! worker-error t))
                            (finally
@@ -88,7 +88,7 @@
     (.setDaemon worker-thread true)
     (.start worker-thread)
     (try
-      (require 'nihilite.eval.protocol)
+      (require 'nihilite.builder.eval.protocol)
       (catch Throwable t (log-cause-chain t)))
     (locking worker-lock
       (while (not @worker-done)

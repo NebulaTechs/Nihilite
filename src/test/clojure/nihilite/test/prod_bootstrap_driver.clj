@@ -24,7 +24,7 @@
    class loading path, and it is where a reentrancy guard earns its keep. It
    was avoided here until the guard's behaviour on it was measured rather than
    assumed."
-  (:require [nihilite.registry :as reg])
+  (:require [nihilite.builder.registry :as reg])
   (:import [net.bytebuddy.agent ByteBuddyAgent]
            [java.util BitSet])
   (:gen-class
@@ -68,7 +68,7 @@
 
 (defn pbd-main [& _args]
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         premain (.getDeclaredMethod Agent "premain"
                                     (into-array Class [String
                                                        java.lang.instrument.Instrumentation]))]
@@ -83,7 +83,7 @@
     ;; it; the :redefine assertion below is then a real gate.
     (let [deadline (+ (System/currentTimeMillis) 30000)
           ready?  (fn []
-                    (let [v (clojure.lang.RT/var "nihilite.registry.dispatch"
+                    (let [v (clojure.lang.RT/var "nihilite.builder.registry"
                                                   "redefine-dispatcher-ref")]
                       (and (.isBound v)
                            (some? @(.deref ^clojure.lang.Var v)))))]

@@ -13,7 +13,7 @@
    the right :position and that two specs matched the target, so nothing caught
    the wrong claim in its own name."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
+            [nihilite.builder.registry :as reg]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)

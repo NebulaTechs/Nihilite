@@ -1,4 +1,4 @@
-(ns nihilite.kernel.bytegen
+(ns nihilite.crafter.bytegen
   "Runtime ByteBuddy class generation. Replaces the AOT clojure.core$generate_class
    path for kernel classes that don't need the JVM before premain runs.
 
@@ -229,9 +229,6 @@
         var-name (str (name forward-var))
         is-void  (identical? return-type Void/TYPE)
         n-args   (count param-classes)
-        ;; The receiver occupies local 0 on an instance method, so the
-        ;; forwarder passes it as the first argument and every declared
-        ;; parameter after it.
         n-locals (if static? n-args (inc n-args))
         invoke-desc (invoke-desc-for (if static? param-classes
                                        (into [Object] param-classes)))
@@ -248,10 +245,6 @@
                         (.setAccessible m true)
                         (.invoke m mv (object-array [(int op) owner name desc (boolean iface?)]))))
         load-local (fn [^MethodVisitor mv i]
-                     ;; ALOAD only loads references, so a primitive parameter
-                     ;; is loaded with its own opcode and then boxed: IFn.invoke
-                     ;; takes Object, and leaving a primitive on the operand
-                     ;; stack fails verification.
                      (let [^Class t (param-opcode-at i param-classes static?)]
                        (.visitVarInsn mv (load-opcode t) i)
                        (when-let [box (prim-box t)]
@@ -354,7 +347,7 @@
               (.visitInsn mv Opcodes/ATHROW))
             size))))))
 
-(defn define-method
+(defn- define-method
   "Define a single method on a ByteBuddy builder and return the result.
    intercept() on the MethodDefinition sub-builder does NOT mutate the
    outer type Builder — it returns a new Builder that represents the

@@ -5,7 +5,7 @@
    calling instance via @This (verified by comparing identity).
 
    Invoked from build.clj as `java nihilite.test.redefineInstanceDriver`."
-  (:require [nihilite.registry :as reg])
+  (:require [nihilite.builder.registry :as reg])
   (:import [net.bytebuddy.agent ByteBuddyAgent]
            [java.lang.instrument Instrumentation])
   (:gen-class
@@ -55,13 +55,13 @@
 
 (defn rid-main [& _args]
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         agentmain (.getDeclaredMethod Agent "agentmain"
                                        (into-array Class [String Instrumentation]))]
     (.setAccessible agentmain true)
     (.invoke agentmain nil (object-array [nil inst]))
-    ((resolve 'nihilite.kernel.installer/install) inst)
-    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+    ((resolve 'nihilite.trainer.installer/install) inst)
+    ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
 
 
     (let [bridge (fn [self _args _method-name]

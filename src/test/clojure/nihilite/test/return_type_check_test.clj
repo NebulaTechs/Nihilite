@@ -24,8 +24,8 @@
    reg-cleanup-with-dispatcher, all five :redefine tests errored on
    :nihilite/redefine-dispatcher-unavailable."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup-with-dispatcher)

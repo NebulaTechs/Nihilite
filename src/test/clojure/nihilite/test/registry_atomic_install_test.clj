@@ -4,7 +4,7 @@
    must never let an observer see a bucket holding more than one spec
    for the same id, nor a by-id/bucket drift."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
+            [nihilite.builder.registry :as reg]
             [nihilite.test.fixtures :as fx])
   (:import [java.util.concurrent Callable CountDownLatch ExecutorService
                                     Executors TimeUnit]))

@@ -14,7 +14,7 @@
    through the very method being hooked, and the cycle closes before the
    reentrancy guard is consulted. Measured behaviour for every target is in
    the README's Limits section -- read it before picking a method."
-  (:require [nihilite.api :as api]))
+  (:require [nihilite.builder.api :as api]))
 
 (def ^:private writes (atom 0))
 

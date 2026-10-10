@@ -1,18 +1,18 @@
-(ns nihilite.registry
+(ns nihilite.builder.registry
   "Generic, loader-agnostic registry of hook specs + state.
 
    install! / uninstall! / install-fresh! / clear! / replace-bridge! /
    install-status! are the data operations. Spec-event dispatch lives
-   in nihilite.registry.dispatch; per-spec counters in
-   nihilite.registry.stats. Keeping these split lets the data store
+   in nihilite.builder.registry.dispatch; per-spec counters in
+   nihilite.builder.registry.stats. Keeping these split lets the data store
    stay focused on idempotent ops and concurrent triple-write
    atomicity (locking over by-id / by-target / by-method). This file
    is the single source of truth for the records (HookSpec /
    HookContext / HookEvent) and the position/action normalization."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
-            [nihilite.registry.index :as index]
-            [nihilite.registry.stats :as stats])
+            [nihilite.builder.registry.index :as index]
+            [nihilite.builder.registry.stats :as stats])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicLong]
            [java.lang.instrument Instrumentation]))
@@ -37,13 +37,8 @@
 ;;
 ;; `internal-class` and `method-descriptor` are DERIVED, not read from the
 ;; spec map: install! computes them from `:target-internal` and
-;; `:descriptor`, which are the fields a caller actually supplies. They
-;; were called `source-class` and `source-descriptor`, which read as if a
-;; hook could name some method other than the one it targets -- it cannot.
+;; `:descriptor`, which are the fields a caller actually supplies.
 ;; `method-descriptor` holds the same string as `:descriptor`.
-;;
-;; Renamed from `source-class`/`source-descriptor`; a caller reading
-;; api/lookup sees the new names.
 (defrecord HookSpec
   [id target-internal method-name position arity bridge note
    action method-key internal-class method-descriptor tag])
@@ -52,11 +47,7 @@
   [hook-id self args phase return-value cancelled])
 
 (defrecord HookEvent
-  ;; `stack` was the one field nothing ever put a value in: ->hook-event builds
-  ;; the map without it, so a bridge reading (:stack ctx) got nil and had no
-  ;; way to tell that from a stack trace that was never taken. Dropping the
-  ;; field is the same thing (:stack still answers nil), minus the pretence.
-  ;; The rest are filled by ->hook-event and are read from user bridges.
+  ;; Filled by ->hook-event and read from user bridges.
   [spec-id source phase self args return-value throwable
    cancelled? cancel! thread-name timestamp-ns sequence note])
 
@@ -110,7 +101,7 @@
 (defonce ^:private ^AtomicLong sequence-counter
   (AtomicLong.))
 
-(defn get-by-id     ^ConcurrentHashMap [] by-id)
+(defn- get-by-id    ^ConcurrentHashMap [] by-id)
 (defn get-by-method ^ConcurrentHashMap [] by-method)
 
 (defn next-sequence [] (.incrementAndGet ^AtomicLong sequence-counter))
@@ -121,19 +112,25 @@
    on a cold JVM, so this is generous by two orders of magnitude."
   5000)
 
-(defn- redefine-dispatcher-ready?
-  "Whether the :redefine advice has something to call.
+(defonce ^{:doc "The IFN the :redefine advice calls to reach a :redefine bridge.
+  nil until the worker installs one. Lives here, not in dispatch, because
+  install! has to wait on it and dispatch cannot be required from here --
+  dispatch requires registry. dispatch reaches it downward through
+  set-redefine-dispatcher!."}
+  redefine-dispatcher-ref
+  (atom nil))
 
-   Resolved through RT/var because registry cannot require dispatch --
-   dispatch requires registry. Same reasoning as the agent's dynamic lookups:
-   the reference has to survive a class loader that may not have loaded
-   dispatch yet."
+(defn set-redefine-dispatcher!
+  "Publishes the :redefine dispatch IFN. Called by
+   nihilite.builder.registry.dispatch/install-redefine-dispatcher!."
+  [dispatch-ifn]
+  (reset! redefine-dispatcher-ref dispatch-ifn)
+  dispatch-ifn)
+
+(defn- redefine-dispatcher-ready?
+  "Whether the :redefine advice has something to call."
   []
-  (let [v (clojure.lang.RT/var "nihilite.registry.dispatch"
-                              "redefine-dispatcher-ref")]
-    (and (some? v)
-         (.isBound ^clojure.lang.Var v)
-         (some? @(.deref ^clojure.lang.Var v)))))
+  (some? @redefine-dispatcher-ref))
 
 (defn- await-redefine-dispatcher!
   "Blocks until the redefine dispatcher is installed, or throws.
@@ -179,7 +176,7 @@
           fresh
           (.get m k)))))
 
-(defn method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
+(defn- method-bucket ^java.util.List [mk] (get-or-create-bucket by-method mk))
 
 (defn spec-bucket
   "The specs sharing `spec`'s target/method, restricted to specs at the
@@ -202,6 +199,22 @@
   (.retransformClasses inst (into-array Class [c]))
   c)
 
+(defonce ^{:doc "The Instrumentation that armed the AgentBuilder, published by
+  trainer's agent-registerInstrumentation -- the single choke point premain,
+  agentmain and the drivers all pass through. nil in a JVM that never mounted
+  the agent, which is the same situation as no Instrumentation at all."}
+  instrumentation-ref
+  (atom nil))
+
+(defn register-instrumentation!
+  "Publishes the live Instrumentation. Called from
+   nihilite.trainer.agent/agent-registerInstrumentation, which is the only
+   place an Instrumentation is ever accepted -- premain, agentmain and the
+   drivers that hand one straight to install all route through it."
+  [^Instrumentation inst]
+  (when inst (reset! instrumentation-ref inst))
+  inst)
+
 (defn retransform-loaded-matching!
   "Retransforms every already-loaded, modifiable class whose name matches
    `target-internal` (slash-separated) so the armed AgentBuilder re-visits
@@ -218,10 +231,8 @@
    target would silently disable every other hook. Failures are collected
    and thrown after the remaining classes have been processed — per-class
    attribution without hiding anything."
-  ([^String target-internal]
-   (let [lookup-fn (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
-         inst (when lookup-fn (lookup-fn))]
-     (retransform-loaded-matching! target-internal inst)))
+([^String target-internal]
+   (retransform-loaded-matching! target-internal @instrumentation-ref))
   ([^String target-internal ^Instrumentation inst]
    (if (or (nil? inst) (nil? target-internal))
      0
@@ -281,7 +292,9 @@
         klass (try
                 (Class/forName dot-name false (ClassLoader/getSystemClassLoader))
                 (catch ClassNotFoundException _ nil)
-                (catch Throwable _ nil))]
+                ;; A class that is present but cannot be linked -- missing
+                ;; supertype, missing field type -- fails with a LinkageError.
+                (catch LinkageError _ nil))]
     (cond
       (nil? klass) :unloaded
       :else (let [l (.getClassLoader ^Class klass)]
@@ -470,7 +483,7 @@
    A malformed descriptor is not a harmless slip. It becomes the spec's
    :method-key and its :method-descriptor, and both decide which loaded
    method a hook matches: ByteBuddy matches on the descriptor and
-   nihilite.registry.index keys its buckets by it. A descriptor this
+   nihilite.builder.registry.index keys its buckets by it. A descriptor this
    rejects is one ByteBuddy cannot match either, so the hook would
    register successfully and never fire -- the 'registers but never
    fires' mode docs/hook-limits.md documents, reached by a route the
@@ -666,6 +679,21 @@
                   (mark-installed! (:id norm-spec) spec-target woven)
                   true))))))))
 
+(defonce ^{:doc "The Trainer's uninstall-with-retransform entry point, published
+  when nihilite.trainer.installer loads. Stays nil in a JVM that never loaded
+  the installer, which is the same situation as no Instrumentation: nothing to
+  retransform, so the count is 0 and the zero branch below says so."}
+  uninstaller-ref
+  (atom nil))
+
+(defn register-uninstaller!
+  "Publishes the Trainer-side uninstall entry point. Called at load time from
+   nihilite.trainer.installer, which requires this namespace downward, so the
+   dependency only ever points one way."
+  [uninstaller]
+  (reset! uninstaller-ref uninstaller)
+  uninstaller)
+
 (defn uninstall!
   [id]
   (let [by-id     (get-by-id)
@@ -683,24 +711,11 @@
                (when (and mb (.isEmpty mb))
                  (.remove by-method mk mb))))
            (stats/remove-stats (:id removed))
-           (let [installer (resolve 'nihilite.kernel.installer/uninstall-spec-with-target!)
-                 ;; installer is resolved, not required: registry cannot
-                 ;; require the kernel (installer requires registry back),
-                 ;; and in a JVM that never mounted the agent the namespace
-                 ;; is not loaded at all, so `resolve` answers nil. Calling
-                 ;; that nil is an NPE out of a path documented to WARN --
-                 ;; which is the shape the uninstall_warn_test asserts, and
-                 ;; the only reason it passed is that the full contract
-                 ;; runner shares one JVM with every other namespace, so
-                 ;; something else had already loaded installer. No
-                 ;; Instrumentation and no installer are the same situation
-                 ;; as far as the caller is concerned: nothing to
-                 ;; retransform, so the count is 0 and the existing zero
-                 ;; branch below says so.
-                 count (try
-                         (if installer
-                           (installer (str id) target)
-                           0)
+(let [uninstaller @uninstaller-ref
+                  count (try
+                          (if uninstaller
+                            (uninstaller (str id) target)
+                            0)
                          (catch Throwable t
                            (mark-error! (:id removed) (.getMessage t))
                            (throw (ex-info (str "uninstall retransform failed for id=" id)

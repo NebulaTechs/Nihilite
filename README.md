@@ -28,7 +28,7 @@ a dynamic attach get a real one.
 ## Hooks
 
 ```clojure
-(require '[nihilite.api :as api])
+(require '[nihilite.builder.api :as api])
 
 (api/install!
   {:id              "fos-write"
@@ -157,13 +157,13 @@ with `:value` `:out` `:err` `:error` `:session` `:done`:
 ```java
 VirtualMachine vm = VirtualMachine.attach(pid);
 vm.loadAgent("target/nihilite.jar",
-             "eval:file:/tmp/reply.edn|" + base64("(nihilite.api/list-specs)"));
+             "eval:file:/tmp/reply.edn|" + base64("(nihilite.builder.api/list-specs)"));
 vm.detach();
 ```
 
-Inside the target the same code is reachable directly as `nihilite.eval`
+Inside the target the same code is reachable directly as `nihilite.builder.eval`
 (`open-session`, `eval-in`, `snapshot`, `interrupt`, `close-session`) — a
-separate namespace from `nihilite.api` on purpose, so requiring one does not
+separate namespace from `nihilite.builder.api` on purpose, so requiring one does not
 drag in the other. Wire format, polling, session semantics and the interrupt
 limitation: [docs/eval-protocol.md](docs/eval-protocol.md).
 

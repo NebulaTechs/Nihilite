@@ -1,4 +1,4 @@
-(ns nihilite.registry.dispatch
+(ns nihilite.builder.registry.dispatch
   "Hook-event dispatch and redefine-dispatcher wiring. The kernel's
    generated advice classes and the redefine delegation method call
    into the public functions here (dispatch-for-spec, dispatch-return-
@@ -6,16 +6,15 @@
    `clojure.java.api.Clojure/var`. lookup-spec-for-call lives here too
    so advice.clj can resolve it the same way.
 
-   Owns the `redefine-dispatcher-ref` atom: install-redefine-dispatcher!
-   sets it (called from nihilite.kernel.worker at agent-init time),
-   nihilite.kernel.dispatcher reads it via Clojure/var."
+   Owns the redefine dispatcher: install-redefine-dispatcher! builds the IFN
+   and publishes it through registry/set-redefine-dispatcher!. The holding
+   atom lives in the registry because install! has to wait on it and this
+   namespace cannot be required from there."
   (:require [clojure.tools.logging :as log]
-            [nihilite.registry :as reg]
-            [nihilite.registry.index :as index]
-            [nihilite.registry.stats :as stats]
-            [nihilite.kernel.exceptions :as exc]))
-
-(defonce ^:private redefine-dispatcher-ref (atom nil))
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.index :as index]
+            [nihilite.builder.registry.stats :as stats]
+            [nihilite.crafter.exceptions :as exc]))
 
 (defn ->hook-event
   "Construct HookEvent. :cancelled? / :cancel! are closures over AtomicBoolean."
@@ -46,6 +45,14 @@
        :note         (:note spec)})))
 
 (defn- dispatch-one!
+  "Calls one observer bridge, isolating its failure.
+
+   An observer that throws must not take down the host application, so the
+   throw is caught, logged, counted and answered with ::no-return. The log
+   call is deliberately NOT wrapped in its own try: a logger that fails
+   while an observer has already thrown used to swallow both, leaving no
+   trace of either. If it throws here, the advice layer catches and wraps
+   it, which is still louder than silence."
   ([ifn ev] (dispatch-one! ifn ev nil))
   ([ifn ev per-spec-id]
    (if (nil? ifn)
@@ -53,8 +60,7 @@
      (try
        (ifn ev)
        (catch Throwable t
-         (try (log/error t "observer threw (id=" (or per-spec-id (:spec-id ev)) ")")
-              (catch Throwable _))
+         (log/error t "observer threw (id=" (or per-spec-id (:spec-id ev)) ")")
          (stats/bump-exception! (or per-spec-id (:spec-id ev)))
          ::no-return)))))
 
@@ -68,9 +74,9 @@
 
 (defn ->ctx [x]
   (cond
-    (instance? nihilite.registry.HookContext x) x
-    (instance? nihilite.registry.HookEvent x)
-    (let [ev ^nihilite.registry.HookEvent x]
+    (instance? nihilite.builder.registry.HookContext x) x
+    (instance? nihilite.builder.registry.HookEvent x)
+    (let [ev ^nihilite.builder.registry.HookEvent x]
       (reg/map->HookContext
         {:hook-id      (.-spec-id ev)
          :self        (.-self ev)
@@ -81,15 +87,15 @@
     :else nil))
 
 (defn ctx-cancel!     [x value]    (cond
-                                     (instance? nihilite.registry.HookContext x)
-                                     (set! (.-cancelled ^nihilite.registry.HookContext x) (boolean value))
-                                     (instance? nihilite.registry.HookEvent x)
-                                     (let [ev ^nihilite.registry.HookEvent x]
+                                     (instance? nihilite.builder.registry.HookContext x)
+                                     (set! (.-cancelled ^nihilite.builder.registry.HookContext x) (boolean value))
+                                     (instance? nihilite.builder.registry.HookEvent x)
+                                     (let [ev ^nihilite.builder.registry.HookEvent x]
                                        (when-let [c (.-cancel! ev)] (c (boolean value))))))
 (defn ctx-cancelled?  [x]          (cond
-                                     (instance? nihilite.registry.HookContext x) (.-cancelled ^nihilite.registry.HookContext x)
-                                     (instance? nihilite.registry.HookEvent x)
-                                     (let [c (.-cancelled? ^nihilite.registry.HookEvent x)]
+                                     (instance? nihilite.builder.registry.HookContext x) (.-cancelled ^nihilite.builder.registry.HookContext x)
+                                     (instance? nihilite.builder.registry.HookEvent x)
+                                     (let [c (.-cancelled? ^nihilite.builder.registry.HookEvent x)]
                                        (if (fn? c) (boolean (c)) (boolean c)))
                                      :else false))
 
@@ -124,7 +130,7 @@
       (let [bucket (reg/spec-bucket spec)
             event  (->hook-event spec self args nil)]
         (walk-bucket bucket event spec-id)))
-    (catch nihilite.kernel.HookCancelledException _
+    (catch nihilite.crafter.HookCancelledException _
       (throw (exc/cancelled!)))))
 
 (def ^:private boxed-primitives
@@ -242,7 +248,10 @@
   (try
     (when (seq name)
       (Class/forName (.replace name "/" ".") false (clojure.lang.RT/baseLoader)))
-    (catch Throwable _ nil)))
+    (catch ClassNotFoundException _ nil)
+    ;; A class whose supertype or field type is missing fails to link with a
+    ;; LinkageError rather than ClassNotFoundException.
+    (catch LinkageError _ nil)))
 
 (defn- resolve-type-name
   "Resolves a JVM type from a descriptor to a Class, or nil when it cannot
@@ -273,12 +282,10 @@
                    comp)]
       (if-let [base (or (descriptor-primitive-codes (.charAt inner 0))
                         (resolve-component-type inner))]
-        (loop [k dims c base]
-          ;; Array/newInstance hands back an instance; its class is the
-          ;; array type, and the instance is discarded.
-          (if (pos? k)
-            (recur (dec k) (.getClass ^Object (java.lang.reflect.Array/newInstance c 0)))
-            c))
+(loop [k dims c base]
+           (if (pos? k)
+             (recur (dec k) (.getClass ^Object (java.lang.reflect.Array/newInstance c 0)))
+             c))
         nil))
     (resolve-component-type name)))
 
@@ -532,13 +539,10 @@
       (throw t))))
 
 (defn install-redefine-dispatcher!
-  ([] (install-redefine-dispatcher!
-        (fn [dispatch-ifn]
-          (reset! redefine-dispatcher-ref dispatch-ifn))))
+  ([] (install-redefine-dispatcher! reg/set-redefine-dispatcher!))
   ([setter]
    (let [dispatch-ifn
          (fn [host-internal method-name self args descriptor]
            (dispatch-redefine host-internal method-name self args descriptor))]
-     (reset! redefine-dispatcher-ref dispatch-ifn)
      (setter dispatch-ifn)
      :installed)))

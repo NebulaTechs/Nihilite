@@ -1,6 +1,6 @@
 (ns examples.fabric.init
   "Fabric runtime init for nihilite, loaded by nihilite.agent.Agent#premain via -Dnihilite.init."
-  (:require [nihilite.api :as api])
+  (:require [nihilite.builder.api :as api])
   (:import [net.minecraft.network.chat Component]))
 
 (defn- find-loaded-class

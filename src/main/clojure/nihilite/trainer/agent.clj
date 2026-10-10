@@ -1,7 +1,7 @@
-(ns nihilite.kernel.agent
+(ns nihilite.trainer.agent
   "Java agent entry points, generated from Clojure.
 
-   nihilite.kernel.Agent replaces the original nihilite.agent.Agent + Worker
+   nihilite.trainer.Agent replaces the original nihilite.agent.Agent + Worker
    pair. It exposes the static entry points the JVM resolves via the JAR
    manifest:
      premain(String, Instrumentation)    Premain-Class, the -javaagent path
@@ -28,7 +28,8 @@
            [java.util.logging Logger])
   (:require [clojure.tools.logging :as log]
             [clojure.tools.logging.impl :as logimpl]
-            [nihilite.kernel.classgen :as cg]))
+            [nihilite.builder.registry :as registry]
+            [nihilite.crafter.classgen :as cg]))
 
 (def ^:private agent-log
   "Java.util.logging.Logger named `nihilite.agent`. Obtained via
@@ -74,18 +75,22 @@
    true when this call installed it, false when another Instrumentation was
    already registered.
 
-   nil.kernel.installer/install calls this so that any path which arms the
-   AgentBuilder — premain, agentmain, or a driver calling install directly
-   with a ByteBuddyAgent-obtained Instrumentation — makes the same
-   Instrumentation visible to registry/retransform-loaded-matching! and the
-   advice classes. Without it, install! could never report a non-zero
+   Also hands the winner to registry/register-instrumentation!. This function
+   is the only place an Instrumentation is ever accepted -- premain, agentmain,
+   and a driver calling install directly with a ByteBuddyAgent-obtained
+   Instrumentation all route through it -- so publishing from here is what makes
+   the same Instrumentation visible to registry/retransform-loaded-matching! and
+   the advice classes. Without it, install! could never report a non-zero
    :woven-count on the driver path, and hooks installed through the public
    api would silently skip retransforming already-loaded classes."
   [^Instrumentation inst]
   (boolean
    (and inst
-        (.compareAndSet ^java.util.concurrent.atomic.AtomicReference
-                        registered-on nil inst))))
+        (let [won? (.compareAndSet ^java.util.concurrent.atomic.AtomicReference
+                                    registered-on nil inst)]
+          (registry/register-instrumentation!
+           (.get ^java.util.concurrent.atomic.AtomicReference registered-on))
+          won?))))
 
 (defn agent-awaitWorkerReady
   "Blocks until the Clojure-runtime worker thread has finished its
@@ -112,7 +117,7 @@
   [^Instrumentation inst]
   (when (and inst (.compareAndSet system-search-extended false true))
     (try
-      (let [agent-cls (Class/forName "nihilite.kernel.Agent")
+      (let [agent-cls (Class/forName "nihilite.trainer.Agent")
             pd (.getProtectionDomain agent-cls)
             location (when pd
                        (try (.getLocation pd)
@@ -139,10 +144,10 @@
   (when (agent-claimWorker)
     (let [proxy-fn (proxy [Runnable] []
                       (run []
-                        (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+                        (binding [*ns* (find-ns 'nihilite.trainer.agent)]
                           (try
-                            (require (quote nihilite.kernel.worker))
-                            ((resolve (quote nihilite.kernel.worker/init-and-bind)))
+                            (require (quote nihilite.trainer.worker))
+                            ((resolve (quote nihilite.trainer.worker/init-and-bind)))
                             ;; No catch. The worker thread is non-daemon, so a
                             ;; throw here prints a stack trace and kills only
                             ;; this thread, and the latch still counts down so
@@ -156,7 +161,7 @@
       (.start worker))))
 
 (defn- run-startup!
-  "Hands the agent args to nihilite.boot, which runs the init script and
+  "Hands the agent args to nihilite.builder.boot, which runs the init script and
    serves an eval request if the args carry one.
 
    Resolved through RT/var rather than required: the worker thread brings
@@ -165,10 +170,10 @@
   ;; The worker deliberately does not require boot: boot is startup, not
   ;; worker state. RT/var resolves a var but does not load its namespace,
   ;; so the require has to happen here or the var comes back unbound.
-  (require (quote nihilite.boot))
-  (let [v (clojure.lang.RT/var "nihilite.boot" "run-startup!")]
+  (require (quote nihilite.builder.boot))
+  (let [v (clojure.lang.RT/var "nihilite.builder.boot" "run-startup!")]
     (when-not (.isBound v)
-      (log-error "[Nihilite] nihilite.boot/run-startup! is not present; abort"))
+      (log-error "[Nihilite] nihilite.builder.boot/run-startup! is not present; abort"))
     (when (.isBound v)
       ;; Pass the value, do not pack it. IFn.invoke(Object) is the
       ;; single-argument call, so handing it an Object[] would deliver the
@@ -203,15 +208,15 @@
   (extend-system-class-loader-search inst)
   (let [fresh? (agent-registerInstrumentation inst)]
     (when fresh?
-      (require (quote nihilite.kernel.installer))
-      ((resolve (quote nihilite.kernel.installer/install)) inst)
+      (require (quote nihilite.trainer.installer))
+      ((resolve (quote nihilite.trainer.installer/install)) inst)
       (log-info (str "[Nihilite Agent] " label
                     " armed HookInstaller (ByteBuddy AgentBuilder)")))
     (start-worker-once)
     fresh?))
 
 (defn agent-premain
-  "Forwarded by nihilite.kernel.Agent.premain (JVM instrument entry).
+  "Forwarded by nihilite.trainer.Agent.premain (JVM instrument entry).
    Arms the installer, starts the worker, and runs the init script in the
    background so the application's startup is not charged for it.
 
@@ -219,7 +224,7 @@
    still returns cleanly and starts the worker, so a driver-side
    `awaitWorkerReady` resolves."
   [^String args ^Instrumentation inst]
-  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+  (binding [*ns* (find-ns 'nihilite.trainer.agent)]
     (let [t0     (System/nanoTime)
           fresh? (arm-agent! "premain" inst)]
       (run-startup-async! args)
@@ -230,14 +235,14 @@
         (log-info (format "[Nihilite Agent] premain returned in %.0f ms" elapsed-ms))))))
 
 (defn agent-agentmain
-  "Forwarded by nihilite.kernel.Agent.agentmain (JVM dynamic-attach entry).
+  "Forwarded by nihilite.trainer.Agent.agentmain (JVM dynamic-attach entry).
 
    Runs the init script and serves an eval request SYNCHRONOUSLY, unlike
    premain. The caller is a VirtualMachine.loadAgent that is blocked until
    this returns; replying from a background thread would let loadAgent return
    before the reply was written, and the attacher would read nothing."
   [^String args ^Instrumentation inst]
-  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+  (binding [*ns* (find-ns 'nihilite.trainer.agent)]
     (let [t0     (System/nanoTime)
           fresh? (arm-agent! "agentmain" inst)]
       (when-not fresh?
@@ -276,11 +281,11 @@
    :main true looks up `(str prefix main)`, which is this var, and forwards
    argv as ISeq<String>."
   [& _args]
-  (binding [*ns* (find-ns 'nihilite.kernel.agent)]
+  (binding [*ns* (find-ns 'nihilite.trainer.agent)]
     (println usage-banner)
     (flush)
     nil))(defn- generate-class!
-  "Generate nihilite.kernel.Agent with its static entry points: premain and
+  "Generate nihilite.trainer.Agent with its static entry points: premain and
    agentmain for the JVM, main for the jar's Main-Class, plus the worker's
    handshake methods. All are forwarded to Clojure vars with prefix agent-."
   []
@@ -290,9 +295,9 @@
         object-cls (Class/forName "java.lang.Object")
         boolean-cls (Class/forName "java.lang.Boolean")]
     (cg/generate-class-bytes!
-     {:name "nihilite.kernel.Agent"
+     {:name "nihilite.trainer.Agent"
       :prefix "agent-"
-      :impl-ns "nihilite.kernel.agent"
+      :impl-ns "nihilite.trainer.agent"
       :main true
       :methods
        [(with-meta (vector (symbol "currentInstrumentation") [] instrumentation-cls)
@@ -310,7 +315,7 @@
                    {:static true})]})))
 
 (defn gen-all!
-  "Generates nihilite.kernel.Agent. Intended to run during AOT
+  "Generates nihilite.trainer.Agent. Intended to run during AOT
    compilation of this namespace; a no-op outside of a compile because
    writeClassFile only writes when *compile-files* is set."
   []

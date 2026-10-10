@@ -1,6 +1,6 @@
 (ns nihilite.test.custom-action-test
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
-            [nihilite.registry :as reg]
+            [nihilite.builder.registry :as reg]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)

@@ -5,7 +5,7 @@
    \"<internal-class>/<method>#<descriptor>\"
    (registry/method-key) and the index is keyed by
    internal class name alone, while
-   `nihilite.kernel.transformer/apply-advice-transformer` names its
+   `nihilite.trainer.transformer/apply-advice-transformer` names its
    class-loader argument `_class-loader` and never reads it
    (transformer/apply-advice-transformer). So a name is
    the identity: two loaded Classes that share a name share one bucket, one
@@ -70,7 +70,7 @@
 
    The bridge records the receiver's own Class, so the per-loader counts
    below are attribution by identity, not inference from a shared total."
-  (:require [nihilite.api :as api])
+  (:require [nihilite.builder.api :as api])
   (:import [net.bytebuddy ByteBuddy]
            [net.bytebuddy.agent ByteBuddyAgent]
            [net.bytebuddy.description.modifier ModifierContributor$ForMethod
@@ -100,8 +100,6 @@
 ;; not override equals, and two same-named Classes from two loaders are
 ;; distinct keys.
 (def ^:private per-loader-fires (atom {}))
-
-;; Bootstrapping helpers.
 
 (defn- generate-dup-target
   "ByteBuddy-built target: public, extends Object, one method `ping()`
@@ -147,7 +145,7 @@
    Reflector reads `(.awaitWorkerReady (Class/forName ...))` as an instance
    call and throws `No matching field found`."
   []
-  (let [m (.getDeclaredMethod (Class/forName "nihilite.kernel.Agent")
+  (let [m (.getDeclaredMethod (Class/forName "nihilite.trainer.Agent")
                               "awaitWorkerReady" (into-array Class []))]
     (.setAccessible m true)
     (.invoke m nil (object-array []))))
@@ -369,7 +367,7 @@
 
 (defn dld-main [& _args]
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         premain (.getDeclaredMethod Agent "premain"
                                     (into-array Class [String
                                                        java.lang.instrument.Instrumentation]))]

@@ -1,4 +1,4 @@
-(ns nihilite.kernel.bucket
+(ns nihilite.trainer.bucket
   "Registry-to-position bucketing for the advice transformer. Pulls the
    specs registered for a target class and partitions them into the four
    ByteBuddy positions (:entry, :return, :throw, :redefine). Also builds
@@ -8,7 +8,7 @@
   (:import [net.bytebuddy.matcher ElementMatchers]))
 
 (defn- lookup-matching
-  "The IFn behind `nihilite.registry.index/matching` if it is
+  "The IFn behind `nihilite.builder.registry.index/matching` if it is
    resolvable, else nil. Looked up by symbol rather than required: the
    ByteBuddy-generated transformer stubs call this on threads where the
    index namespace may not be loaded yet, and a compile-time dependency
@@ -17,14 +17,17 @@
    yield the IFn."
   []
   (try
-    (let [v (resolve 'nihilite.registry.index/matching)]
+    (let [v (resolve 'nihilite.builder.registry.index/matching)]
       (cond
         (instance? clojure.lang.IFn v) v
         (instance? clojure.lang.Var v)
         (let [val (.getRawRoot ^clojure.lang.Var v)]
           (when (instance? clojure.lang.IFn val) val))
         :else nil))
-    (catch Throwable _ nil)))
+    (catch ClassNotFoundException _ nil)
+    ;; A namespace that is still evaluating answers with an unlinked var;
+    ;; its static initialiser throws this rather than ClassNotFoundException.
+    (catch ExceptionInInitializerError _ nil)))
 
 (defn- spec-field
   "Reads a keyword-keyed field from a spec (a Clojure map). Returns the

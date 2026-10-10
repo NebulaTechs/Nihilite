@@ -5,7 +5,7 @@
    The target is `java.lang.String`, a bootstrap-classloader class, reached
    through an invokedynamic call site. The point of the example is the
    `swap-bridge!` pattern: rewiring a live bridge at runtime."
-  (:require [nihilite.api :as api]))
+  (:require [nihilite.builder.api :as api]))
 
 (def ^:private current-label (atom "v1"))
 

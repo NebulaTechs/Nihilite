@@ -1,4 +1,4 @@
-(ns nihilite.kernel.indy
+(ns nihilite.trainer.indy
   "Invokedynamic dispatch, so advice can reach classes the target
    classloader cannot see.
 
@@ -15,7 +15,7 @@
    shared forwarder, which resolves a Clojure var, and why it takes both the
    linking handle and a fallback handle as fields instead of building a noop
    handle itself."
-  (:require [nihilite.kernel.bytegen :as bg])
+  (:require [nihilite.crafter.bytegen :as bg])
   (:import [java.lang.invoke CallSite ConstantCallSite MethodHandle
                        MethodHandles MethodType MethodHandles$Lookup]
            [java.lang.reflect Array Modifier]
@@ -24,7 +24,7 @@
                                                  ByteCodeAppender$Size]
            [net.bytebuddy.jar.asm Label MethodVisitor Opcodes]))
 
-(def bootstrap-dispatcher-name "nihilite.kernel.IndyBootstrapDispatcher")
+(def bootstrap-dispatcher-name "nihilite.trainer.IndyBootstrapDispatcher")
 
 (defn- emitter
   "Wraps an ASM-emitting function into an Implementation. `n-locals` sizes the
@@ -229,18 +229,18 @@
             (.remove m key)
             (throw t)))))))
 
-(def ^:private agent-bootstrap-name "nihilite.kernel.IndyAgentBootstrap")
+(def ^:private agent-bootstrap-name "nihilite.trainer.IndyAgentBootstrap")
 
 (def ^:private agent-bootstrap-spec
   {:name agent-bootstrap-name
    :methods [{:name "bootstrap" :static? true :return "java.lang.invoke.CallSite"
               :params ["java.lang.invoke.MethodHandles$Lookup" "java.lang.String"
                        "java.lang.invoke.MethodType" "[Ljava.lang.Object;"]
-              :forward-var 'nihilite.kernel.indy/iab-bootstrap}
+              :forward-var 'nihilite.trainer.indy/iab-bootstrap}
              {:name "fallback" :static? true :return "java.lang.invoke.CallSite"
               :params ["java.lang.invoke.MethodType"]
               :stack-size 6
-              :forward-var 'nihilite.kernel.indy/iab-fallback}]})
+              :forward-var 'nihilite.trainer.indy/iab-fallback}]})
 
 (defonce ^:private agent-bootstrap-loaded (atom nil))
 
@@ -254,7 +254,7 @@
    -javaagent."
   []
   (or @installed
-      (let [lookup (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
+      (let [lookup (resolve 'nihilite.trainer.agent/agent-currentInstrumentation)
             inst (when lookup (lookup))]
         (when (nil? inst)
           (throw (IllegalStateException.

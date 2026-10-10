@@ -36,10 +36,10 @@
    registry/install! path, assertions on a REAL FIRING rather than on a woven
    count, fail! + System/exit with a distinct code per assertion family, and
    println+flush after every phase so a crash still leaves the numbers."
-  (:require [nihilite.registry :as reg]
-            [nihilite.registry.stats :as stats]
-            [nihilite.registry.dispatch]
-            [nihilite.api :as api])
+  (:require [nihilite.builder.registry :as reg]
+            [nihilite.test.driver-observe :as obs]
+            [nihilite.builder.registry.dispatch]
+            [nihilite.builder.api :as api])
   (:import [net.bytebuddy.agent ByteBuddyAgent])
   (:gen-class
     :name nihilite.test.multiHookFanoutDriver
@@ -238,13 +238,13 @@
 (defn mhfd-main
   [& _args]
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         premain (.getDeclaredMethod Agent "premain"
                                     (into-array Class [String
                                                        java.lang.instrument.Instrumentation]))]
     (.setAccessible premain true)
     (.invoke premain nil (object-array [nil inst]))
-    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+    ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
     ;; Load the target BEFORE installing: install! retransforms already-loaded
     ;; matching classes, and a woven count is not a firing either way.
     (Class/forName target-class)
@@ -258,7 +258,7 @@
                                ["subscriber-first" "subscriber-second"
                                 "subscriber-third"] false)
       (reg/clear!)
-      (stats/clear-driver-state!)
+      (obs/clear-driver-state!)
       (println (str "DRIVER_PASS multi-hook fan-out — one woven call site reached"
                     " every bridge in install order; :cancel ends the walk and"
                     " skips the host body, :subscriber does neither, and the"

@@ -21,8 +21,8 @@
    short-circuit here. `:subscriber` IS legal at :return and is the branch
    that has to be pinned -- it decides, without contributing a value."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)

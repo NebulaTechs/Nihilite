@@ -1,8 +1,8 @@
 (ns nihilite.test.install-status-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.api :as api]
-            [nihilite.registry :as reg]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.api :as api]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]

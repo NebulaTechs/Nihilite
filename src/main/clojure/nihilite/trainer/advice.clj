@@ -1,20 +1,20 @@
-(ns nihilite.kernel.advice
+(ns nihilite.trainer.advice
   "ByteBuddy advice entry points generated from Clojure via bytegen.
 
-   Four advice classes are produced at runtime by nihilite.kernel.bytegen
+   Four advice classes are produced at runtime by nihilite.crafter.bytegen
    (no AOT, no gen-class):
-     - nihilite.kernel.HookAdvice     OnMethodEnter,  :entry  position
-     - nihilite.kernel.ReturnAdvice   OnMethodExit + AssignReturned, :return
-     - nihilite.kernel.ThrowAdvice    OnMethodExit + Thrown,        :throw
-     - nihilite.kernel.RedefineAdvice OnMethodExit + AssignReturned, :redefine
+     - nihilite.trainer.HookAdvice     OnMethodEnter,  :entry  position
+     - nihilite.trainer.ReturnAdvice   OnMethodExit + AssignReturned, :return
+     - nihilite.trainer.ThrowAdvice    OnMethodExit + Thrown,        :throw
+     - nihilite.trainer.RedefineAdvice OnMethodExit + AssignReturned, :redefine
 
    The generated stub bodies forward to a Clojure function in this
    namespace (hk-/rt-/th-/rd- prefix). Those functions delegate to
-   nihilite.registry dispatch."
+   nihilite.builder.registry dispatch."
 
-  (:require [nihilite.kernel.exceptions :as exc]
-            [nihilite.kernel.annparam :as ap]
-            [nihilite.kernel.bytegen :as bg]
+  (:require [nihilite.crafter.exceptions :as exc]
+            [nihilite.crafter.annparam :as ap]
+            [nihilite.crafter.bytegen :as bg]
             [clojure.tools.logging :as log])
   (:import [net.bytebuddy.implementation.bytecode.assign Assigner$Typing]))
 
@@ -69,7 +69,7 @@
           (.remove ^ThreadLocal in-advice))))))
 
 (defn- lookup-spec [host-internal method-name arg-count descriptor phase]
-  (let [lookup (clojure.lang.RT/var "nihilite.registry.dispatch" "lookup-spec-for-call")]
+  (let [lookup (clojure.lang.RT/var "nihilite.builder.registry.dispatch" "lookup-spec-for-call")]
     (.invoke ^clojure.lang.IFn lookup host-internal method-name arg-count descriptor phase)))
 
 (defn hk-onEntry
@@ -84,10 +84,10 @@
                                      (log/error t "entry advice lookup failed")
                                      (throw (exc/advice-ex! nil t))))]
                      (when (not (nil? spec-id))
-                       (let [dispatch (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-for-spec")
+                       (let [dispatch (clojure.lang.RT/var "nihilite.builder.registry.dispatch" "dispatch-for-spec")
                              result (try
                                       (.invoke ^clojure.lang.IFn dispatch spec-id self args)
-                                      (catch nihilite.kernel.HookCancelledException e
+                                      (catch nihilite.crafter.HookCancelledException e
                                         (throw e))
                                       (catch Throwable t
                                         (log/error t "entry advice dispatch failed")
@@ -111,7 +111,7 @@
                        (if (nil? spec-id)
                          original
                          (.invoke ^clojure.lang.IFn
-                                  (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-return-for-spec")
+                                  (clojure.lang.RT/var "nihilite.builder.registry.dispatch" "dispatch-return-for-spec")
                                   spec-id self args original)))
                      (catch Throwable t
                        (log/error t "return advice dispatch failed")
@@ -130,7 +130,7 @@
                                      (if (nil? args) 0 (alength args)) descriptor "throw")]
             (when-not (nil? spec-id)
               (.invoke ^clojure.lang.IFn
-                       (clojure.lang.RT/var "nihilite.registry.dispatch" "dispatch-throw-for-spec")
+                       (clojure.lang.RT/var "nihilite.builder.registry.dispatch" "dispatch-throw-for-spec")
                        spec-id self args thrown)))
           (catch Throwable t
             (log/error t "throw advice dispatch failed")
@@ -149,7 +149,7 @@
                     (throw (exc/advice-ex! nil t))))]
     (when-not (nil? spec-id)
       (try
-        (let [ref-var (clojure.lang.RT/var "nihilite.registry.dispatch" "redefine-dispatcher-ref")
+        (let [ref-var (clojure.lang.RT/var "nihilite.builder.registry" "redefine-dispatcher-ref")
               reinstaller (some-> ^clojure.lang.Atom (deref ref-var) deref)
               host (ap/host-internal host-class)]
           (when reinstaller
@@ -184,7 +184,7 @@
 (def ^:private thrown-param       (delay (bg/anno net.bytebuddy.asm.Advice$Thrown {})))
 
 (defn- enter-anno []
-  (let [exc-cls (Class/forName "nihilite.kernel.HookCancelledException")]
+  (let [exc-cls (Class/forName "nihilite.crafter.HookCancelledException")]
     (bg/anno net.bytebuddy.asm.Advice$OnMethodEnter
              {:inline false
               :skipOn exc-cls})))
@@ -212,7 +212,7 @@
      :params common-params
      :param-annos common-param-annos
      :method-annos [(enter-anno)]
-     :forward-var 'nihilite.kernel.advice/hk-onEntry}]})
+     :forward-var 'nihilite.trainer.advice/hk-onEntry}]})
 
 (def ^:private return-spec
   {:methods
@@ -222,7 +222,7 @@
      :params (conj (vec common-params) "java.lang.Object")
      :param-annos (conj (vec common-param-annos) @return-dyn-param)
      :method-annos [@to-return-anno @on-exit-anno]
-     :forward-var 'nihilite.kernel.advice/rt-onExit}]})
+     :forward-var 'nihilite.trainer.advice/rt-onExit}]})
 
 ;; onThrow returns Object rather than void on purpose. A void advice under
 ;; the invokedynamic dispatch does not bind: the woven call site ends up with
@@ -239,7 +239,7 @@
      :param-annos (conj (vec common-param-annos) @thrown-param)
      :method-annos [@on-exit-anno]
      :throws ["java.lang.Throwable"]
-     :forward-var 'nihilite.kernel.advice/th-onThrow}]})
+     :forward-var 'nihilite.trainer.advice/th-onThrow}]})
 
 (def ^:private redefine-spec
   "The :redefine advice.
@@ -260,7 +260,7 @@
      :params (conj (vec common-params) "java.lang.Object")
      :param-annos (conj (vec common-param-annos) @return-dyn-param)
      :method-annos [@to-return-anno @on-exit-noop-anno]
-     :forward-var 'nihilite.kernel.advice/rd-onRedefine}]})
+     :forward-var 'nihilite.trainer.advice/rd-onRedefine}]})
 
 (defn- ensure-class! [class-name spec inst]
   (or (@advice-classes class-name)
@@ -269,23 +269,23 @@
         loaded)))
 
 (defn- ensure-hook-advice! [inst]
-  (ensure-class! "nihilite.kernel.HookAdvice" hook-spec inst))
+  (ensure-class! "nihilite.trainer.HookAdvice" hook-spec inst))
 
 (defn- ensure-return-advice! [inst]
-  (ensure-class! "nihilite.kernel.ReturnAdvice" return-spec inst))
+  (ensure-class! "nihilite.trainer.ReturnAdvice" return-spec inst))
 
 (defn- ensure-throw-advice! [inst]
-  (ensure-class! "nihilite.kernel.ThrowAdvice" throw-spec inst))
+  (ensure-class! "nihilite.trainer.ThrowAdvice" throw-spec inst))
 
 (defn- ensure-redefine-advice! [inst]
-  (ensure-class! "nihilite.kernel.RedefineAdvice" redefine-spec inst))
+  (ensure-class! "nihilite.trainer.RedefineAdvice" redefine-spec inst))
 
 (defn ensure-all!
   "Generates all four advice classes into the system classloader.
    The 0-arg form resolves Instrumentation from the agent (premain/agentmain
    or a dynamically-attached ByteBuddyAgent). The 1-arg form accepts an
    explicit Instrumentation from the caller (e.g. the driver)."
-  ([] (ensure-all! (when-let [v (resolve 'nihilite.kernel.agent/agent-currentInstrumentation)]
+  ([] (ensure-all! (when-let [v (resolve 'nihilite.trainer.agent/agent-currentInstrumentation)]
                      (.invoke ^clojure.lang.IFn v))))
   ([^java.lang.instrument.Instrumentation inst]
    (ensure-hook-advice! inst)

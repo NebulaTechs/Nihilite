@@ -1,6 +1,6 @@
 (ns examples.minecraft.init
   "Minecraft vanilla runtime init for nihilite, loaded via -Dnihilite.init=examples/minecraft/init.clj."
-  (:require [nihilite.api :as api])
+  (:require [nihilite.builder.api :as api])
   (:import [net.minecraft.server MinecraftServer]
            [net.minecraft.network.chat Component]))
 

@@ -1,7 +1,7 @@
 (ns nihilite.test.install-redefine-reject-test
   "Regression: install! throws on {:position :redefine, :action :modify|:cancel}."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
+            [nihilite.builder.registry :as reg]
             [nihilite.test.fixtures :as fx]))
 
 (defn- redefine-modify-spec [id]
@@ -86,10 +86,10 @@
   ;; that gap produced a method returning the stub default -- a wrong answer,
   ;; silently. install! now waits, and gives up loudly rather than weaving a
   ;; hook that cannot work.
-  (let [ref-var   (clojure.lang.RT/var "nihilite.registry.dispatch"
+  (let [ref-var   (clojure.lang.RT/var "nihilite.builder.registry"
                                        "redefine-dispatcher-ref")
         saved     @(.deref ^clojure.lang.Var ref-var)
-        timeout   (ns-resolve 'nihilite.registry 'redefine-dispatcher-timeout-ms)]
+        timeout   (ns-resolve 'nihilite.builder.registry 'redefine-dispatcher-timeout-ms)]
     (try
       (reset! (.deref ^clojure.lang.Var ref-var) nil)
       (with-redefs-fn {timeout 50}

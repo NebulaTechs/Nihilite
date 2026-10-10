@@ -1,19 +1,20 @@
-(ns nihilite.kernel.installer
+(ns nihilite.trainer.installer
   "ByteBuddy AgentBuilder installation, implemented in Clojure.
 
    Mirrors the original nihilite.hooks.HookInstaller. One AgentBuilder
    instance is armed on the supplied Instrumentation, driven by a
    generated type-level matcher and a single composed transformer
-   (both in nihilite.kernel.transformer). This file owns the AgentBuilder
+   (both in nihilite.trainer.transformer). This file owns the AgentBuilder
    wiring and the install / uninstall / uninstall-spec! entry points that
    the registry and the agent worker call into."
-  (:require [nihilite.kernel.advice :as advice]
-            [nihilite.kernel.indy :as indy]
-            [nihilite.kernel.transformer :as transformer])
+  (:require [nihilite.builder.registry :as reg]
+            [nihilite.trainer.advice :as advice]
+            [nihilite.trainer.indy :as indy]
+            [nihilite.trainer.transformer :as transformer])
   (:import [java.lang.instrument Instrumentation]
            [java.util.logging Logger]))
 
-(def ^:private installer-log (Logger/getLogger "nihilite.kernel.installer"))
+(def ^:private installer-log (Logger/getLogger "nihilite.trainer.installer"))
 
 (defn- log-info [& msgs] (.info installer-log (apply str msgs)))
 (defn- log-warn [& msgs] (.warning installer-log (apply str msgs)))
@@ -66,10 +67,10 @@
    bootstrap must not trigger class loading: loading a class reads its bytes
    through java.io.FileInputStream, which is itself a hook target, so the
    nested link would recurse until the stack overflows."
-  [["nihilite.kernel.HookAdvice" "onEntry"]
-   ["nihilite.kernel.ReturnAdvice" "onExit"]
-   ["nihilite.kernel.ThrowAdvice" "onThrow"]
-   ["nihilite.kernel.RedefineAdvice" "onRedefine"]])
+  [["nihilite.trainer.HookAdvice" "onEntry"]
+   ["nihilite.trainer.ReturnAdvice" "onExit"]
+   ["nihilite.trainer.ThrowAdvice" "onThrow"]
+   ["nihilite.trainer.RedefineAdvice" "onRedefine"]])
 
 (defn- arm-indy!
   "Injects the bootstrap-side dispatcher, pushes the agent bridge into it, and
@@ -86,7 +87,7 @@
 (defn- preload-registry-read-side!
   "The generated HookTypeMatcher answers \"does this class have a hook\" for
    every class the JVM loads, and it reaches the registry through
-   `(resolve 'nihilite.registry.index/revision)`.    `resolve` hands back an
+   `(resolve 'nihilite.builder.registry.index/revision)`.    `resolve` hands back an
    unbound var while that namespace is still evaluating, so a class loaded
    before the first install! completed made the matcher throw
    `IllegalStateException: Attempting to call unbound fn` out of
@@ -96,16 +97,16 @@
 
    Loading the read side here, before the AgentBuilder is armed, removes
    the half-loaded-registry state instead of papering over it at each use
-   site. nihilite.registry.index only imports java.util.concurrent, so this
+   site. nihilite.builder.registry.index only imports java.util.concurrent, so this
    pulls in no registry mutation code and cannot cycle."
   []
-  (require 'nihilite.registry.index)
+  (require 'nihilite.builder.registry.index)
   nil)
 
 (defn install
   "Arms the single AgentBuilder (redefine + advice composed) against the
    live JVM. Also publishes `inst` through
-   nihilite.kernel.agent/agent-registerInstrumentation so the registry and
+   nihilite.trainer.agent/agent-registerInstrumentation so the registry and
    the advice classes resolve the same Instrumentation regardless of
    whether arming came from premain, agentmain, or a direct caller such as
    a test driver.
@@ -118,14 +119,14 @@
     (log-info "HookInstaller install skipped (no Instrumentation)")
     (do
       (let [register-fn (requiring-resolve
-                          'nihilite.kernel.agent/agent-registerInstrumentation)]
+                          'nihilite.trainer.agent/agent-registerInstrumentation)]
         (register-fn inst))
       (preload-registry-read-side!)
       (advice/ensure-all! inst)
       (arm-indy!)
       (transformer/ensure-all!)
-      (let [type-matcher (transformer-instance "nihilite.kernel.HookTypeMatcher")
-            combined-xform (transformer-instance "nihilite.kernel.AdviceTransformer")]
+      (let [type-matcher (transformer-instance "nihilite.trainer.HookTypeMatcher")
+            combined-xform (transformer-instance "nihilite.trainer.AdviceTransformer")]
         (.installOn
          (.transform
           (.type (base-builder) type-matcher)
@@ -165,7 +166,7 @@
    while the spec is still in the registry). Returns the count of
    classes retransformed; 0 when no Instrumentation is registered."
   [^String spec-id ^String target-internal]
-  (let [inst-fn (requiring-resolve 'nihilite.kernel.agent/agent-currentInstrumentation)
+  (let [inst-fn (requiring-resolve 'nihilite.trainer.agent/agent-currentInstrumentation)
         inst (when inst-fn (inst-fn))]
     (if inst
       (if target-internal
@@ -174,3 +175,8 @@
             0))
       (do (log-warn "HookInstaller uninstall-spec: no Instrumentation for spec id=" spec-id)
           0))))
+
+;; Publish the uninstall entry point upward. registry cannot require this
+;; namespace, so the capability is handed over here at load time instead of
+;; being looked up on every uninstall.
+(reg/register-uninstaller! uninstall-spec-with-target!)

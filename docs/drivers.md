@@ -1,6 +1,6 @@
 # Drivers
 
-`clojure -T:build check` runs the contract tests plus nine drivers. The drivers
+`clojure -T:build check` runs the contract tests plus ten passes. The drivers
 exist because the contract tests run in-process and cannot reach a real
 `Instrumentation`, and the two failure modes this project has actually suffered
 — weaving that silently never fires, and an install that reports success while
@@ -17,6 +17,7 @@ the agent is half-built — are both invisible from inside.
 | `dual-loader` | one class name under two ClassLoaders: a single spec serves both, `:woven-count` reports how many loaded Classes share the name rather than how many hooks exist, and nothing records which loader an event came from |
 | `concurrent-invoke` | 8 threads in one advice body: Nihilite's `:fired` atom and `:sequence` `AtomicLong` are exact under contention, a user bridge's own unsynchronized state loses 5–9% of its increments, and the per-thread reentrancy guard does not protect it |
 | `multi-hook-fanout` | one woven call site reaches every hook on the method, in install order; `:cancel` ends the walk *and* skips the host body, `:subscriber` does neither |
+| `hostile-safe` | the three bootstrap-loader targets from the limits table that do not overflow the stack: installing on one neither throws nor reports an empty woven count, and the one documented as working really fires |
 
 ```sh
 clojure -T:build clojure-contract-test   # prints its own pass/fail/error summary
@@ -65,8 +66,20 @@ purpose, and it is deliberately not part of `check`. Use
 `HOSTILE_TARGET_INDEX` to run one target per JVM — a target that overflows the
 stack ends the run, and the rest of the table goes unmeasured with it.
 
-`nihilite.test.init-service-driver` measures that an init script can deploy its
-own network service and put a jar the agent has never seen onto the classloader.
-It is also outside `check` — and has been invalidated twice by unrelated changes
-without anything going red, which is the argument for not leaving anything
-outside `check` that looks load-bearing.
+`check` runs `hostile-safe-driver` instead: the same driver in `HOSTILE_MODE=safe`,
+which narrows the table to the three targets that cannot kill the JVM and turns
+the assertions on. It deliberately does *not* assert that `Object.hashCode` and
+`ZipFile.getEntry` stay silent — they register and never fire today, and pinning
+that would freeze the bug rather than measure the boundary, so a future fix still
+passes. What it does assert is that installing on a bootstrap-loader class
+neither throws nor reports an empty woven count, which is the failure that had
+no signal at all before.
+
+A third pass used to live here: `nihilite.test.init-service-driver`, which
+measured that an init script can deploy its own network service and put a jar
+the agent has never seen onto the classloader. It was deleted on 2026-10-10
+because nothing could run it — it was the only driver without a `gen-class`
+form, so it had no AOT class, no `build.clj` task, and no path from `check` or
+CI. It had already been invalidated twice by unrelated changes without anything
+going red, which is the argument for not leaving anything outside `check` that
+looks load-bearing — and this one was not even reachable outside `check`.

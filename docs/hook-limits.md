@@ -5,7 +5,7 @@ exactly when the advice's own machinery needs the hooked method: the generated
 advice stub resolves its forwarder var by name on every call, the advice
 dispatches through hash maps, and it logs. That cycle closes *above* the
 reentrancy guard, before the advice body is ever entered, which is why the guard
-cannot save you here. `nihilite.kernel.advice/reentrancy-guard` is real and does
+cannot save you here. `nihilite.trainer.advice/reentrancy-guard` is real and does
 cut re-entry from a *bridge* that calls its own target — but it never gets
 consulted in these cases, because the advice body is not reached.
 
@@ -16,9 +16,47 @@ Two classes, and only the first is hopeless:
   hot paths, so the advice cannot run without re-entering itself. -
   **Classpath-dependent.** `FileInputStream.read`. It is the byte path by which
   a `.class` or `.clj` file on a classpath *directory* becomes a `Class`
-  (`BuiltinClassLoader.findClassOnClassPathOrNull` → `Resource.getBytes` →
+  (`BuiltinClassLoader.findClassOnPathOrNull` → `Resource.getBytes` →
   `read`). JDK classes come from the module image and jar entries come through
   `ZipFile` + `Inflater`, neither of which touches it.
+
+### Where the cycle actually closes — two wrong answers
+
+This was chased rather than assumed, and the first two explanations were both
+falsified by measurement. It is recorded because the wrong answers are the
+useful part: both are plausible from the source, and both cost a full
+experiment.
+
+**Wrong answer 1: the `reentrancy-guard` is too high.** True but not
+sufficient. `advice/reentrancy-guard` lives in `hk-onEntry`, and the generated
+stub's first three instructions are `Symbol.intern` ×2 and `Var.intern`, so the
+guard is never reached when those recurse. `javap` on Clojure 1.12.5 shows the
+chain: `Var.intern` → `Namespace.intern` → an `IPersistentMap` lookup on a
+`Symbol` key → `Symbol.hashCode()`, whose bytecode is
+`invokevirtual java/lang/String.hashCode`. The advice classes now cache the
+resolved forwarder in a static `IMPL` field filled at premain, which takes that
+whole hash off the hot path.
+
+**Measured: `String.hashCode`, `String.length` and `StringBuilder.append` all
+still overflow the stack.** (hostile-target indices 3, 2, 4.)
+
+**Wrong answer 2: `String.intern` in the forwarder.** Also insufficient — the
+same three targets still overflow after the change above.
+
+**What is left.** The cycle that actually kills them sits in the **indy linking
+path**, above the advice entirely, so no advice guard can reach it:
+`iab-bootstrap` looks its anti-reentrancy placeholder up in `linking-map` under
+a Clojure vector of three Strings, and registering that placeholder happens
+*inside* the `.put` whose own hashing has already recursed. A bootstrap-loader
+target reaches this on its first call, while the call site is still linking —
+before any advice method body exists to be guarded. This is source inference,
+not measured: the overflow is too deep for the JVM to print a stack, which is
+itself a symptom of unbounded recursion rather than of a bounded failure.
+
+The obvious next experiment is to make both maps key on identity —
+`IdentityHashMap` keyed by the call site's `MethodType`, which is one object
+per call site and never hashes a String. That has not been tried, and given the
+first two failures it should be treated as a hypothesis, not a fix.
 
 ## Measured boundary
 
@@ -28,11 +66,21 @@ JDK 25, each target through the production `install!` path in its own JVM:
 clojure -T:build hostile-target-driver                # all of them
 HOSTILE_TARGET_INDEX=3 clojure -T:build hostile-target-driver
 HOSTILE_TARGET_INDEX=-1 clojure -T:build hostile-target-driver   # backwards
+clojure -T:build hostile-safe-driver                  # the three that cannot SOE
 ```
 
 The index is an environment variable, not an argument: `clojure -T:build`
 does not forward positional arguments to the task. The last `HOSTILE_BEGIN`
 line in the log names whichever target killed the JVM.
+
+`hostile-safe-driver` runs the same table in `HOSTILE_MODE=safe`, which keeps
+only the three targets that cannot overflow the stack and asserts on them. It
+is the form `check` runs. It asserts that installing on each neither throws nor
+reports an empty woven count, and that `FileOutputStream.write` really fires. It
+deliberately does **not** assert that `Object.hashCode` and `ZipFile.getEntry`
+stay silent — they are "never fires" below because that is what the measurement
+found, not because it is the desired behaviour, and pinning it would make a
+future fix look like a regression.
 
 | Target | Outcome |
 | --- | --- |
@@ -58,7 +106,7 @@ a woven count and nothing throws, so every driver asserts a real firing rather
 than a successful install.
 
 One route to it is now closed. The `:descriptor` decides which loaded method a
-hook matches — ByteBuddy matches on it and `nihilite.registry.index` keys its
+hook matches — ByteBuddy matches on it and `nihilite.builder.registry.index` keys its
 buckets by it — so a descriptor that is not a valid JVM method descriptor used
 to register successfully and then match nothing. `install!` now rejects one
 with `:nihilite/bad-descriptor`, checked at install time rather than left to
@@ -77,7 +125,7 @@ same driver:
 
 In the never-fires case the advice is never entered at all. That was
 established by temporarily inserting an `AtomicLong` counter as the first
-statement of `nihilite.kernel.advice/hk-onEntry` — before the guard, before
+statement of `nihilite.trainer.advice/hk-onEntry` — before the guard, before
 `lookup-spec` — and watching it stay at 0 across every run while the hooked
 method returned bytes normally and `install!` still reported success. The
 counter is not in the tree now; the characterisation driver's `:fired 0` is

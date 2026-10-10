@@ -1,1 +1,0 @@
-(println "[examples/init] test fixture; opt in via -Dnihilite.init=examples/init.clj")

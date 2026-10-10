@@ -8,7 +8,7 @@
    same time.
 
    THE COLLISION SURFACE. The woven advice holds a reentrancy guard that is a
-   plain java.lang.ThreadLocal (nihilite.kernel.advice/in-advice,
+   plain java.lang.ThreadLocal (nihilite.trainer.advice/in-advice,
    read by advice/reentrancy-guard). It suppresses SAME-THREAD
    re-entry and nothing else. Two threads entering the same woven method both
    read a nil ThreadLocal, both set it, and both run the full advice body.
@@ -72,13 +72,13 @@
      - BOTH racy slots finish STRICTLY BELOW the invocation count.
 
    Driver shape follows nihilite.test.retransform-driver: ByteBuddyAgent for a
-   real Instrumentation, reflective nihilite.kernel.Agent/premain, the
+   real Instrumentation, reflective nihilite.trainer.Agent/premain, the
    production registry/install! path, assertions on a REAL FIRING rather than on
    a woven count, fail! + System/exit with a distinct non-zero code per
    assertion family, and println+flush after every measurement so a crash still
    leaves the numbers in the log."
-  (:require [nihilite.registry :as reg]
-            [nihilite.registry.dispatch])
+  (:require [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch])
   (:import [net.bytebuddy.agent ByteBuddyAgent]
             [java.util.concurrent ConcurrentHashMap ConcurrentLinkedQueue
                                  CountDownLatch])
@@ -174,7 +174,7 @@
   nil)
 
 (defn- install-hook! []
-  ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+  ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
   (reg/clear!)
   (reg/install! {:id spec-id
                  :target-internal target-internal
@@ -329,7 +329,7 @@
 
 (defn cid-main [& _args]
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         premain (.getDeclaredMethod Agent "premain"
                                     (into-array Class [String
                                                        java.lang.instrument.Instrumentation]))]
@@ -344,7 +344,7 @@
     ;; install, since no :redefine hook is used here and the worker only
     ;; installs it for real use.
     (.invoke premain nil (object-array [nil inst]))
-    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+    ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
     ;; Pre-load the target BEFORE registering the spec: install! retransforms
     ;; already-loaded matching classes, so the target has to be loaded for the
     ;; weave (and therefore for :fired) to be non-zero.

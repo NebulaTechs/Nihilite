@@ -1,4 +1,4 @@
-(ns nihilite.kernel.annparam
+(ns nihilite.crafter.annparam
   "ByteBuddy-shared helpers used by advice.clj, dispatcher.clj, and
    transformer.clj. Currently limited to `host-internal`; annotation-
    parameter builders differ between Advice (`net.bytebuddy.asm.Advice$*`)

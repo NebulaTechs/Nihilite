@@ -1,22 +1,23 @@
-(ns nihilite.kernel.transformer
+(ns nihilite.trainer.transformer
   "ByteBuddy transformer + type-matcher generation, implemented in Clojure.
 
    Owns the generated AdviceTransformer / HookTypeMatcher classes and the
    plain-Clojure bodies their stubs forward to. The installer wires these
-   into an AgentBuilder; position-bucketing lives in nihilite.kernel.bucket.
+   into an AgentBuilder; position-bucketing lives in nihilite.trainer.bucket.
 
    The transformer composes both hook kinds on the same builder so
    entry/return/throw advice is not erased by redefinition: :redefine
-   specs are visited via nihilite.kernel.RedefineAdvice (ByteBuddy Advice
+   specs are visited via nihilite.trainer.RedefineAdvice (ByteBuddy Advice
    with @OnMethodExit + @AssignReturned) first, then the entry/return/
    throw advice is visited onto the replaced body. MethodDelegation
    (:redefine) is incompatible with RETRANSFORMATION mode under
    disableClassFormatChanges (ByteBuddy issue #1097), so this ns no
    longer uses the generic dispatcher."
-  (:require [nihilite.kernel.classgen :as cg]
-            [nihilite.kernel.bytegen :as bg]
-            [nihilite.kernel.bucket :as bucket]
-            [nihilite.kernel.indy :as indy])
+  (:require [clojure.tools.logging :as log]
+            [nihilite.crafter.classgen :as cg]
+            [nihilite.crafter.bytegen :as bg]
+            [nihilite.trainer.bucket :as bucket]
+            [nihilite.trainer.indy :as indy])
   (:import [net.bytebuddy.asm Advice]
            [net.bytebuddy.dynamic ClassFileLocator$Simple]))
 
@@ -34,11 +35,11 @@
     (.clear ^java.util.concurrent.ConcurrentHashMap match-cache)))
 
 (defn- registry-revision []
-  (let [v (resolve 'nihilite.registry.index/revision)]
+  (let [v (resolve 'nihilite.builder.registry.index/revision)]
     (when v (.invoke ^clojure.lang.IFn v))))
 
 (defn- lookup-matching []
-  (let [v (resolve 'nihilite.registry.index/matching)]
+  (let [v (resolve 'nihilite.builder.registry.index/matching)]
     (when v ^clojure.lang.IFn v)))
 
 (defn- hook-type-matches?
@@ -47,7 +48,19 @@
    because gen-class forwarding for instance methods prepends `this`.
    Cached negatively: a no-spec result is remembered until the registry
    revision changes, so the JVM's per-class load does not retrigger an
-   expensive registry query on every class that has no hook."
+   expensive registry query on every class that has no hook.
+
+   This must stay total. install uses .installOn, so the matcher runs for
+   every class the JVM loads from arming onward, and a throw here would
+   put a stack trace on the host application's class-loading path. The
+   half-loaded-registry case that used to throw has its own fix --
+   installer/preload-registry-read-side! requires registry.index before
+   the builder is armed, rather than papering over it here.
+
+   What this catch is for is a cause we do not know yet, and its whole
+   job is to not be the reason nobody finds out: it names the class and
+   logs the throwable. The failure is still one unwoven class, exactly as
+   ByteBuddy's onError would report it, but it is now attributable."
   [_this ^net.bytebuddy.description.type.TypeDescription type-description]
   (let [internal-name (.getInternalName type-description)
         rev (registry-revision)
@@ -62,7 +75,11 @@
             (.put ^java.util.concurrent.ConcurrentHashMap match-cache internal-name [rev false])
             (prune-cache-if-full!))
           match?)
-        (catch Throwable _
+        (catch Throwable t
+          ;; Deliberately not cached: a transient failure should not
+          ;; become a permanent "this class has no hook".
+          (log/error t "HookTypeMatcher: registry query failed for" internal-name
+                    "-- treating as no match, class left unwoven")
           (prune-cache-if-full!)
           false)))))
 
@@ -87,10 +104,10 @@
    weave. nil.kernel.kernel.bytegen/generated-class-bytes hands back the
    exact bytes that were injected."
   []
-  (let [advice-names ["nihilite.kernel.HookAdvice"
-                      "nihilite.kernel.ReturnAdvice"
-                      "nihilite.kernel.ThrowAdvice"
-                      "nihilite.kernel.RedefineAdvice"]
+  (let [advice-names ["nihilite.trainer.HookAdvice"
+                      "nihilite.trainer.ReturnAdvice"
+                      "nihilite.trainer.ThrowAdvice"
+                      "nihilite.trainer.RedefineAdvice"]
         pairs (into {}
                     (for [n advice-names
                           :let [bs (bg/generated-class-bytes n)]
@@ -113,9 +130,9 @@
 (defn- visit-return-advice [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) "nihilite.kernel.ReturnAdvice")
+          wcm (indy/wire (Advice/withCustomMapping) "nihilite.trainer.ReturnAdvice")
           advice (.to (.with wcm (post-processor-factory))
-                      (Class/forName "nihilite.kernel.ReturnAdvice")
+                      (Class/forName "nihilite.trainer.ReturnAdvice")
                       (advice-locator))]
       (.visit builder (.on advice matcher)))
     builder))
@@ -138,9 +155,9 @@
      (let [entry-b   (:entry buckets)
            return-b  (:return buckets)
            throw-b   (:throw buckets)
-           b (visit-advice builder entry-b "nihilite.kernel.HookAdvice")
+           b (visit-advice builder entry-b "nihilite.trainer.HookAdvice")
            b2 (visit-return-advice b return-b)]
-       (visit-advice b2 throw-b "nihilite.kernel.ThrowAdvice"))
+       (visit-advice b2 throw-b "nihilite.trainer.ThrowAdvice"))
      builder))
 
 (defn- wrap-redefine
@@ -163,11 +180,11 @@
   [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) "nihilite.kernel.RedefineAdvice")
+          wcm (indy/wire (Advice/withCustomMapping) "nihilite.trainer.RedefineAdvice")
           ppf (post-processor-factory)
           loc (advice-locator)
           advice (.to (.with wcm ppf)
-                      (Class/forName "nihilite.kernel.RedefineAdvice")
+                      (Class/forName "nihilite.trainer.RedefineAdvice")
                       loc)
           replacement (.wrap advice
                              ^net.bytebuddy.implementation.Implementation
@@ -193,16 +210,16 @@
       builder)))
 
 (defn at-equals [self other] (identical? self other))
-(defn at-toString [_] "nihilite.kernel.AdviceTransformer")
+(defn at-toString [_] "nihilite.trainer.AdviceTransformer")
 (defn at-hashCode [self] (System/identityHashCode self))
 (defn at-clone [_]
-  (throw (UnsupportedOperationException. "nihilite.kernel.AdviceTransformer/clone not supported")))
+  (throw (UnsupportedOperationException. "nihilite.trainer.AdviceTransformer/clone not supported")))
 
 (defn hm-equals [self other] (identical? self other))
-(defn hm-toString [_] "nihilite.kernel.HookTypeMatcher")
+(defn hm-toString [_] "nihilite.trainer.HookTypeMatcher")
 (defn hm-hashCode [self] (System/identityHashCode self))
 (defn hm-clone [_]
-  (throw (UnsupportedOperationException. "nihilite.kernel.HookTypeMatcher/clone not supported")))
+  (throw (UnsupportedOperationException. "nihilite.trainer.HookTypeMatcher/clone not supported")))
 
 (defn hm-matches
   "gen-class forwarding stub for HookTypeMatcher.matches(T).
@@ -235,22 +252,22 @@
     (cg/generate-class-bytes!
      {:name class-name
       :prefix prefix
-      :impl-ns "nihilite.kernel.transformer"
+      :impl-ns "nihilite.trainer.transformer"
       :main false
       :implements [iface]
       :methods []})))
 
 (defn- gen-type-matcher!
-  "Generates nihilite.kernel.HookTypeMatcher implementing
+  "Generates nihilite.trainer.HookTypeMatcher implementing
    net.bytebuddy.matcher.ElementMatcher. The matches(T) method is
    auto-emitted by gen-class (no :methods clause); the generated stub
    forwards to hook-type-matches? in this namespace."
   []
   (let [iface (Class/forName "net.bytebuddy.matcher.ElementMatcher")]
     (cg/generate-class-bytes!
-     {:name "nihilite.kernel.HookTypeMatcher"
+     {:name "nihilite.trainer.HookTypeMatcher"
       :prefix "hm-"
-      :impl-ns "nihilite.kernel.transformer"
+      :impl-ns "nihilite.trainer.transformer"
       :main false
       :implements [iface]
       :methods []})))
@@ -263,7 +280,7 @@
    writes when *compile-files* is set."
   []
   (gen-type-matcher!)
-  (gen-transformer! "nihilite.kernel.AdviceTransformer" "at-")
+  (gen-transformer! "nihilite.trainer.AdviceTransformer" "at-")
   nil)
 
 (defn ensure-all!

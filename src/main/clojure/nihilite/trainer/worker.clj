@@ -1,9 +1,9 @@
-(ns nihilite.kernel.worker
+(ns nihilite.trainer.worker
   "Background worker thread that brings up Clojure-side state after the
    JVM has invoked premain/agentmain.
 
    Equivalent to the deleted nihilite.agent.Worker Java class. Runs on
-   a dedicated thread started by nihilite.kernel.Agent.startWorkerOnce
+   a dedicated thread started by nihilite.trainer.Agent.startWorkerOnce
    so that the premain call can return to the JVM immediately without
    blocking on Clojure runtime init.
 
@@ -82,9 +82,9 @@
    reports it. That is the failure mode this namespace used to have."
   []
   (require-ns 'clojure.core)
-  (require-ns 'nihilite.registry)
-  (require-ns 'nihilite.registry.dispatch)
-  (let [install-redisp (await-var "nihilite.registry.dispatch"
+  (require-ns 'nihilite.builder.registry)
+  (require-ns 'nihilite.builder.registry.dispatch)
+  (let [install-redisp (await-var "nihilite.builder.registry.dispatch"
                                    "install-redefine-dispatcher!")
         result (.invoke ^clojure.lang.IFn install-redisp)]
     (log-info (str "[Nihilite] redefine dispatcher installed: " result))))
@@ -114,6 +114,6 @@
    point: a worker that failed leaves the agent half installed, and swallowing
    that is how the redefine dispatcher went missing for weeks."
   []
-  (binding [*ns* (find-ns 'nihilite.kernel.worker)]
+  (binding [*ns* (find-ns 'nihilite.trainer.worker)]
     (init-clojure)
     (bind-compiler-loader)))

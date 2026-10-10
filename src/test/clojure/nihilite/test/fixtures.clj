@@ -1,6 +1,6 @@
 (ns nihilite.test.fixtures
   "Registry cleanup fixture shared by test namespaces."
-  (:require [nihilite.registry :as reg]))
+  (:require [nihilite.builder.registry :as reg]))
 
 (defn reg-cleanup
   [f]
@@ -15,7 +15,7 @@
    assert on registry data rather than on a woven method, so they install the
    dispatcher directly and the wait passes immediately."
   [f]
-  ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+  ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
   (f))
 
 (defn reg-cleanup-with-dispatcher

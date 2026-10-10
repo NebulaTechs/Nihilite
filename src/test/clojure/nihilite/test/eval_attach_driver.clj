@@ -46,8 +46,8 @@
    hooked method, so the reply's :fired is a measurement rather than a claim.
    Returns the :fired count."
   (str "(do"
-       "    (require 'nihilite.api)"
-       "    (nihilite.api/install!"
+       "    (require 'nihilite.builder.api)"
+       "    (nihilite.builder.api/install!"
        "     {:id \"attach-probe\""
        "      :target-internal \"java/io/FileOutputStream\""
        "      :method-name \"write\""
@@ -61,7 +61,7 @@
        "      (.write o (.getBytes \"nihilite\" \"UTF-8\"))"
        "      (.close o)"
        "      (.delete f))"
-       "    (:fired (nihilite.api/install-status! \"attach-probe\")))"))
+       "    (:fired (nihilite.builder.api/install-status! \"attach-probe\")))"))
 
 (defn- b64 ^String [^String s]
   (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
@@ -199,24 +199,24 @@
              (string? sid) (pr-str r))
 
       ;; 5. poll it from a second attach
-      (let [s1 (ask (str "(nihilite.eval/snapshot \"" sid "\")"))]
+      (let [s1 (ask (str "(nihilite.builder.eval/snapshot \"" sid "\")"))]
         (check "polled session is still running" problems
                (true? (:running? (value->data s1))) (pr-str s1)))
 
       ;; 6. interrupt it
-      (let [i (ask (str "(nihilite.eval/interrupt \"" sid "\")"))]
+      (let [i (ask (str "(nihilite.builder.eval/interrupt \"" sid "\")"))]
         (check "interrupt reports it interrupted" problems
                (str/includes? (str (:value i)) ":interrupted? true")
                (pr-str i)))
 
       ;; 7. and it stopped
       (Thread/sleep 300)
-      (let [s2 (ask (str "(nihilite.eval/snapshot \"" sid "\")"))]
+      (let [s2 (ask (str "(nihilite.builder.eval/snapshot \"" sid "\")"))]
         (check "interrupted session stopped running" problems
                (false? (:running? (value->data s2))) (pr-str s2)))
 
       ;; 8. and the attacher can close it
-      (let [c (ask (str "(nihilite.eval/close-session \"" sid "\")"))]
+      (let [c (ask (str "(nihilite.builder.eval/close-session \"" sid "\")"))]
         (check "attacher can close the session" problems
                (= "true" (:value c)) (pr-str c))))
 

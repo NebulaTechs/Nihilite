@@ -9,8 +9,8 @@
    keeps them apart so the transformer can apply redefine first and
    advice second."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [nihilite.registry :as reg]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (defn- entry-spec [id]

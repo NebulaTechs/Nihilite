@@ -8,14 +8,14 @@
   (:require [clojure.test :refer [deftest is]]
             ;; loaded, not just resolved: await-var is private, so ns-resolve
             ;; returns nil unless the namespace is actually on the classpath.
-            [nihilite.kernel.worker])
-  (:import [nihilite.kernel Agent]))
+            [nihilite.trainer.worker])
+  (:import [nihilite.trainer Agent]))
 
 (defn- await-var-fn []
-  @(ns-resolve 'nihilite.kernel.worker 'await-var))
+  @(ns-resolve 'nihilite.trainer.worker 'await-var))
 
 (defn- timeout-ms-var []
-  (ns-resolve 'nihilite.kernel.worker 'dispatch-ready-timeout-ms))
+  (ns-resolve 'nihilite.trainer.worker 'dispatch-ready-timeout-ms))
 
 (defn- invoke-static
   [^String method-name]
@@ -31,7 +31,7 @@
       ;; claimWorker may not be available if the Agent class was loaded
       ;; before the AOT class generation. Fall back to the JVM-side
       ;; method on a freshly resolved class.
-      (let [fresh (.getDeclaredMethod (Class/forName "nihilite.kernel.Agent") "claimWorker"
+      (let [fresh (.getDeclaredMethod (Class/forName "nihilite.trainer.Agent") "claimWorker"
                                       (into-array Class []))]
         (.setAccessible fresh true)
         (boolean (.invoke fresh nil (into-array Object [])))))))

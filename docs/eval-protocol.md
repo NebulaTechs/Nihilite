@@ -36,7 +36,7 @@ A complete round trip:
 ```java
 VirtualMachine vm = VirtualMachine.attach(pid);
 vm.loadAgent("target/nihilite.jar",
-             "eval:file:/tmp/reply.edn|" + base64("(nihilite.api/list-specs)"));
+             "eval:file:/tmp/reply.edn|" + base64("(nihilite.builder.api/list-specs)"));
 vm.detach();
 // /tmp/reply.edn now holds {:value "{...}", :done true, ...}
 ```
@@ -45,7 +45,7 @@ vm.detach();
 
 `:done false` means the eval outlived the wait. The `:session` in the reply is
 then **left open on purpose** — send a second request whose code is
-`(nihilite.eval/snapshot "<session-id>")` to read it again. That session is not
+`(nihilite.builder.eval/snapshot "<session-id>")` to read it again. That session is not
 closed by the request that created it, so this works. A request whose eval
 finishes normally *does* close its own session.
 
@@ -59,8 +59,8 @@ waiting half a minute.
 
 ## Inside the target
 
-The same code is reachable in-process as `nihilite.eval`, which is deliberately
-a separate namespace from `nihilite.api`: one is the hook workbench, the other
+The same code is reachable in-process as `nihilite.builder.eval`, which is deliberately
+a separate namespace from `nihilite.builder.api`: one is the hook workbench, the other
 is a control plane, so requiring one does not drag in the other.
 
 | verb | |
@@ -152,7 +152,7 @@ The failure arrives through `:error` like any other.
 ## Invariants that keep streaming a later addition
 
 Four things are built in so that push-based streaming is an additive change
-rather than a redesign. They are implemented in `nihilite.eval.session`.
+rather than a redesign. They are implemented in `nihilite.builder.eval.session`.
 
 1. Output goes through one function, `emit!`. A streaming sink is another sink
    inside `emit!`, and nothing else moves. 2. Every chunk lands in ONE ordered

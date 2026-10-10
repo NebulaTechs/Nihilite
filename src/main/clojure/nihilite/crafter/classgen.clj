@@ -1,4 +1,4 @@
-(ns nihilite.kernel.classgen)
+(ns nihilite.crafter.classgen)
 
 (defn generate-class-bytes!
   "Invokes clojure.core$generate_class with `:load-impl-ns true` and writes

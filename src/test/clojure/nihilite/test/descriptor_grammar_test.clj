@@ -5,7 +5,7 @@
    The descriptor is not decoration. It becomes the spec's :method-key
    and its :method-descriptor, and both decide which loaded method a
    hook matches: ByteBuddy matches on the descriptor, and
-   nihilite.registry.index keys its buckets by it. A descriptor the
+   nihilite.builder.registry.index keys its buckets by it. A descriptor the
    grammar rejects is one ByteBuddy cannot match either, so without this
    check the hook would register successfully and never fire -- the
    'registers but never fires' mode docs/hook-limits.md documents,
@@ -15,7 +15,7 @@
    that accepts a malformed descriptor is the same failure it was added
    to prevent."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
+            [nihilite.builder.registry :as reg]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)
@@ -117,21 +117,14 @@
         (str "accepts :arity " arity " with " (pr-str desc)))))
 
 (deftest an-omitted-arity-is-read-from-the-descriptor
-  ;; nil :arity used to make lookup-spec-for-call skip its count check
-  ;; entirely, so a spec written without one matched whatever it could.
-  ;; The descriptor states the count, so there is nothing to leave
-  ;; unknown.
+  ;; The descriptor states the count, so there is nothing to leave unknown.
   (reg/install! (spec-with "derived" "(I)Z"))
   (is (= 1 (:arity (reg/lookup "derived")))
       "one parameter declared, one recorded"))
 
 (deftest the-derived-fields-are-named-for-what-they-hold
   ;; :internal-class and :method-descriptor are computed by install! from
-  ;; :target-internal and :descriptor, not read from the spec. They were
-  ;; called :source-class and :source-descriptor, which read as if a hook
-  ;; could name a method other than the one it targets. Passing the old
-  ;; names in is silently overwritten, so a caller who did that believed
-  ;; they were setting something.
+  ;; :target-internal and :descriptor, not read from the spec.
   (reg/install! (spec-with "names" "()I"))
   (let [stored (reg/lookup "names")]
     (is (= "java.util.BitSet" (:internal-class stored))

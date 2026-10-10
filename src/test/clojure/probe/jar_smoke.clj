@@ -12,8 +12,8 @@
 
    The bridge calls registry/ctx-return, the one call site that used a
    defrecord field accessor Clojure 1.12 does not emit."
-  (:require [nihilite.api :as api]
-            [nihilite.registry :as reg]))
+  (:require [nihilite.builder.api :as api]
+            [nihilite.builder.registry :as reg]))
 
 (def ^:private fires (atom 0))
 

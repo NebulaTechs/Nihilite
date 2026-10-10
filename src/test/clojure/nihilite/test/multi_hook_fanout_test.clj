@@ -20,8 +20,8 @@
    advice itself calls. The woven path is proven separately by
    nihilite.test.multi-hook-fanout-driver."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (def ^:private target "java/lang/String")

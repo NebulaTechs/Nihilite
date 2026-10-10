@@ -13,10 +13,10 @@
 
    Run via gen-class to keep the driver protocol stable across builds
    without a Java source file."
-  (:require [nihilite.registry :as reg]
-            [nihilite.registry.stats :as stats]
-            [nihilite.registry.dispatch]
-            [nihilite.api :as api])
+  (:require [nihilite.builder.registry :as reg]
+            [nihilite.test.driver-observe :as obs]
+            [nihilite.builder.registry.dispatch]
+            [nihilite.builder.api :as api])
   (:import [net.bytebuddy.agent ByteBuddyAgent])
 (:gen-class
     :name nihilite.test.retransformDriver
@@ -32,13 +32,9 @@
      [redefineBodyExecuted [] boolean]]
     :main true))
 
-;; Driver state (matches the volatile fields of the old Java driver).
-
 (def ^:private entered (atom 0))
 (def ^:private return-mutated (atom 0))
 (def ^:private redefined (atom 0))
-
-;; DummyTarget class options, generated alongside this driver.
 
 (def ^:private dummy-target-class
   "nihilite.test.retransform_driver.DummyTarget")
@@ -83,8 +79,6 @@
   (generate-dummy-target!)
   nil)
 
-;; DummyTarget stub bodies (gen-class forwards static methods to these vars).
-
 (defn dt-probe [x] (str "original-" x))
 (defn dt-probeReturn [] "untouched-return")
 (defn dt-probeRedef []
@@ -92,17 +86,15 @@
   ;; so the original body must never execute; returning a distinct string
   ;; alone cannot prove that (the bridge could have produced the same
   ;; value), hence the explicit flag.
-  (reset! stats/driver-redefine-body-executed? true)
+  (reset! obs/driver-redefine-body-executed? true)
   "ORIGINAL-BODY-RAN")
 (defn dt-probeCancel []
-  (reset! stats/driver-body-executed-after-cancel? true)
+  (reset! obs/driver-body-executed-after-cancel? true)
   "should-never-see")
 (defn dt-probeThrow [] (throw (IllegalStateException. "driver-probe-throw")))
-(defn dt-throwObserved [] (int @stats/driver-throw-observed))
-(defn dt-bodyExecutedAfterCancel [] (boolean @stats/driver-body-executed-after-cancel?))
-(defn dt-redefineBodyExecuted [] (boolean @stats/driver-redefine-body-executed?))
-
-;; Spec bridge implementations.
+(defn dt-throwObserved [] (int @obs/driver-throw-observed))
+(defn dt-bodyExecutedAfterCancel [] (boolean @obs/driver-body-executed-after-cancel?))
+(defn dt-redefineBodyExecuted [] (boolean @obs/driver-redefine-body-executed?))
 
 (def ^:private reentry-depth (atom 0))
 (def ^:private reentrant-fires (atom 0))
@@ -134,16 +126,16 @@
   "REDEFINED-BY-DRIVER")
 
 (defn- entry-cancel-handler [ctx]
-  (let [cancel (resolve 'nihilite.registry.dispatch/ctx-cancel!)]
+  (let [cancel (resolve 'nihilite.builder.registry.dispatch/ctx-cancel!)]
     (cancel ctx true))
   nil)
 
 (defn- throw-handler [_ctx]
-  (stats/increment-throw-observed!)
+  (obs/increment-throw-observed!)
   nil)
 
 (defn- install-all! []
-  ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+  ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
   (reg/clear!)
   (reg/install! {:id "driver-entry"
                  :target-internal dummy-target-internal
@@ -245,19 +237,19 @@
       (when (not= "REDEFINED-BY-DRIVER" r) (fail! (str "probeRedef was \"" r "\" expected \"REDEFINED-BY-DRIVER\"") 8))
       (when body-ran
         (fail! "probeRedef: the ORIGINAL method body executed; :redefine must wrap, not instrument" 28)))
-    (stats/clear-driver-state!)
+    (obs/clear-driver-state!)
 
     ;; probeCancel() -- :entry :cancel short-circuits
     (try
       (.invoke probeCancel nil (object-array []))
       (fail! "probeCancel returned normally; expected HookCancelledException" 12)
       (catch java.lang.reflect.InvocationTargetException ite
-        (when (not (instance? nihilite.kernel.HookCancelledException (.getCause ite)))
+        (when (not (instance? nihilite.crafter.HookCancelledException (.getCause ite)))
           (fail! (str "probeCancel cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))
-                      " expected nihilite.kernel.HookCancelledException") 13))))
-    (stats/clear-driver-state!)
-    (when @stats/driver-body-executed-after-cancel? (fail! "probeCancel host body executed; short-circuit broken" 14))
+                      " expected nihilite.crafter.HookCancelledException") 13))))
+    (obs/clear-driver-state!)
+    (when @obs/driver-body-executed-after-cancel? (fail! "probeCancel host body executed; short-circuit broken" 14))
 
     ;; probeThrow() -- :throw observes
     (try
@@ -270,8 +262,8 @@
             (fail! (str "probeThrow cause was "
                         (when c (str (.getName (class c)) ":" (.getMessage c)))
                         " expected IllegalStateException:driver-probe-throw") 16)))))
-    (when (not= @stats/driver-throw-observed 1)
-      (fail! (str "THROW_OBSERVED=" @stats/driver-throw-observed " expected 1") 17))
+    (when (not= @obs/driver-throw-observed 1)
+      (fail! (str "THROW_OBSERVED=" @obs/driver-throw-observed " expected 1") 17))
 
     ;; retransform and re-fire all three
     (try
@@ -327,7 +319,7 @@
       (.invoke probeCancel nil (object-array []))
       (fail! "post-retransform probeCancel returned normally" 18)
       (catch java.lang.reflect.InvocationTargetException ite
-        (when (not (instance? nihilite.kernel.HookCancelledException (.getCause ite)))
+        (when (not (instance? nihilite.crafter.HookCancelledException (.getCause ite)))
           (fail! (str "post-retransform cancel cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))) 19))))
     (try
@@ -337,9 +329,9 @@
         (when (not (instance? IllegalStateException (.getCause ite)))
           (fail! (str "post-retransform throw cause was "
                       (when-let [c (.getCause ite)] (.getName (class c)))) 21))))
-    (when (not= @stats/driver-throw-observed 2)
-      (fail! (str "post-retransform THROW_OBSERVED=" @stats/driver-throw-observed " expected 2") 22))
-    (when @stats/driver-body-executed-after-cancel?
+    (when (not= @obs/driver-throw-observed 2)
+      (fail! (str "post-retransform THROW_OBSERVED=" @obs/driver-throw-observed " expected 2") 22))
+    (when @obs/driver-body-executed-after-cancel?
       (fail! "post-retransform probeCancel body still executed" 23))
 
     (let [mixed-entry (atom 0)
@@ -364,7 +356,7 @@
                      :action :observe
                      :bridge mixed-redef
                      :note "redefine observing the entry hook's counter"})
-      (stats/clear-driver-state!)
+      (obs/clear-driver-state!)
       (let [r (.invoke probeRedef nil (object-array []))]
         (when (not= 1 @mixed-entry)
           (fail! (str "co-located :entry hook fired " @mixed-entry
@@ -379,7 +371,7 @@
       ;; and the original body must be back.
       (api/uninstall! "driver-mixed-redefine")
       (reset! mixed-entry 0)
-      (stats/clear-driver-state!)
+      (obs/clear-driver-state!)
       (let [r2 (.invoke probeRedef nil (object-array []))
             body-ran (boolean (.invoke redefineBodyExecuted nil (object-array [])))]
         (when (not= 1 @mixed-entry)
@@ -396,8 +388,8 @@
 
 (defn td-main [& _args]
   (let [inst (ByteBuddyAgent/install)]
-    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
-    ((requiring-resolve 'nihilite.kernel.installer/install) inst)
+    ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
+    ((requiring-resolve 'nihilite.trainer.installer/install) inst)
     ;; Pre-load DummyTarget BEFORE registering the specs: install!
     ;; retransforms already-loaded matching classes, so the target has to
     ;; be loaded for the weave (and therefore install-status!'s

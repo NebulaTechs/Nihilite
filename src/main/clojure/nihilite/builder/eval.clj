@@ -1,4 +1,4 @@
-(ns nihilite.eval
+(ns nihilite.builder.eval
   "Out-of-process eval for a JVM Nihilite is attached to.
 
    Nihilite opens no port. A process that wants to evaluate code in an
@@ -8,13 +8,13 @@
    Sessions are the unit, not single calls, because a REPL needs somewhere to
    keep its namespace and its last value between forms. The machinery behind
    one -- its output log, its cursor, the thread an interrupt needs -- is in
-   nihilite.eval.session, along with the four invariants that keep streaming a
+   nihilite.builder.eval.session, along with the four invariants that keep streaming a
    later addition rather than a redesign.
 
    What streaming cannot become: push rather than poll needs a channel the
    target can write to, which means the attaching side listens on loopback and
    the agent connects back. Nihilite itself still listens on nothing."
-  (:require [nihilite.eval.session :as session]))
+  (:require [nihilite.builder.eval.session :as session]))
 
 (defn open-session
   "Opens a session and returns its id. Each session evaluates in its own
@@ -43,7 +43,7 @@
    chunks come back. Omit it for everything, which is what a caller that has
    not been polling wants.
 
-   The returned `:cursor` is monotonic -- see nihilite.eval.session/read-state for
+   The returned `:cursor` is monotonic -- see nihilite.builder.eval.session/read-state for
    why deriving it from the page alone would be wrong."
   ([sid] (snapshot sid nil))
   ([sid since]

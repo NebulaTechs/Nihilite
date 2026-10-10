@@ -11,7 +11,7 @@
    ClassLoadingStrategy/WRAPPER, which is how a single name legitimately
    maps to more than one loaded Class."
   (:require [clojure.test :refer [deftest is]]
-            [nihilite.registry :as reg])
+            [nihilite.builder.registry :as reg])
   (:import [net.bytebuddy ByteBuddy]))
 
 (defn- stub-instrumentation

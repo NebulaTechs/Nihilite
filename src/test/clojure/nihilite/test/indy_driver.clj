@@ -14,8 +14,8 @@
    that hand-off, since Clojure cannot extend an abstract class.
 
    Invoked from build.clj as `java nihilite.test.indyDriver`."
-  (:require [nihilite.kernel.bytegen :as bg]
-            [nihilite.kernel.indy :as indy])
+  (:require [nihilite.crafter.bytegen :as bg]
+            [nihilite.trainer.indy :as indy])
   (:import [java.lang.instrument ClassFileTransformer Instrumentation]
            [net.bytebuddy.agent ByteBuddyAgent]
            [net.bytebuddy.asm Advice Advice$BootstrapArgumentResolver
@@ -244,7 +244,7 @@
 
 (defn idrv-main [& _args]
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         premain (.getDeclaredMethod Agent "premain"
                                     (into-array Class [String Instrumentation]))]
     (.setAccessible premain true)

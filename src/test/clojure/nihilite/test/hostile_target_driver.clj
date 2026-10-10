@@ -49,7 +49,7 @@
    Object identity and class loading are all on the advice's own path. The
    reentrancy guard cannot help there, because the cycle closes before the
    guard is reached."
-  (:require [nihilite.registry :as reg])
+  (:require [nihilite.builder.registry :as reg])
   (:import [net.bytebuddy.agent ByteBuddyAgent]
            [java.io File FileInputStream FileOutputStream]
            [java.util.zip Inflater ZipFile])
@@ -85,7 +85,16 @@
 (def ^:private targets
   "target-internal / method / descriptor / arity / hammer.
    The hammer is a thunk that calls the hooked method a few times; it returns
-   the last observed value only so the driver can print something."
+   the last observed value only so the driver can print something.
+
+   :check says whether HOSTILE_MODE=safe runs this target and what it then
+   asserts. :fire means the bridge must actually run; :installs means only
+   that installing it neither throws nor reports an empty woven count, with
+   the firing left unconstrained on purpose -- Object.hashCode and
+   ZipFile.getEntry register and never fire today, and asserting that would
+   lock the bug in rather than describe the boundary. Targets with no :check
+   are the ones that kill the JVM, plus FileInputStream.read, whose outcome
+   depends on the classpath shape and so cannot be asserted either way."
   [{:label "FileInputStream.read([BII)I"
     :target-internal "java/io/FileInputStream"
     :method-name "read" :descriptor "([BII)I" :arity 3
@@ -94,6 +103,7 @@
    {:label "FileOutputStream.write([BII)V"
     :target-internal "java/io/FileOutputStream"
     :method-name "write" :descriptor "([BII)V" :arity 3
+    :check :fire
     :hammer (fn [] (spit-bytes! (.getBytes "nihilite" "UTF-8")))}
 
    {:label "String.length()I"
@@ -119,6 +129,7 @@
    {:label "Object.hashCode()I"
     :target-internal "java/lang/Object"
     :method-name "hashCode" :descriptor "()I" :arity 0
+    :check :installs
     :hammer (fn [] (.hashCode "a"))}
 
    {:label "ClassLoader.loadClass(String)"
@@ -140,6 +151,7 @@
    {:label "ZipFile.getEntry(String)"
     :target-internal "java/util/zip/ZipFile"
     :method-name "getEntry" :descriptor "(Ljava/lang/String;)Ljava/util/zip/ZipEntry;" :arity 1
+    :check :installs
     :hammer (fn [] (try (doto (ZipFile. temp-file)
                           (.close))
                         (catch Exception _ nil)))}])
@@ -186,34 +198,45 @@
                           {:hammer-error (str (.getName (class t)) ": " (.getMessage t))})))))]
     (try (reg/uninstall! id) (catch Throwable _ nil))
     outcome))
-(defn- select-targets
-  "Which targets to probe: the whole table, or one of them.
+(def ^:private check-targets (filterv :check targets))
 
-   The index comes from HOSTILE_TARGET_INDEX, not from a command-line
+(defn- env-int [k]
+  (some-> (System/getenv k) str not-empty
+          (as-> $ (try (Integer/parseInt $) (catch Throwable _ nil)))))
+
+(defn- safe-mode? []
+  (= "safe" (some-> (System/getenv "HOSTILE_MODE") str not-empty)))
+
+(defn- select-targets
+  "Which targets to probe: the whole table, the check-safe subset, or one
+   of them.
+
+   The index comes from HOSTILE_TARGET_INDEX, not a command-line
    argument. `clojure -T:build` does not forward positional arguments to the
-   task, so the only thing that survives the trip is the environment — the
-   same reason HOSTILE_WARM_CALLS below is an env var. An argument is still
-   honoured, for the `java -cp ... hostileTargetDriver 3` invocation that
-   bypasses build.clj."
+   task, so the only thing that survives the trip is the environment —
+   same reason HOSTILE_WARM_CALLS is an env var. HOSTILE_MODE=safe narrows
+   the table to the targets tagged :check and turns the assertions on; that
+   is the form `check` runs, one JVM for the whole subset. An argument is
+   still honoured, for the `java -cp ... hostileTargetDriver 3` invocation
+   that bypasses build.clj."
   [args]
   (let [idx (or (try (Integer/parseInt (first args)) (catch Throwable _ nil))
-                (some-> (System/getenv "HOSTILE_TARGET_INDEX") str not-empty
-                        (as-> $ (try (Integer/parseInt $) (catch Throwable _ nil)))))]
+                (env-int "HOSTILE_TARGET_INDEX"))]
     (cond
-      (nil? idx) targets
+      (nil? idx) (if (safe-mode?) check-targets targets)
       (neg? idx) (vec (reverse targets))
       :else [(nth targets idx :none)])))
 
 (defn htd-main [& args]
   (spit-bytes! (.getBytes "nihilite" "UTF-8"))
   (let [inst (ByteBuddyAgent/install)
-        Agent (Class/forName "nihilite.kernel.Agent")
+        Agent (Class/forName "nihilite.trainer.Agent")
         premain (.getDeclaredMethod Agent "premain"
                                     (into-array Class [String
                                                        java.lang.instrument.Instrumentation]))]
     (.setAccessible premain true)
     (.invoke premain nil (object-array [nil inst]))
-    ((requiring-resolve 'nihilite.registry.dispatch/install-redefine-dispatcher!))
+    ((requiring-resolve 'nihilite.builder.registry.dispatch/install-redefine-dispatcher!))
     ;; Warm the JVM before arming any hook, so the probes run against methods
     ;; the JIT has already compiled and inlined. Nihilite's own deployment
     ;; (premain) is early and would never see a hot call site; a late install
@@ -249,6 +272,31 @@
         (fail! (str "no such target index; known targets: "
                     (pr-str (mapv :label targets)))
                2))
+      (when (safe-mode?)
+        ;; The gate `check` runs. It asserts only what is safe to assert:
+        ;; that installing a hook on a bootstrap-loader class neither throws
+        ;; nor reports an empty woven count, and that the one target the
+        ;; project documents as working actually fires. Firing is left
+        ;; unconstrained everywhere else on purpose -- two of these three
+        ;; register and never fire today, and pinning that would freeze the
+        ;; bug rather than describe the limit.
+        (when-not (= (count check-targets) (count results))
+          (fail! (str "safe mode ran " (count results) " target(s), expected "
+                      (count check-targets) " -- a :check tag was added or removed")
+                 3))
+        (doseq [[t r] (mapv vector check-targets results)]
+          (when (:install-error r)
+            (fail! (str (:label t) " failed to install: " (:install-error r)) 4))
+          (when-not (pos? (long (:woven-count r 0)))
+            (fail! (str (:label t) " reported woven-count "
+                        (pr-str (:woven-count r)) "; the class is loaded and the"
+                        " hook is not armed") 5))
+          (when (and (= :fire (:check t)) (not (pos? (long (:fired r 0)))))
+            (fail! (str (:label t) " is documented as firing but :fired was "
+                        (pr-str (:fired r))) 6)))
+        (println "DRIVER_PASS hostile-target safe subset —"
+                 (count check-targets) "target(s), all installed with a non-zero"
+                 " woven count, and FileOutputStream.write fired"))
       (println "DRIVER_PASS hostile-target characterisation complete ("
                (count results) " target(s); see HOSTILE_SUMMARY)")
       (System/exit 0))))

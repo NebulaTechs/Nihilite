@@ -12,10 +12,10 @@
 
    The second assertion is the registry's own half of the same report."
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.api :as api]
+            [nihilite.builder.api :as api]
             ;; required for its side effect: the WARN under test is
             ;; installer/log-warn's, so installer has to be loaded
-            [nihilite.kernel.installer]
+            [nihilite.trainer.installer]
             [nihilite.test.capturing-log-handler :as clh]
             [nihilite.test.fixtures :as fx])
   (:import [java.util.logging Logger Level LogRecord]))
@@ -31,7 +31,7 @@
 
 (defn- capture-bridge-warn
   [f]
-  (let [logger (Logger/getLogger "nihilite.kernel.installer")
+  (let [logger (Logger/getLogger "nihilite.trainer.installer")
         handler (clh/make)
         proxy (:handler handler)
         old-level (.getLevel logger)]
@@ -60,7 +60,7 @@
   (api/install! (entry-spec "reg-warn-test"))
   (let [reg-handler (clh/make)
         reg-proxy (:handler reg-handler)
-        reg-logger (Logger/getLogger "nihilite.registry")
+        reg-logger (Logger/getLogger "nihilite.builder.registry")
         old-level (.getLevel reg-logger)]
     (.addHandler reg-logger reg-proxy)
     (try

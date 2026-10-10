@@ -1,4 +1,4 @@
-(ns nihilite.eval.session
+(ns nihilite.builder.eval.session
   "One eval session: its namespace, its output log, its last value, its last
    error, and the thread currently running in it.
 
@@ -23,7 +23,7 @@
 
    Invariants 1-3 are about the output machinery, which is why they live here
    rather than in the API namespace. The API's own rationale is in
-   nihilite.eval."
+   nihilite.builder.eval."
   (:import [java.io Writer]
            [java.util.concurrent LinkedBlockingQueue]
            [java.util.concurrent.atomic AtomicLong]))
@@ -100,7 +100,7 @@
    create-ns on its own gives an empty namespace where even `+` is
    unresolvable, which is not a REPL, it is a sandpit."
   ^clojure.lang.Namespace [sid]
-  (let [n (create-ns (symbol (str "nihilite.eval.session." sid)))]
+  (let [n (create-ns (symbol (str "nihilite.builder.eval.session." sid)))]
     (binding [*ns* n]
       (clojure.core/refer-clojure))
     n))
@@ -210,7 +210,7 @@
 (defn start-eval!
   "Queues code for evaluation on the session's thread and returns the eval id.
 
-   Asynchronous on purpose: see nihilite.eval/eval-in for why the caller must
+   Asynchronous on purpose: see nihilite.builder.eval/eval-in for why the caller must
    not be made to wait. Enqueued rather than run on a thread of its own, so
    that two evals in one session cannot race on its namespace -- and so that
    interrupt has a thread to reach even when several evals are queued."

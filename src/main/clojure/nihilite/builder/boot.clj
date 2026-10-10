@@ -1,15 +1,15 @@
-(ns nihilite.boot
+(ns nihilite.builder.boot
   "Startup work that is not the transformer: run the init script, and serve
    an eval request that arrived on the agent args.
 
    This namespace used to own an embedded server and its middleware stack.
    Both are gone. Nihilite opens no port; a process that wants to evaluate
    code in an attached JVM sends an eval request (see
-   nihilite.eval.protocol), and a process that wants a full control plane
+   nihilite.builder.eval.protocol), and a process that wants a full control plane
    starts its own service from its init script (see
    examples/nrepl_service.clj)."
-  (:require [nihilite.eval :as ev]
-            [nihilite.eval.protocol :as proto])
+  (:require [nihilite.builder.eval :as ev]
+            [nihilite.builder.eval.protocol :as proto])
   (:import [java.util.concurrent.atomic AtomicBoolean]
            [java.util.logging Logger Level]))
 
@@ -42,7 +42,7 @@
           (> (System/nanoTime) deadline) s
           :else (do (Thread/sleep 20) (recur)))))))
 
-(defn eval-init!
+(defn- eval-init!
   "Runs the form in the `nihilite.init` system property, if there is one, in
    its own eval session. Returns true when it ran without throwing.
 

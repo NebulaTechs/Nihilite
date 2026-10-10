@@ -1,4 +1,4 @@
-(ns nihilite.registry.index
+(ns nihilite.builder.registry.index
   "The read side of the registry, split out so the weaving machinery depends
    on a query surface rather than on the registry's mutation internals.
 

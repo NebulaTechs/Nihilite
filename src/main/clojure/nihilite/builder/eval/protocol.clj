@@ -1,4 +1,4 @@
-(ns nihilite.eval.protocol
+(ns nihilite.builder.eval.protocol
   "The wire format an attaching process uses to evaluate code in this JVM.
 
    VirtualMachine.loadAgent takes a single String and returns void, so that
@@ -38,7 +38,8 @@
    return channel. Anything wanting cheaper reads should start a real service
    from its own init script instead -- see examples/nrepl_service.clj."
   (:require [clojure.string :as str]
-            [nihilite.eval :as ev])
+            [clojure.tools.logging :as log]
+            [nihilite.builder.eval :as ev])
   (:import [java.io File]
            [java.net InetSocketAddress Socket]
            [java.util Base64]))
@@ -138,20 +139,26 @@
 
 (defn reply!
   "Sends the reply through the transport. A transport that cannot be reached
-   is reported on stderr rather than thrown: the eval already ran, and losing
-   the reply must not turn into an agent failure."
+   is logged rather than thrown: the eval already ran, and losing the reply
+   must not turn into an agent failure. The client sees the loss as a
+   timeout, which is a signal it can act on.
+
+   These two diagnostics go through the logging system rather than *err*
+   because they are Nihilite's own failures, not the evaluated code's
+   output -- the user's configured backend is where an agent problem
+   belongs, and a bare println to *err* is invisible to anyone who
+   redirected logging. Logging also flushes, which a bare *err* println
+   does not reliably do before System/exit."
   [{:keys [kind] :as transport} ^String payload]
   (try
     (case kind
       :discard :ok
       :file    (do (spit ^File (File. ^String (:path transport)) payload) :ok)
       :tcp     (send-tcp! transport payload)
-      (do (binding [*out* *err*]
-            (println "[nihilite] unknown eval transport:" (pr-str transport)))
+      (do (log/warn "unknown eval transport:" (pr-str transport))
           :unknown))
     (catch Throwable t
-      (binding [*out* *err*]
-        (println "[nihilite] eval reply failed:" (.getMessage ^Throwable t)))
+      (log/error t "eval reply failed")
       :failed)))
 
 (defn handle-args!

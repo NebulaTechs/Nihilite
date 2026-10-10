@@ -1,8 +1,8 @@
 (ns nihilite.test.dispatch-exception-test
   (:require [clojure.test :refer [deftest is use-fixtures]]
-            [nihilite.registry :as reg]
-            [nihilite.registry.stats :as stats]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.stats :as stats]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (defn- install-bridge

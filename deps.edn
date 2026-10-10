@@ -9,13 +9,18 @@
         net.bytebuddy/byte-buddy {:mvn/version "1.18.14"}
         net.bytebuddy/byte-buddy-agent {:mvn/version "1.18.14"}}
 
- :aliases
- {:dev {:extra-paths ["src/test/clojure"]}
+:aliases
+  {;; :dev adds the test sources to an editor/REPL classpath. It does NOT
+   ;; make `clojure -M:dev -m ...` a way to run the suite: HookAdvice and the
+   ;; exception classes are generated during AOT, so the contract tests only
+   ;; load once target/classes exists. Adding target/classes here would make
+   ;; them load -- and would also let a stale .class silently shadow the
+   ;; source it was generated from. The supported entry point is the build:
+   ;;   clojure -T:build compile-clj && clojure -T:build clojure-contract-test
+   ;; which regenerates the output directories before using them.
+   :dev {:extra-paths ["src/test/clojure"]}
 
-  :test {:extra-paths ["src/test/clojure"]
-         :main-opts ["-m" "nihilite.test.runner"]}
-
-  :build {:deps {io.github.clojure/tools.build
-                 {:git/tag "v0.10.10"
-                  :git/sha "deedd62"}}
-          :ns-default build}}}
+   :build {:deps {io.github.clojure/tools.build
+                  {:git/tag "v0.10.10"
+                   :git/sha "deedd62"}}
+           :ns-default build}}}

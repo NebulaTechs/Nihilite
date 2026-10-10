@@ -10,8 +10,8 @@
 
    These cases exist so the accessor form cannot come back unnoticed."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [nihilite.registry :as reg]
-            [nihilite.registry.dispatch :as dispatch]
+            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.dispatch :as dispatch]
             [nihilite.test.fixtures :as fx]))
 
 (use-fixtures :each fx/reg-cleanup)
@@ -64,7 +64,7 @@
                                      :method-descriptor   "()Ljava/lang/String;"}
                                     "self" (object-array 0) "rv")
           ctx (dispatch/->ctx ev)]
-      (is (instance? nihilite.registry.HookContext ctx))
+      (is (instance? nihilite.builder.registry.HookContext ctx))
       (is (= "spec-7" (:hook-id ctx)))
       (is (= "rv" (reg/ctx-return ctx)))
       (is (= "rv" (:return-value ctx))))))
