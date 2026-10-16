@@ -23,14 +23,14 @@
    Like the other kernel/* classes, this is emitted via the private
    generate-class function because the ns gen-class form spec rejects
    the java.lang.instrument.Instrumentation parameter type."
-  (:import [java.lang.instrument Instrumentation]
-           [java.util.concurrent.atomic AtomicBoolean AtomicReference]
-           [java.util.logging Logger])
   (:require [clojure.tools.logging :as log]
             [clojure.tools.logging.impl :as logimpl]
-            [nihilite.builder.registry :as registry]
+            [nihilite.builder.registry :as reg]
             [nihilite.crafter.classgen :as cg]
-            [nihilite.crafter.jul :as jul]))
+            [nihilite.crafter.jul :as jul])
+  (:import [java.lang.instrument Instrumentation]
+           [java.util.concurrent.atomic AtomicBoolean AtomicReference]
+           [java.util.logging Logger]))
 
 (def ^:private agent-log
   "Java.util.logging.Logger named `nihilite.agent`. Obtained via
@@ -67,11 +67,11 @@
    true when this call installed it, false when another Instrumentation was
    already registered.
 
-   Also hands the winner to registry/register-instrumentation!. This function
+   Also hands the winner to reg/register-instrumentation!. This function
    is the only place an Instrumentation is ever accepted -- premain, agentmain,
    and a driver calling install directly with a ByteBuddyAgent-obtained
    Instrumentation all route through it -- so publishing from here is what makes
-   the same Instrumentation visible to registry/retransform-loaded-matching! and
+   the same Instrumentation visible to reg/retransform-loaded-matching! and
    the advice classes. Without it, install! could never report a non-zero
    :woven-count on the driver path, and hooks installed through the public
    api would silently skip retransforming already-loaded classes."
@@ -80,7 +80,7 @@
    (and inst
         (let [won? (.compareAndSet ^java.util.concurrent.atomic.AtomicReference
                                     registered-on nil inst)]
-          (registry/register-instrumentation!
+          (reg/register-instrumentation!
            (.get ^java.util.concurrent.atomic.AtomicReference registered-on))
           won?))))
 

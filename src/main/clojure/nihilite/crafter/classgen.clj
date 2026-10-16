@@ -1,4 +1,12 @@
-(ns nihilite.crafter.classgen)
+(ns nihilite.crafter.classgen
+  "Drives clojure.core$generate_class and writes the resulting .class.
+
+   Not a gen-class wrapper: it calls the compiler's own generate-class through
+   reflection, because the annotation metadata this project needs on
+   generated methods cannot be expressed through the ns macro -- :methods
+   parameter vectors reject both array class symbols and the annotation
+   values it wants. See generate-class-bytes! for the option that has to
+   survive the bypass, without which the forwarder stubs throw at runtime.")
 
 (defn generate-class-bytes!
   "Invokes clojure.core$generate_class with `:load-impl-ns true` and writes

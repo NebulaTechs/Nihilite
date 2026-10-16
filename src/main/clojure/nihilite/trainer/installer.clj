@@ -12,24 +12,25 @@
             [nihilite.trainer.advice :as advice]
             [nihilite.trainer.indy :as indy]
             [nihilite.trainer.transformer :as transformer])
-  (:import [java.lang.instrument Instrumentation]))
+  (:import [java.lang.instrument Instrumentation]
+           [net.bytebuddy.agent.builder AgentBuilder$Default
+            AgentBuilder$Listener AgentBuilder$RedefinitionStrategy
+            AgentBuilder$RedefinitionStrategy$DiscoveryStrategy$Reiterating]
+           [net.bytebuddy.matcher ElementMatcher ElementMatchers]))
 
 (def ^:private installer-log (jul/logger "nihilite.trainer.installer"))
 
 
 (defn- base-builder []
-  (let [retransformation (let [^net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy s net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy/RETRANSFORMATION]
-                           s)
-        reiterator (let [^net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy$DiscoveryStrategy$Reiterating d net.bytebuddy.agent.builder.AgentBuilder$RedefinitionStrategy$DiscoveryStrategy$Reiterating/INSTANCE]
-                     d)
-        listener (reify net.bytebuddy.agent.builder.AgentBuilder$Listener
+  (let [retransformation AgentBuilder$RedefinitionStrategy/RETRANSFORMATION
+        reiterator AgentBuilder$RedefinitionStrategy$DiscoveryStrategy$Reiterating/INSTANCE
+        listener (reify AgentBuilder$Listener
                     (onDiscovery [_ _ _ _ _])
                     (onTransformation [_ _ _ _ _ _])
                     (onIgnored [_ _ _ _ _])
                     (onError [_ _ _ _ _ e]
                       (jul/error installer-log e "AgentBuilder onError"))
-                    (onComplete [_ _ _ _ _]))
-        ^net.bytebuddy.agent.builder.AgentBuilder$Default base (net.bytebuddy.agent.builder.AgentBuilder$Default.)]
+                    (onComplete [_ _ _ _ _]))        ^AgentBuilder$Default base (AgentBuilder$Default.)]
     (-> base
         ;; Without this, ByteBuddy is free to add members the transformer
         ;; introduces, and the JVM rejects the resulting retransform with
@@ -44,8 +45,8 @@
         ;; JDK class registers, reports a woven count, and never fires. The
         ;; type matcher generated in this namespace is the only filter we
         ;; want, and it already rejects classes with no specs.
-        (.ignore ^net.bytebuddy.matcher.ElementMatcher
-                 (net.bytebuddy.matcher.ElementMatchers/none))
+        (.ignore ^ElementMatcher
+                 (ElementMatchers/none))
         (.with retransformation)
         (.with reiterator)
         (.with listener))))

@@ -92,7 +92,7 @@
                                       (catch Throwable t
                                         (log/error t "entry advice dispatch failed")
                                         (throw (exc/advice-ex! spec-id t))))]
-                         (when (= result (clojure.lang.Keyword/intern "nihilite" "short-circuit"))
+                         (when (= result :nihilite/short-circuit)
                            (throw (exc/cancelled!)))
                          nil)))))]
     (when (= ::reentered result) nil)))
