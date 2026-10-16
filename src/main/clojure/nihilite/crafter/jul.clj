@@ -34,20 +34,27 @@
   "Logs at INFO. Several arguments are concatenated, so a call can interleave
    computed values without the format-string noise at every site."
   [^Logger l & msgs]
-  (.info l (apply str msgs))
+  ;; The ^String let is not decoration. (.info l (apply str msgs)) leaves the
+  ;; compiler unable to see the argument type, so the call goes through
+  ;; Reflector -- on every log line, which is the one call in this namespace
+  ;; that is genuinely hot during agent premain and worker boot.
+  (let [^String m (apply str msgs)]
+    (.info l m))
   nil)
 
 (defn warn
   "Logs at WARNING."
   [^Logger l & msgs]
-  (.warning l (apply str msgs))
+  (let [^String m (apply str msgs)]
+    (.warning l m))
   nil)
 
 (defn fine
   "Logs at FINE. boot narrates a skipped init here, which is below WARNING and
    so invisible on a logger left at its default level."
   [^Logger l & msgs]
-  (.log l Level/FINE (apply str msgs))
+  (let [^String m (apply str msgs)]
+    (.log l Level/FINE m))
   nil)
 
 (defn error
@@ -59,6 +66,8 @@
    hand at its one error site, installer had one at both of its."
   [^Logger l & msgs]
   (if (instance? Throwable (first msgs))
-    (.log l Level/SEVERE (apply str (rest msgs)) ^Throwable (first msgs))
-    (.severe l (apply str msgs)))
+    (let [^String m (apply str (rest msgs))]
+      (.log l Level/SEVERE m ^Throwable (first msgs)))
+    (let [^String m (apply str msgs)]
+      (.severe l m)))
   nil)

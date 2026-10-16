@@ -33,11 +33,15 @@
        ;; is what rejects the dotted binary form: a descriptor spells
        ;; java.lang.String as Ljava/lang/String;, and a name carrying a
        ;; dot could never match a method.
-       (every? #(or (Character/isLetterOrDigit %)
-                    (= % \_)
-                    (= % \$)
-                    (= % \/))
-              n)
+       ;; The ^Character is load-bearing: every? hands its fn Object, so
+       ;; without it isLetterOrDigit resolves reflectively -- once per
+       ;; character of every descriptor install! validates.
+       (every? (fn [^Character c]
+                 (or (Character/isLetterOrDigit c)
+                     (= c \_)
+                     (= c \$)
+                     (= c \/)))
+               n)
        (not (Character/isDigit (.charAt n 0)))
        (every? #(pos? (count %))
                (str/split n #"/" -1))))

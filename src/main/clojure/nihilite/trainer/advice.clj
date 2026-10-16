@@ -74,7 +74,7 @@
 
 (defn hk-onEntry
   "Forwarder body called by the generated HookAdvice.onEntry stub."
-  [^String method-name ^java.lang.Class host-class ^String descriptor ^Object self ^[Object] args]
+  [^String method-name ^java.lang.Class host-class ^String descriptor ^Object self ^objects args]
   (let [result (reentrancy-guard
                  (fn []
                    (let [spec-id (try
@@ -102,7 +102,7 @@
    the original value when no spec matches; otherwise delegates to
    dispatch-return."
   [^String method-name ^java.lang.Class host-class ^String descriptor
-   ^Object self ^[Object] args ^Object original]
+   ^Object self ^objects args ^Object original]
   (let [result (reentrancy-guard
                  (fn []
                    (try
@@ -121,7 +121,7 @@
 (defn th-onThrow
   "Forwarder body called by the generated ThrowAdvice.onThrow stub."
   [^String method-name ^java.lang.Class host-class ^String descriptor
-   ^Object self ^[Object] args ^Throwable thrown]
+   ^Object self ^objects args ^Throwable thrown]
   (when-not (nil? thrown)
     (reentrancy-guard
       (fn []
@@ -140,7 +140,7 @@
   "Resolves the :redefine spec and hands the call to the redefine dispatcher.
    Split out of rd-onRedefine so the reentrancy guard there stays shallow."
   [^String method-name ^java.lang.Class host-class ^String descriptor
-   ^Object self ^[Object] args]
+   ^Object self ^objects args]
   (let [spec-id (try
                   (lookup-spec (ap/host-internal host-class) method-name
                                (if (nil? args) 0 (alength args)) descriptor "redefine")
@@ -168,7 +168,7 @@
    return value. With no spec installed, or no dispatcher yet, the method
    returns null."
   [^String method-name ^java.lang.Class host-class ^String descriptor
-   ^Object self ^[Object] args _return-slot]
+   ^Object self ^objects args _return-slot]
   (let [result (reentrancy-guard
                  (fn [] (rd-dispatch method-name host-class descriptor
                                         self args)))]

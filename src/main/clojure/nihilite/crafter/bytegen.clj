@@ -4,8 +4,21 @@
 
    Used by advice/dispatcher/transformer to materialise ByteBuddy-facing
    classes at first-use time, with method bodies that forward to plain
-   Clojure functions in their impl-ns."
-(:require [clojure.java.io])
+   Clojure functions in their impl-ns.
+
+   This namespace accounts for every remaining *warn-on-reflection* warning in
+   src/, and deliberately so. Clojure's own guidance for a namespace with Java
+   interop is to switch the warning on and see what it says
+   (clojure.org/dev/screening_tickets); having run it, the residue is 22 calls
+   whose receivers ByteBuddy returns as interfaces from other Java methods, so
+   the compiler cannot know the concrete type. Suppressing each one would mean
+   a type hint on nearly every builder call, kept in step with ByteBuddy's API
+   by hand, to speed up code that runs four times per JVM: once per advice
+   class. The guidance also says not to hint when it is not certain a hint
+   helps, so these are left. Any reflection warning appearing OUTSIDE this
+   namespace is a real finding -- the ones in crafter/jul and
+   trainer/advice were, and were fixed."
+  (:require [clojure.java.io])
     (:import [net.bytebuddy ByteBuddy]
              [net.bytebuddy.description.annotation AnnotationDescription
                                                       AnnotationDescription$Builder]
