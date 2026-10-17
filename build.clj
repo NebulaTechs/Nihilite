@@ -142,6 +142,7 @@
        "               nihilite.test.concurrent-invoke-driver"
 "               nihilite.test.multi-hook-fanout-driver"
         "               nihilite.test.weaving-contract-driver"
+        "               nihilite.test.eval-jar-driver"
         "               nihilite.test.hostile-target-driver]]"
        "   (require n) (compile n)))"))
 
@@ -218,17 +219,32 @@
 
    `extra-env` is a map of environment variables for the child. Drivers read
    their whole configuration from the environment because `clojure -T:build`
-   forwards neither positional arguments nor -D flags to the task."
+   forwards neither positional arguments nor -D flags to the task.
+
+   `jar-only?` runs the child on the uberjar and the test classes and nothing
+   else -- no class-dir, no src/main/clojure, and crucially no test basis. The
+   uberjar shades its own dependencies, so anything it forgot is genuinely
+   missing from a released artifact; leaving the basis on the classpath would
+   quietly supply it from ~/.m2 and the pass would prove nothing. This is what
+   makes it a jar-level check rather than a second source-level one."
   ([label main-class args extra-jvm-opts]
    (java-command! label main-class args extra-jvm-opts nil))
   ([label main-class args extra-jvm-opts extra-env]
+   (java-command! label main-class args extra-jvm-opts extra-env nil))
+  ([label main-class args extra-jvm-opts extra-env jar-only?]
    (compile-clj nil)
    (compile-test-drivers!)
-   (let [classpath (str test-class-dir java.io.File/pathSeparator
-                        class-dir java.io.File/pathSeparator
-                        "src/main/clojure" java.io.File/pathSeparator
-                        "src/test/clojure" java.io.File/pathSeparator
-                        (basis-classpath @test-basis))]
+   (when jar-only?
+     (when-not (.exists (io/file uber-file))
+       (uberjar nil)))
+   (let [classpath (if jar-only?
+                     (str test-class-dir java.io.File/pathSeparator
+                          (.getAbsolutePath (io/file uber-file)))
+                     (str test-class-dir java.io.File/pathSeparator
+                          class-dir java.io.File/pathSeparator
+                          "src/main/clojure" java.io.File/pathSeparator
+                          "src/test/clojure" java.io.File/pathSeparator
+                          (basis-classpath @test-basis)))]
      (ensure-success!
       label
       (b/process {:command-args
@@ -267,6 +283,18 @@
     :main "nihilite.test.weavingContractDriver"
     :args []
    }
+  :eval-jar-driver
+   {:label "Eval jar driver"
+    ;; :jar-only? runs this on the uberjar and target/test-classes and nothing
+    ;; else -- no src/main/clojure, no class-dir, no m2 basis. That is what
+    ;; makes it a jar-level check rather than a second source-level one:
+    ;; builder/eval/protocol.clj and session.clj ship as SOURCE, not AOT, and
+    ;; until this row existed nothing in the build could load them from the
+    ;; released artifact at all. eval-attach-driver tests the same namespaces
+    ;; but gets them from src/.
+    :main "nihilite.test.evalJarDriver"
+    :args []
+    :jar-only? true}
   :retransform-driver
    {:label "Retransform driver"
     :main "nihilite.test.retransformDriver"
@@ -382,6 +410,11 @@
                :retransform-driver
                :javaagent-driver
                :eval-attach-driver
+               ;; After eval-attach-driver because it is the same namespaces
+               ;; from the artifact instead of from src/, and after
+               ;; javaagent-driver because that row has already built the
+               ;; uberjar this one needs on its classpath.
+               :eval-jar-driver
                :redefine-instance-driver
                :indy-driver
                :prod-bootstrap-driver
@@ -391,8 +424,15 @@
                :hostile-safe-driver]})
 
 (defn- driver-fn
-  "The task body every pass shares. What differs between passes is the row."
-  [{:keys [label main args args-fn opts env uber?]}]
+  "The task body every pass shares. What differs between passes is the row.
+
+   `:jar-only?` runs the child on the uberjar alone (plus the test classes
+   holding the driver itself), which is the only way any pass can observe what
+   a released artifact actually contains. `:uber?` is the weaker thing it is
+   easy to mistake for: it passes the jar to `-javaagent:` while the classes
+   themselves still come from src/, so it proves the agent boots and nothing
+   about what the jar ships."
+  [{:keys [label main args args-fn opts env uber? jar-only?]}]
   (fn [_]
     (let [jar (when uber? (.getAbsolutePath (io/file uber-file)))]
       (when uber?
@@ -401,7 +441,8 @@
       (java-command! label main
                      (if args-fn (args-fn jar) args)
                      (or opts (driver-jvm-opts))
-                     env))
+                     env
+                     jar-only?))
     nil))
 
 (defn- def-drivers!
