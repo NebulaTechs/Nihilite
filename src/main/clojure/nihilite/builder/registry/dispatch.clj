@@ -47,19 +47,35 @@
 (defn- dispatch-one!
   "Calls one observer bridge, isolating its failure.
 
-   An observer that throws must not take down the host application, so the
-   throw is caught, logged, counted and answered with ::no-return. The log
+   An observer that throws must not take down the host application, so an
+   Exception is caught, logged, counted and answered with ::no-return. The log
    call is deliberately NOT wrapped in its own try: a logger that fails
    while an observer has already thrown used to swallow both, leaving no
    trace of either. If it throws here, the advice layer catches and wraps
-   it, which is still louder than silence."
+   it, which is still louder than silence.
+
+   The catch is Exception, deliberately not Throwable. Error -- StackOverflowError
+   in particular -- means the JVM itself is in trouble, not that this observer
+   misbehaved, and it is exactly the case where the log call above is least
+   able to complete: the reentrancy cycle overflows the stack deeply enough
+   that logging may not finish (docs/hook-limits.md records that the overflow
+   is too deep for the JVM to print). Catching Throwable here counted those
+   as an ordinary observer exception, reported a normal :exceptions, and
+   answered ::no-return, so the worst failure this project has is the one it
+   reported as routine. Letting an Error out of here means it reaches the
+   advice layer's advice-ex! wrapper, which can attach the spec-id.
+
+   Note this does NOT change cancellation: HookCancelledException extends
+   RuntimeException (crafter/exceptions.clj), so it is still an Exception and
+   still caught here. Short-circuiting is driven by :action :cancel and the
+   return sentinel, not by throwing."
   ([ifn ev] (dispatch-one! ifn ev nil))
   ([ifn ev per-spec-id]
    (if (nil? ifn)
      ::no-return
      (try
        (ifn ev)
-       (catch Throwable t
+       (catch Exception t
          (log/error t "observer threw (id=" (or per-spec-id (:spec-id ev)) ")")
          (stats/bump-exception! (or per-spec-id (:spec-id ev)))
          ::no-return)))))

@@ -22,10 +22,11 @@ Two classes, and only the first is hopeless:
 
 ### Where the cycle actually closes — two wrong answers
 
-This was chased rather than assumed, and the first two explanations were both
-falsified by measurement. It is recorded because the wrong answers are the
-useful part: both are plausible from the source, and both cost a full
-experiment.
+This was chased rather than assumed, and the first two explanations both look
+right from the source and neither accounts for what is measured. It is recorded
+because the wrong answers are the useful part. Read the correction below before
+relying on the sequence, though: the record of what was actually attempted is
+incomplete, and one mitigation asserted here for years was never implemented.
 
 **Wrong answer 1: the `reentrancy-guard` is too high.** True but not
 sufficient. `advice/reentrancy-guard` lives in `hk-onEntry`, and the generated
@@ -33,15 +34,34 @@ stub's first three instructions are `Symbol.intern` ×2 and `Var.intern`, so the
 guard is never reached when those recurse. `javap` on Clojure 1.12.5 shows the
 chain: `Var.intern` → `Namespace.intern` → an `IPersistentMap` lookup on a
 `Symbol` key → `Symbol.hashCode()`, whose bytecode is
-`invokevirtual java/lang/String.hashCode`. The advice classes now cache the
-resolved forwarder in a static `IMPL` field filled at premain, which takes that
-whole hash off the hot path.
+`invokevirtual java/lang/String.hashCode`. That hash is still on the hot path:
+the four advice class specs (`advice.clj:207-215`, `:217-225`, `:233-242`,
+`:244-263`) declare no `:fields`, and `bytegen.clj:462` is the only thing in the
+tree that emits a static field, so the generated advice carries none and there
+is no cache taking that hash off anything.
 
 **Measured: `String.hashCode`, `String.length` and `StringBuilder.append` all
 still overflow the stack.** (hostile-target indices 3, 2, 4.)
 
 **Wrong answer 2: `String.intern` in the forwarder.** Also insufficient — the
-same three targets still overflow after the change above.
+same three targets still overflow.
+
+**A correction, and what this section cannot claim.** This text used to close
+Wrong answer 1 by asserting that the advice classes "now cache the resolved
+forwarder in a static `IMPL` field filled at premain", and then used that as the
+baseline for dismissing Wrong answer 2 — "after the change above". No such field
+has ever existed. `grep -rn IMPL` over the repo outside `target/` matches only
+this file, `git log -S IMPL -- src/main/clojure/` returns no commits, and the
+sentence arrived with the three-layer refactor (`8f6847a`), not with a
+performance change. So both dismissals were argued against a baseline that was
+never built.
+
+The measurements above are unaffected by this, and so is the conclusion the
+section reaches: the cycle that actually kills these targets is in the indy
+linking path below, which no advice-side change would have reached either. What
+cannot be recovered is the order the measurements were taken in — that was never
+recorded, and that, rather than any single explanation, is the real defect in a
+section whose job is to be the record of falsified explanations.
 
 **What is left.** The cycle that actually kills them sits in the **indy linking
 path**, above the advice entirely, so no advice guard can reach it:

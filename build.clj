@@ -140,8 +140,9 @@
        "               nihilite.test.eval-attach-driver"
        "               nihilite.test.dual-loader-driver"
        "               nihilite.test.concurrent-invoke-driver"
-       "               nihilite.test.multi-hook-fanout-driver"
-       "               nihilite.test.hostile-target-driver]]"
+"               nihilite.test.multi-hook-fanout-driver"
+        "               nihilite.test.weaving-contract-driver"
+        "               nihilite.test.hostile-target-driver]]"
        "   (require n) (compile n)))"))
 
 (defn- compile-test-drivers!
@@ -257,6 +258,15 @@
     :args ["-m" "nihilite.test.runner"]
     :opts []
    }
+  :weaving-contract-driver
+   {:label "Weaving contract driver"
+    ;; The pass above runs with :opts [] -- no -javaagent, no attach, no
+    ;; Instrumentation -- so every install! there returns true at
+    ;; :woven-count 0 and the suite cannot observe a class being transformed.
+    ;; This one does observe it, and holds the registry against the JVM.
+    :main "nihilite.test.weavingContractDriver"
+    :args []
+   }
   :retransform-driver
    {:label "Retransform driver"
     :main "nihilite.test.retransformDriver"
@@ -368,6 +378,7 @@
   ;; walks targets that overflow the stack on purpose, and a JVM that dies ends
   ;; the run with every later target unmeasured. See docs/hook-limits.md.
   :check-order [:clojure-contract-test
+               :weaving-contract-driver
                :retransform-driver
                :javaagent-driver
                :eval-attach-driver

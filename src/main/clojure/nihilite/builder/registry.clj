@@ -17,10 +17,17 @@
            [java.util.concurrent.atomic AtomicLong]
            [java.lang.instrument Instrumentation]))
 
+(def ^:private builtin-actions
+  "The actions the dispatch layer branches on. register-action! adds to this
+   set; unregister-action! may only take back what it added."
+  #{:observe :modify :cancel :subscriber})
+
 (defonce ^:private actions-registry
-  (atom #{:observe :modify :cancel :subscriber}))
+  (atom builtin-actions))
 
 (defn registered-actions
+  "Every action keyword install! will accept: the built-ins plus whatever
+   register-action! has added."
   []
   @actions-registry)
 
@@ -32,6 +39,31 @@
                      :nihilite/action action-key})))
   (swap! actions-registry conj action-key)
   action-key)
+
+(defn unregister-action!
+  "Removes an action added by register-action!, returning true when one was
+   there to remove and false when it was not.
+
+   The built-ins cannot be removed and this throws for them rather than
+   ignoring the request. Dropping one would not disable it: the dispatch layer
+   branches on `:cancel` and `:subscriber` in walk-bucket regardless of this
+   set, so a removed `:cancel` would keep short-circuiting while install!
+   started rejecting specs that use it — the spec and the runtime would
+   disagree, which is the failure mode api/install-status! exists to rule out.
+   To stop a hook from cancelling, change its `:action`."
+  [action-key]
+  (when (contains? builtin-actions action-key)
+    (throw (ex-info (str "cannot unregister built-in action " action-key)
+                    {:nihilite/kind :nihilite/builtin-action
+                     :nihilite/action action-key
+                     :nihilite/builtin builtin-actions})))
+  ;; if, not when: the docstring promises false for "not there", and `when`
+  ;; would hand back nil -- the fourth distinct shape for "absent" in this
+  ;; codebase. A caller testing this value should not have to know which.
+  (if (contains? @actions-registry action-key)
+    (do (swap! actions-registry disj action-key)
+        true)
+    false))
 
 ;; One installed hook.
 ;;
@@ -528,25 +560,73 @@
        ;; indistinguishable from a live hook until someone checks.
        (when (= :redefine spec-pos)
          (await-redefine-dispatcher! spec-id))
-       (locking registry-lock
-         (bump-revision!)
-         (let [prev (.put by-id (:id norm-spec) norm-spec)
-              replaced? (some? prev)]
-          (when replaced?
-            (let [prev-bucket (index/live-bucket (:target-internal prev))]
-              (when prev-bucket (.remove prev-bucket prev)))
-            (when-let [pmk (:method-key prev)]
-              (let [pmb (.get by-method pmk)]
-                (when pmb (.remove pmb prev)))))
-          (.add (index/bucket (:target-internal norm-spec)) norm-spec)
-          (when-let [mk (:method-key norm-spec)]
-            (.add (method-bucket mk) norm-spec))
-          (when-not replaced?
-            (stats/ensure-stats spec-id))
-          ;; A replaced spec changes the registry contents, so the armed
-          ;; AgentBuilder must re-visit already-loaded matching classes —
-          ;; otherwise the new bridge/position never reaches the JVM.
-          (let [woven (int (retransform-loaded-matching! spec-target))]
+(locking registry-lock
+          (bump-revision!)
+          (let [prev (.put by-id (:id norm-spec) norm-spec)
+                replaced? (some? prev)
+                spec-target-kw (:target-internal norm-spec)
+                spec-bucket (index/bucket spec-target-kw)
+                spec-method-bkt (when-let [mk (:method-key norm-spec)]
+                                  (method-bucket mk))
+                prev-bucket (when replaced?
+                              (index/live-bucket (:target-internal prev)))
+                prev-method-bkt (when-let [pmk (when replaced? (:method-key prev))]
+                                  (.get by-method pmk))
+                ;; Undo everything this install wrote, putting back what was
+                ;; there before. Needed because the retransform below is the
+                ;; only fallible step in this block and nothing after it can run
+                ;; when it throws. Without this the spec stays in by-id, the
+                ;; target bucket and the method bucket while mark-installed!
+                ;; never executes, so lookup returns a live hook,
+                ;; install-status! reports :registered? false, and a retry via
+                ;; install-fresh! throws :nihilite/duplicate-spec-id for
+                ;; something the caller believes was a no-op.
+                ;;
+                ;; prev and norm-spec share an id -- that is the whole point of
+                ;; the replace path -- so the new spec is taken out of every
+                ;; index FIRST and the old one is restored after. Doing it the
+                ;; other way round would delete the spec just restored.
+                undo!
+                (fn []
+                  (.remove by-id (:id norm-spec))
+                  (.remove spec-bucket norm-spec)
+                  (when spec-method-bkt (.remove spec-method-bkt norm-spec))
+                  ;; forget-target! only drops the key when the bucket really
+                  ;; did empty out, which is what keeps it from racing a
+                  ;; concurrent install into a different bucket.
+                  (index/forget-target! spec-target-kw spec-bucket)
+                  (when replaced?
+                    (.put by-id (:id prev) prev)
+                    (when prev-bucket (.add prev-bucket prev))
+                    (when prev-method-bkt (.add prev-method-bkt prev)))
+                  (when-not replaced?
+                    (stats/remove-stats spec-id))
+                  (bump-revision!))]
+            (when replaced?
+              (when prev-bucket (.remove prev-bucket prev))
+              (when prev-method-bkt (.remove prev-method-bkt prev)))
+            (.add spec-bucket norm-spec)
+            (when spec-method-bkt (.add spec-method-bkt norm-spec))
+            (when-not replaced?
+              (stats/ensure-stats spec-id))
+            ;; A replaced spec changes the registry contents, so the armed
+            ;; AgentBuilder must re-visit already-loaded matching classes —
+            ;; otherwise the new bridge/position never reaches the JVM.
+            (let [woven (int (try
+                               (retransform-loaded-matching! spec-target)
+                               (catch Throwable t
+                                 (undo!)
+                                 ;; On a replace, prev is back in place, so the
+                                 ;; status that already described it is still
+                                 ;; accurate and only needs the error recorded.
+                                 ;; On a first install there is nothing left to
+                                 ;; describe, so the status has to be told the
+                                 ;; spec is not registered -- the same repair
+                                 ;; uninstall! makes on its failure path.
+                                 (when-not replaced?
+                                   (mark-uninstalled! (:id norm-spec) 0))
+                                 (mark-error! (:id norm-spec) (.getMessage t))
+                                 (throw t))))]
             (if replaced?
               (do (log/info "hook replaced:" (:id norm-spec)
                             "target=" (:target-internal norm-spec)
@@ -600,13 +680,36 @@
                           (if uninstaller
                             (uninstaller (str id) target)
                             0)
-                         (catch Throwable t
-                           (mark-error! (:id removed) (.getMessage t))
-                           (throw (ex-info (str "uninstall retransform failed for id=" id)
-                                           {:nihilite/kind :nihilite/uninstall-failed
-                                            :nihilite/id   id
-                                            :nihilite/cause (.getMessage t)}
-                                           t))))]
+(catch Throwable t
+                         ;; The spec is already out of by-id by the time the
+                         ;; retransform runs, and it has to be: hook-type-matches?
+                         ;; (transformer.clj:71-77) reads this registry as its
+                         ;; input and returns false only for a target whose
+                         ;; bucket is empty, so leaving the spec in place would
+                         ;; re-weave it and uninstall would do nothing. Removal
+                         ;; before the retransform is therefore structural here,
+                         ;; NOT an ordering mistake -- do not "fix" this by
+                         ;; moving the uninstaller call earlier.
+                         ;;
+                         ;; What that ordering must not cost is a status that
+                         ;; contradicts the registry. mark-uninstalled! below is
+                         ;; the ONLY writer of :registered? (registry.clj:337-342),
+                         ;; and on this path it never ran, so a failed uninstall
+                         ;; used to leave :registered? true -- with a stale
+                         ;; :woven-count and four runtime counters already reset
+                         ;; to 0 by stats/remove-stats above -- for a spec that
+                         ;; lookup no longer returns, permanently.
+                         ;;
+                         ;; Writing it here makes both outcomes self-consistent:
+                         ;; the spec is gone, the status says so, and the error is
+                         ;; still thrown rather than swallowed.
+                         (mark-uninstalled! (:id removed) 0)
+                         (mark-error! (:id removed) (.getMessage t))
+                         (throw (ex-info (str "uninstall retransform failed for id=" id)
+                                         {:nihilite/kind :nihilite/uninstall-failed
+                                          :nihilite/id   id
+                                          :nihilite/cause (.getMessage t)}
+                                         t))))]
              (mark-uninstalled! (:id removed) count)
              (if (zero? count)
                (log/warn "hook removed from registry but 0 classes retransformed"

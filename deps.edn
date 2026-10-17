@@ -1,4 +1,18 @@
-{:paths ["src/main/clojure"]
+{:paths ["src/main/clojure"
+         ;; target/classes LAST, and it must stay last. HookAdvice and the two
+         ;; generated exception classes are written there by AOT and nothing
+         ;; else can provide them, which is why the contract namespaces fail to
+         ;; load without it -- 13 of 21, on a static (catch
+         ;; HookCancelledException) in dispatch.clj:133 and advice.clj:90 whose
+         ;; constant-pool ref has to resolve at ns-load.
+         ;;
+         ;; :extra-paths PREPENDS, so putting it there instead would place it
+         ;; AHEAD of src/main/clojure -- which is exactly the stale-.class
+         ;; hazard reset-derived-dir! (build.clj:65-85) exists to prevent, and
+         ;; which this ordering makes impossible for namespaced code: every
+         ;; namespace has a .clj, so source always wins; only source-less
+         ;; generated orphans are read from here.
+         "target/classes"]
 
  :mvn/repos {"clojars" {:url "https://repo.clojars.org"}}
 
@@ -10,14 +24,22 @@
         net.bytebuddy/byte-buddy-agent {:mvn/version "1.18.14"}}
 
 :aliases
-  {;; :dev adds the test sources to an editor/REPL classpath. It does NOT
-   ;; make `clojure -M:dev -m ...` a way to run the suite: HookAdvice and the
-   ;; exception classes are generated during AOT, so the contract tests only
-   ;; load once target/classes exists. Adding target/classes here would make
-   ;; them load -- and would also let a stale .class silently shadow the
-   ;; source it was generated from. The supported entry point is the build:
+  {;; :dev adds the test sources so an editor or REPL sees them. Together with
+   ;; target/classes in :paths that is enough to LOAD the contract namespaces,
+   ;; which it was not before: 13 of the 21 used to fail at ns-load on a
+   ;; generated exception class that no classpath provided.
+   ;;
+   ;; It still does NOT make `clojure -M:dev -m ...` a way to RUN the suite.
+   ;; Those classes are produced by AOT, so nothing resolves until
+   ;; `clojure -T:build compile-clj` has run at least once, and re-running it is
+   ;; what keeps them in step with the source. The supported entry point stays
+   ;; the build:
    ;;   clojure -T:build compile-clj && clojure -T:build clojure-contract-test
-   ;; which regenerates the output directories before using them.
+   ;;
+   ;; target/classes therefore belongs in :paths, and deliberately NOT in this
+   ;; alias's :extra-paths: :extra-paths prepends, so adding it here would place
+   ;; it ahead of the source roots and let a stale .class shadow the source it
+   ;; was generated from -- the incident reset-derived-dir! records.
    :dev {:extra-paths ["src/test/clojure"]}
 
    :build {:deps {io.github.clojure/tools.build

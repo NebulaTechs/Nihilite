@@ -4,7 +4,8 @@
 
    The 4-verb surface (`install!`, `uninstall!`, `lookup`,
    `install-status!`) plus the introspection helpers (`list-specs`,
-   `swap-bridge!`, `register-action!`) are intentionally thin: every
+   `swap-bridge!`, `registered-actions`) and the action registry
+   (`register-action!`, `unregister-action!`) are intentionally thin: every
    function delegates straight to `nihilite.builder.registry`, so contract
    guarantees (id-keyed uniqueness, target/method indexing, atomic
    install/uninstall) are inherited unchanged.
@@ -146,4 +147,23 @@
    `:nihilite/invalid-action-key` when `action-key` is not a keyword."
   [action-key]
   (reg/register-action! action-key))
+
+(defn registered-actions
+  "Every action keyword `install!` will accept: the four built-ins plus
+   whatever `register-action!` has added, as a set."
+  []
+  (reg/registered-actions))
+
+(defn unregister-action!
+  "Removes an action previously added by `register-action!`, so specs naming
+   it stop being accepted. Returns true when one was there to remove and false
+   when it was not — so this is safe to call twice.
+
+   Throws `:nihilite/builtin-action` for `:observe`, `:modify`, `:cancel` and
+   `:subscriber`. Those cannot be taken back: the dispatch layer branches on
+   them whether or not this registry lists them, so removing one would leave
+   `install!` rejecting specs whose `:action` the runtime still honours. To
+   stop a hook from cancelling, change its `:action`."
+  [action-key]
+  (reg/unregister-action! action-key))
 
