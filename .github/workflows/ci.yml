@@ -1,17 +1,14 @@
 name: ci
 
 on:
+  # No paths-ignore. Removing only `docs/**` would have changed nothing:
+  # `**/*.md` already matches docs/*.md, which is how a fabricated claim in
+  # docs/hook-limits.md stayed invisible here for as long as it existed.
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
   push:
     branches: [master]
     tags:
       - 'nightly'
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
 
 concurrency:
   group: nihilite-${{ github.workflow }}-${{ github.ref }}
@@ -21,17 +18,18 @@ concurrency:
 # a template step file is not worth it for five jobs).
 #
 # Structure:
-#   test-11 / test-17 / test-21 / test-25 — compile + contract tests +
-#                        all driver probes, in parallel. JDK 8 is not
-#                        supported: the invokedynamic bootstrap contract is
+#   test-11 / test-17 / test-21 / test-25 — one `check` task per job, in
+#                        parallel: the contract suite plus every pass in
+#                        build.clj's :check-order. JDK 8 is not supported:
+#                        the invokedynamic bootstrap contract is
 #                        incompatible there (CallSite.makeSite expands the
 #                        static arguments there and passes them whole from
 #                        JDK 9 on), and indy is the only dispatch path.
-#   publish            — build uberjar + verify + smoke + upload + nightly
-#                        release. Needs ALL four test jobs to pass, runs on
-#                        JDK 25 only, and is skipped on pull_request
-#                        (PRs get the test gate, only pushes to master /
-#                        nightly tags publish).
+#   test-25 additionally runs verify-jar, because that is the JDK that ships.
+#   publish            — build uberjar + smoke + upload + nightly release.
+#                        Needs ALL four test jobs to pass, runs on JDK 25 only,
+#                        and is skipped on pull_request (PRs get the test
+#                        gate, only pushes to master / nightly tags publish).
 
 jobs:
   test-11:
@@ -61,23 +59,11 @@ jobs:
           key: cljdeps-11-${{ hashFiles('deps.edn') }}
           restore-keys: cljdeps-11-
 
-      - name: AOT compile
-        run: clojure -T:build compile-clj
-
-      - name: Contract tests
-        run: clojure -T:build clojure-contract-test
-
-      - name: Driver probes
-        run: |
-          clojure -T:build retransform-driver
-          clojure -T:build redefine-instance-driver
-          clojure -T:build javaagent-driver
-          clojure -T:build eval-attach-driver
-          clojure -T:build indy-driver
-          clojure -T:build prod-bootstrap-driver
-          clojure -T:build dual-loader-driver
-          clojure -T:build concurrent-invoke-driver
-          clojure -T:build multi-hook-fanout-driver
+      # Do not expand this back into a per-driver list. It was one, in four
+      # places, and had drifted by three drivers while the suite beside it ran
+      # all thirteen.
+      - name: check (contract tests + every driver in :check-order)
+        run: clojure -T:build check
 
   test-17:
     runs-on: ubuntu-latest
@@ -106,23 +92,11 @@ jobs:
           key: cljdeps-17-${{ hashFiles('deps.edn') }}
           restore-keys: cljdeps-17-
 
-      - name: AOT compile
-        run: clojure -T:build compile-clj
-
-      - name: Contract tests
-        run: clojure -T:build clojure-contract-test
-
-      - name: Driver probes
-        run: |
-          clojure -T:build retransform-driver
-          clojure -T:build redefine-instance-driver
-          clojure -T:build javaagent-driver
-          clojure -T:build eval-attach-driver
-          clojure -T:build indy-driver
-          clojure -T:build prod-bootstrap-driver
-          clojure -T:build dual-loader-driver
-          clojure -T:build concurrent-invoke-driver
-          clojure -T:build multi-hook-fanout-driver
+      # Do not expand this back into a per-driver list. It was one, in four
+      # places, and had drifted by three drivers while the suite beside it ran
+      # all thirteen.
+      - name: check (contract tests + every driver in :check-order)
+        run: clojure -T:build check
 
   test-21:
     runs-on: ubuntu-latest
@@ -151,23 +125,11 @@ jobs:
           key: cljdeps-21-${{ hashFiles('deps.edn') }}
           restore-keys: cljdeps-21-
 
-      - name: AOT compile
-        run: clojure -T:build compile-clj
-
-      - name: Contract tests
-        run: clojure -T:build clojure-contract-test
-
-      - name: Driver probes
-        run: |
-          clojure -T:build retransform-driver
-          clojure -T:build redefine-instance-driver
-          clojure -T:build javaagent-driver
-          clojure -T:build eval-attach-driver
-          clojure -T:build indy-driver
-          clojure -T:build prod-bootstrap-driver
-          clojure -T:build dual-loader-driver
-          clojure -T:build concurrent-invoke-driver
-          clojure -T:build multi-hook-fanout-driver
+      # Do not expand this back into a per-driver list. It was one, in four
+      # places, and had drifted by three drivers while the suite beside it ran
+      # all thirteen.
+      - name: check (contract tests + every driver in :check-order)
+        run: clojure -T:build check
 
   test-25:
     runs-on: ubuntu-latest
@@ -196,23 +158,17 @@ jobs:
           key: cljdeps-25-${{ hashFiles('deps.edn') }}
           restore-keys: cljdeps-25-
 
-      - name: AOT compile
-        run: clojure -T:build compile-clj
+      # Do not expand this back into a per-driver list. It was one, in four
+      # places, and had drifted by three drivers while the suite beside it ran
+      # all thirteen.
+      - name: check (contract tests + every driver in :check-order)
+        run: clojure -T:build check
 
-      - name: Contract tests
-        run: clojure -T:build clojure-contract-test
-
-      - name: Driver probes
-        run: |
-          clojure -T:build retransform-driver
-          clojure -T:build redefine-instance-driver
-          clojure -T:build javaagent-driver
-          clojure -T:build eval-attach-driver
-          clojure -T:build indy-driver
-          clojure -T:build prod-bootstrap-driver
-          clojure -T:build dual-loader-driver
-          clojure -T:build concurrent-invoke-driver
-          clojure -T:build multi-hook-fanout-driver
+      # Only this job, not all four: it is the JDK that ships, and this task
+      # builds the uberjar itself when missing. A packaging regression should
+      # fail a pull request, not surface first on the nightly publish.
+      - name: Verify jar contents
+        run: clojure -T:build verify-jar
 
   publish:
     runs-on: ubuntu-latest
@@ -247,9 +203,6 @@ jobs:
 
       - name: Build uberjar
         run: clojure -T:build uberjar
-
-      - name: Verify jar contents
-        run: clojure -T:build verify-jar
 
       - name: Smoke test the shipped jar
         run: |
