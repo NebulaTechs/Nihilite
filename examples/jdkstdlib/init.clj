@@ -1,42 +1,43 @@
 (ns examples.jdkstdlib.init
-  "Teaching example: how to fill out a hook spec against a JDK stdlib
-   method.
+  "Teaching example: install a public-API hook on the JDK's
+   `java.io.FileOutputStream.write([BII)V` method.
 
-   `java.io.FileOutputStream.write` is loaded by the bootstrap classloader,
-   which is the harder case: the advice is reached through an invokedynamic
-   call site rather than a direct call, so the classloader boundary does not
-   matter. See examples/minecraft and examples/fabric for app-classloader
-   targets.
-
-   The target is deliberately NOT on the class loading path. This file used to
-   hook `java.io.FileInputStream.read`, which is the more obvious demo and is
-   the wrong one: the advice body needs classes, class loading reads bytes
-   through the very method being hooked, and the cycle closes before the
-   reentrancy guard is consulted. Measured behaviour for every target is in
-   the README's Limits section -- read it before picking a method."
+   The target is a bootstrap-classloader method, so the advice is reached
+   through an invokedynamic call site. The example counts calls and exposes
+   the public installation status so it can be verified independently."
   (:require [nihilite.builder.api :as api]))
 
 (def ^:private writes (atom 0))
 
-(api/install!
-  {:id              "fos-write"
-   :target-internal "java/io/FileOutputStream"
-   :method-name     "write"
-   :descriptor      "([BII)V"
-   :position        :entry
-   :action          :observe
-   :bridge          (fn [ctx]
-                      ;; ctx-return is the documented way to read the target
-                      ;; method's return value. It returns nil here because
-                      ;; write([BII)V is void, so this example counts calls.
-                      ;; A non-void target would read (reg/ctx-return ctx).
-                      (swap! writes inc))
-   :note            "count write calls on any FileOutputStream"})
+(Class/forName "java.io.FileOutputStream")
+
+(let [installed? (api/install!
+                   {:id              "fos-write"
+                    :target-internal "java/io/FileOutputStream"
+                    :method-name     "write"
+                    :descriptor      "([BII)V"
+                    :position        :entry
+                    :action          :observe
+                    :bridge          (fn [_ctx]
+                                       (swap! writes inc))
+                    :note            "count write calls on any FileOutputStream"})]
+  (when-not (true? installed?)
+    (throw (ex-info "the jdkstdlib example requires a new hook installation"
+                    {:installed? installed?}))))
 
 (defn total-writes
+  "Return the number of observed FileOutputStream.write calls."
   []
   @writes)
 
-(println "[examples.jdkstdlib.init] loaded. Write to a file, then check"
-         "(examples.jdkstdlib.init/total-writes).")
+(defn install-status
+  "Return the public install-side and runtime-side status for the hook."
+  []
+  (api/install-status! "fos-write"))
+
+(def ^{:doc "Alias for install-status."} status install-status)
+
+(println "[examples.jdkstdlib.init] loaded. Check"
+         "(examples.jdkstdlib.init/total-writes) and"
+         "(examples.jdkstdlib.init/install-status).")
 (flush)
