@@ -58,6 +58,20 @@
    duplicate id instead of replacing it, throwing
    `:nihilite/duplicate-spec-id`.
 
+   THE TARGET METHOD IS CHECKED, WHEN THE JVM CAN ANSWER. A spec naming a
+   method that does not exist, or that exists with a descriptor it does not
+   have, is rejected with `:nihilite/target-method-not-found` or
+   `:nihilite/target-descriptor-mismatch` before it is registered. Such a
+   spec would otherwise register, report a woven count, and never fire.
+
+   The check only runs when the target class is ALREADY LOADED, and it
+   never loads a class to find out -- resolving a name means loading the
+   class, and a hook installed to observe a class-loading path re-enters
+   its own advice when the verification does it. So a spec whose target
+   class has not been loaded yet is accepted, and the target may load
+   later. A JVM with no `Instrumentation` has no class list to read, so
+   the check cannot run there either.
+
     Examples:
       (api/install! {:id \"trace-bitset-size\"
                      :target-internal \"java/util/BitSet\"

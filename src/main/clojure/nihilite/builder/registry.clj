@@ -10,9 +10,11 @@
    is the single source of truth for the records (HookSpec /
    HookContext / HookEvent) and the position/action normalization."
   (:require [nihilite.crafter.descriptor :as desc]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [nihilite.builder.registry.index :as index]
-            [nihilite.builder.registry.stats :as stats])
+            [nihilite.builder.registry.stats :as stats]
+            [nihilite.builder.target :as target])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicLong]
            [java.lang.instrument Instrumentation]))
@@ -246,6 +248,68 @@
   [^Instrumentation inst]
   (when inst (reset! instrumentation-ref inst))
   inst)
+
+(defn- verify-target-method!
+  "Reject a spec whose target method does not exist, or exists with a
+   different descriptor, while the caller can still see the error.
+
+   The registry already checks the SHAPE of a spec: the descriptor is a
+   well-formed JVM method descriptor, the arity agrees with it, the action
+   and the position are legal. Shape is not existence. A spec naming a
+   method that is not there registers successfully, reports a woven
+   count, and never fires -- the \"registers but never fires\" mode
+   docs/hook-limits.md documents, reached by a route the reader would not
+   expect because everything about the spec looked right.
+
+   The check is only possible when the target class is ALREADY LOADED, and
+   it never loads a class to find out: resolving a name means loading the
+   class, and a hook installed to observe a class-loading path re-enters
+   its own advice when the verification does it. So the loaded-class list
+   the Instrumentation already holds is what gets read, and a class that is
+   not loaded passes: a hook for a class that has not arrived yet is a
+   legitimate thing to install, and the target may load later.
+
+   Without an Instrumentation there is no class list to read, so there is
+   nothing to check against and the spec passes."
+  [spec-id ^String target-internal ^String method-name ^String descriptor]
+  (let [result (target/check-target-method @instrumentation-ref
+                                               target-internal method-name
+                                               descriptor)]
+    (case (:outcome result)
+      :ok nil
+
+      :not-loaded
+      (log/debug "target method not checked, class not loaded:" target-internal
+                 method-name)
+
+      :method-not-found
+      (throw (ex-info
+               (str "no method " method-name " on " (:class-name result)
+                    " matches the spec (id=" spec-id "). The hook would"
+                    " register and never fire.")
+               {:nihilite/kind :nihilite/target-method-not-found
+                :nihilite/id spec-id
+                :nihilite/target-internal target-internal
+                :nihilite/method-name method-name
+                :nihilite/descriptor descriptor
+                :nihilite/class-name (:class-name result)}))
+
+      :descriptor-mismatch
+      (throw (ex-info
+               (str "method " method-name " on " (:class-name result)
+                    " does not have the descriptor " descriptor
+                    " (id=" spec-id "). It has "
+                    (str/join ", " (:actual result))
+                    ". The hook would register and never fire.")
+               {:nihilite/kind :nihilite/target-descriptor-mismatch
+                :nihilite/id spec-id
+                :nihilite/target-internal target-internal
+                :nihilite/method-name method-name
+                :nihilite/descriptor descriptor
+                :nihilite/class-name (:class-name result)
+                :nihilite/actual (:actual result)}))
+
+      nil)))
 
 (defn retransform-loaded-matching!
   "Retransforms every already-loaded, modifiable class whose name matches
@@ -542,6 +606,7 @@
                       {:nihilite/kind :nihilite/invalid-position
                        :nihilite/id spec-id
                        :nihilite/position spec-pos})))
+    (verify-target-method! spec-id spec-target spec-method spec-desc)
     (let [norm-spec (assoc spec
                            :id spec-id
                            :target-internal spec-target

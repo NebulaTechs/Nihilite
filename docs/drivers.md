@@ -21,6 +21,7 @@ order:
              prod-bootstrap-driver
              dual-loader-driver
              concurrent-invoke-driver
+             target-check-driver
              uninstall-race-driver
              multi-hook-fanout-driver
              hostile-safe-driver]
@@ -50,6 +51,7 @@ test.
 | `prod-bootstrap-driver` | all four positions installing and firing on a bootstrap-loader class through the production `install!` path, with the worker itself supplying the redefine dispatcher |
 | `dual-loader-driver` | one class name under two ClassLoaders: a single spec serves both, `:woven-count` reports how many loaded Classes share the name rather than how many hooks exist, and nothing records which loader an event came from |
 | `concurrent-invoke-driver` | 8 threads in one advice body: Nihilite's `:fired` atom and `:sequence` `AtomicLong` are exact under contention, a user bridge's own unsynchronized state loses 5 to 9% of its increments, and the per-thread reentrancy guard does not protect it |
+| `target-check-driver` | `install!` refuses a spec whose target method does not exist, or exists with a descriptor it does not have, before the spec is registered — and a target class that is not loaded yet is still accepted, because the check must not narrow what can be hooked |
 | `uninstall-race-driver` | the window between a spec leaving the registry and the retransform that removes its advice: a call already inside the advice still runs the old bridge, and because the counter record was removed first that fire is invisible to `:fired`; a call that arrives during the window finds no spec and is skipped |
 | `multi-hook-fanout-driver` | one woven call site reaches every hook on the method, in install order; `:cancel` ends the walk *and* skips the host body, `:subscriber` does neither |
 | `hostile-safe-driver` | the three bootstrap-loader targets from the limits table that do not overflow the stack: installing on one neither throws nor reports an empty woven count, and the one documented as working really fires |

@@ -90,6 +90,17 @@ value in the bridge — `(fn [_] (int-array 3))` or `(fn [_] (MyThing. x))` —
 since there is no numeric-style coercion for a type the Clojure reader has no
 opinion about.
 
+`install!` also asks the JVM whether the target method is there. A spec naming
+a method that does not exist, or that exists with a descriptor it does not
+have, is rejected with `:nihilite/target-method-not-found` or
+`:nihilite/target-descriptor-mismatch` before it is registered — such a spec
+would otherwise register, report a woven count, and never fire. The check only
+runs when the target class is already loaded, and it never loads a class to
+find out: resolving a name means loading the class, and a hook installed to
+observe a class-loading path re-enters its own advice when the verification
+does it. So a spec whose target class has not been loaded yet is accepted, and
+the target may load later.
+
 `install!` waits for the redefine dispatcher before weaving a `:redefine` hook,
 and throws `:nihilite/redefine-dispatcher-unavailable` if it never arrives. That
 position replaces the method body, so a hook woven before the dispatcher is

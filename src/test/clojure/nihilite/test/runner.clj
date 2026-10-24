@@ -34,8 +34,9 @@
    "nihilite.test.redefine-advice-composition-test"
    "nihilite.test.multi-hook-fanout-test"
    "nihilite.test.retransform-batch-atomicity-test"
-   "nihilite.test.ctx-return-test"
-   "nihilite.test.eval-test"])
+    "nihilite.test.ctx-return-test"
+    "nihilite.test.target-check-test"
+    "nihilite.test.eval-test"])
 
 (defn- safe-deref
   [r]

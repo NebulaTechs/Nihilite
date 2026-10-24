@@ -140,7 +140,8 @@
        "               nihilite.test.eval-attach-driver"
        "               nihilite.test.dual-loader-driver"
        "               nihilite.test.concurrent-invoke-driver"
-       "               nihilite.test.uninstall-race-driver"
+       "               nihilite.test.target-check-driver"
+"               nihilite.test.uninstall-race-driver"
 "               nihilite.test.multi-hook-fanout-driver"
         "               nihilite.test.weaving-contract-driver"
         "               nihilite.test.eval-jar-driver"
@@ -422,6 +423,15 @@
    unsynchronized state is not, and the per-thread reentrancy guard does not
    protect it."
    }
+  :target-check-driver
+   {:label "Target check driver"
+    :main "nihilite.test.targetCheckDriver"
+    :args []
+    :doc "Proves that install! refuses a spec whose target method does not
+   exist, or exists with a descriptor it does not have, before the spec is
+   registered -- and that a target class which is not loaded yet is still
+   accepted, because the check must not narrow what can be hooked."
+   }
   :uninstall-race-driver
    {:label "Uninstall race driver"
     :main "nihilite.test.uninstallRaceDriver"
@@ -515,6 +525,7 @@
                :prod-bootstrap-driver
                :dual-loader-driver
                :concurrent-invoke-driver
+               :target-check-driver
                :uninstall-race-driver
                :multi-hook-fanout-driver
                :hostile-safe-driver]})
