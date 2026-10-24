@@ -140,6 +140,7 @@
        "               nihilite.test.eval-attach-driver"
        "               nihilite.test.dual-loader-driver"
        "               nihilite.test.concurrent-invoke-driver"
+       "               nihilite.test.uninstall-race-driver"
 "               nihilite.test.multi-hook-fanout-driver"
         "               nihilite.test.weaving-contract-driver"
         "               nihilite.test.eval-jar-driver"
@@ -421,6 +422,16 @@
    unsynchronized state is not, and the per-thread reentrancy guard does not
    protect it."
    }
+  :uninstall-race-driver
+   {:label "Uninstall race driver"
+    :main "nihilite.test.uninstallRaceDriver"
+    :args []
+    :doc "Characterises the window between a spec leaving the registry and the
+   retransform that removes its advice. A call already inside the advice still
+   runs the old bridge, and because the counter record was removed first, that
+   fire is invisible to :fired. The shape is asserted; the number of stale
+   fires is printed, not gated on."
+   }
   :multi-hook-fanout-driver
    {:label "Multi hook fanout driver"
     :main "nihilite.test.multiHookFanoutDriver"
@@ -504,6 +515,7 @@
                :prod-bootstrap-driver
                :dual-loader-driver
                :concurrent-invoke-driver
+               :uninstall-race-driver
                :multi-hook-fanout-driver
                :hostile-safe-driver]})
 
