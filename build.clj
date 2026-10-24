@@ -20,7 +20,7 @@
    "Multi-Release" "true"})
 
 (def forbidden-entries
-  ["examples/" "minecraft/" "fabric/" "init.clj" "server.properties"])
+  ["examples/" "init.clj" "server.properties"])
 
 (def ^:private base-driver-opts
   ["-Djdk.attach.allowAttachSelf=true"
@@ -143,6 +143,7 @@
 "               nihilite.test.multi-hook-fanout-driver"
         "               nihilite.test.weaving-contract-driver"
         "               nihilite.test.eval-jar-driver"
+        "               nihilite.test.examples-driver"
         "               nihilite.test.hostile-target-driver]]"
        "   (require n) (compile n)))"))
 
@@ -295,6 +296,80 @@
     :main "nihilite.test.evalJarDriver"
     :args []
     :jar-only? true}
+   ;; These example rows intentionally omit :jar-only?. The driver derives each
+   ;; child's classpath from the parent's own java.class.path, excluding the
+   ;; project source/AOT directories and the uberjar. A jar-only parent would
+   ;; therefore have no separate Clojure/ByteBuddy jars to hand the children;
+   ;; the normal test basis supplies those third-party jars instead. Children
+   ;; receive only those jars plus the agent jar injected by -javaagent, so
+   ;; Nihilite's own classes still come from the packaged artifact, not src/.
+   ;; Attach mode also needs a real Clojure runtime in a target that does not
+   ;; have Nihilite before the attach.
+  :examples-jdkstdlib-driver
+   {:label "Examples JDK stdlib driver"
+    :main "nihilite.test.examplesDriver"
+    :args-fn (fn [jar]
+               ["init" jar
+                "examples/jdkstdlib/init.clj"
+                "src/test/clojure/probe/examples/jdkstdlib.clj"
+                "jdkstdlib"])
+    :uber? true
+    :doc "Proves the packaged agent loads the JDK stdlib example, weaves its
+    bootstrap-classloader FileOutputStream.write hook, and observes the write."}
+  :examples-hotrewrite-driver
+   {:label "Examples hot rewrite driver"
+    :main "nihilite.test.examplesDriver"
+    :args-fn (fn [jar]
+               ["init" jar
+                "examples/hotrewrite/init.clj"
+                "src/test/clojure/probe/examples/hotrewrite.clj"
+                "hotrewrite"])
+    :uber? true
+    :doc "Proves the packaged agent supports live bridge replacement: two
+    BitSet.size calls reach the original and swapped bridge respectively."}
+  :examples-positions-driver
+   {:label "Examples positions driver"
+    :main "nihilite.test.examplesDriver"
+    :args-fn (fn [jar]
+               ["init" jar
+                "examples/positions/init.clj"
+                "src/test/clojure/probe/examples/positions.clj"
+                "positions"])
+    :uber? true
+    :doc "Proves the packaged agent's entry, return, throw, and redefine hook
+    positions produce the expected events and results."}
+  :examples-lifecycle-driver
+   {:label "Examples lifecycle driver"
+    :main "nihilite.test.examplesDriver"
+    :args-fn (fn [jar]
+               ["init" jar
+                "examples/lifecycle/init.clj"
+                "src/test/clojure/probe/examples/lifecycle.clj"
+                "lifecycle"])
+    :uber? true
+    :doc "Proves the packaged agent's public hook lifecycle: install, inspect,
+    swap the bridge, uninstall, and remove the hook from public lookup."}
+  :examples-actions-driver
+   {:label "Examples actions driver"
+    :main "nihilite.test.examplesDriver"
+    :args-fn (fn [jar]
+               ["init" jar
+                "examples/actions/init.clj"
+                "src/test/clojure/probe/examples/actions.clj"
+                "actions"])
+    :uber? true
+    :doc "Proves the packaged agent's observe, modify, cancel, and subscriber
+    actions produce their distinct results and runtime counters."}
+  :examples-attach-eval-driver
+   {:label "Examples dynamic attach eval driver"
+    :main "nihilite.test.examplesDriver"
+    :args-fn (fn [jar]
+               ["attach" jar
+                "examples/dynamic_attach_eval.clj"
+                "dynamic-attach-eval"])
+    :uber? true
+    :doc "Proves the packaged agent can attach to a Clojure target that has
+    no Nihilite before the attach and evaluate through the file-backed protocol."}
   :retransform-driver
    {:label "Retransform driver"
     :main "nihilite.test.retransformDriver"
@@ -415,6 +490,15 @@
                ;; javaagent-driver because that row has already built the
                ;; uberjar this one needs on its classpath.
                :eval-jar-driver
+               ;; These rows exercise the packaged agent jar against the
+               ;; examples. They need the uberjar built by :uber? true and the
+               ;; third-party jars the driver hands to each child.
+               :examples-jdkstdlib-driver
+               :examples-hotrewrite-driver
+               :examples-positions-driver
+               :examples-lifecycle-driver
+               :examples-actions-driver
+               :examples-attach-eval-driver
                :redefine-instance-driver
                :indy-driver
                :prod-bootstrap-driver
