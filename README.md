@@ -172,28 +172,31 @@ the init script.
 
 ## Examples
 
-| Example | Shows |
-| --- | --- |
-| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | spec shape against a JDK stdlib method, reached through invokedynamic |
-| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` hot rewrite |
-| [`examples/minecraft/init.clj`](examples/minecraft/init.clj) | an app-loader target that actually fires |
-| [`examples/fabric/init.clj`](examples/fabric/init.clj) | Fabric mod-loader hooks |
-| [`examples/nrepl_service.clj`](examples/nrepl_service.clj) | bring your own control plane |
+Build the agent jar first:
 
 ```sh
-java -Dnihilite.init='(load-file "examples/jdkstdlib/init.clj")' \
-     -javaagent:target/nihilite.jar -jar your-app.jar
+clojure -T:build uberjar        # -> target/nihilite.jar
 ```
 
-The property value is read as a Clojure **form**, not as a path. A bare
-`examples/jdkstdlib/init.clj` is analysed as a symbol and fails with
-`No such namespace: examples`, which is the same reason the form has to be
-quoted at all.
+| Example | Shows | Command |
+| --- | --- | --- |
+| [`examples/jdkstdlib/init.clj`](examples/jdkstdlib/init.clj) | public-API spec shape against a JDK stdlib method reached through invokedynamic | `java -Dnihilite.init='(load-file "examples/jdkstdlib/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
+| [`examples/hotrewrite/init.clj`](examples/hotrewrite/init.clj) | `swap-bridge!` replacing a live bridge on `java.util.BitSet.size` | `java -Dnihilite.init='(load-file "examples/hotrewrite/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
+| [`examples/positions/init.clj`](examples/positions/init.clj) | the four hook positions `:entry`, `:return`, `:throw`, and `:redefine`, with their distinct bridge shapes | `java -Dnihilite.init='(load-file "examples/positions/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
+| [`examples/lifecycle/init.clj`](examples/lifecycle/init.clj) | install, fire, inspect `install-status!`, swap, uninstall, and public lookup/list cleanup | `java -Dnihilite.init='(load-file "examples/lifecycle/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
+| [`examples/actions/init.clj`](examples/actions/init.clj) | the four built-in actions `:observe`, `:modify`, `:cancel`, and `:subscriber`, and how their observable results differ | `java -Dnihilite.init='(load-file "examples/actions/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
+| [`examples/dynamic_attach_eval.clj`](examples/dynamic_attach_eval.clj) | attaching to a running JVM with `com.sun.tools.attach.VirtualMachine` and driving the file-backed eval protocol with no Java source | `clojure examples/dynamic_attach_eval.clj <pid> target/nihilite.jar` |
 
-Measured: an init script can deploy its own network service, and can put a jar
-the agent has never seen onto the classloader and `require` from it —
-`DynamicClassLoader` extends `URLClassLoader`, so one `addURL` does what
-core.async's `add-libs` does (`add-libs` is not in `clojure.core`).
+`nihilite.init` is a Clojure **FORM**, not a path. A bare
+`examples/jdkstdlib/init.clj` is analysed as a symbol and fails with
+`No such namespace: examples`. Quote the `load-file` form as shown above.
+
+For the init-style examples, the JVM must be started with `-javaagent:`.
+`java -jar` alone leaves every hook pending and never fires. The dynamic
+attach example supplies the agent after the target JVM is already running.
+
+See [examples/README.md](examples/README.md) for each example's prerequisites,
+observable output, and CI check.
 
 ## Tests
 
@@ -201,9 +204,9 @@ core.async's `add-libs` does (`add-libs` is not in `clojure.core`).
 clojure -T:build check
 ```
 
-Contract tests plus nine drivers that go through a real `Instrumentation`, which
-the contract tests cannot reach. What each driver proves and why it asserts what
-it does: [docs/drivers.md](docs/drivers.md).
+The check runs one contract test plus 18 drivers that go through a real
+`Instrumentation`, which the contract test cannot reach. What each driver
+proves and why it asserts what it does: [docs/drivers.md](docs/drivers.md).
 
 ## License
 
