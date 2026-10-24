@@ -2,17 +2,17 @@
   "Public facade over nihilite.builder.registry — the verbs a user actually
    reaches for at the REPL or in a script.
 
-   The 4-verb surface (`install!`, `uninstall!`, `lookup`,
-   `install-status!`) plus the introspection helpers (`list-specs`,
-   `swap-bridge!`, `registered-actions`) and the action registry
-   (`register-action!`, `unregister-action!`) are intentionally thin: every
-   function delegates straight to `nihilite.builder.registry`, so contract
-   guarantees (id-keyed uniqueness, target/method indexing, atomic
+   The public surface is nine verbs: `install!`, `uninstall!`, `lookup`,
+   `install-status!`, `list-specs`, `swap-bridge!`, `register-action!`,
+   `registered-actions`, and `unregister-action!`. They are intentionally
+   thin: every function delegates straight to `nihilite.builder.registry`, so
+   contract guarantees (id-keyed uniqueness, target/method indexing, atomic
    install/uninstall) are inherited unchanged.
 
-   Spec map shape. `install!` normalises the map and returns a HookSpec
-   record; the fields it computes rather than copies are `:internal-class`
-   and `:method-descriptor`.
+   Spec map shape. `install!` normalises the map and returns `true` when the
+   id was newly registered, `false` when it replaced an existing spec. The
+   stored spec computes `:internal-class` and `:method-descriptor` rather
+   than copying them.
 
    | key               | required | meaning                                       |
    | ----------------- | -------- | --------------------------------------------- |
@@ -58,13 +58,13 @@
    duplicate id instead of replacing it, throwing
    `:nihilite/duplicate-spec-id`.
 
-   Examples:
-     (api/install! {:id \"trace-hello\"
-                    :target-internal \"java/lang/String\"
-                    :method-name \"length\"
-                    :descriptor \"()I\"
-                    :position :entry
-                    :bridge   (fn [ctx] (println :entry ctx))})"
+    Examples:
+      (api/install! {:id \"trace-bitset-size\"
+                     :target-internal \"java/util/BitSet\"
+                     :method-name \"size\"
+                     :descriptor \"()I\"
+                     :position :entry
+                     :bridge   (fn [ctx] (println :entry ctx))})"
   [spec]
   (reg/install! spec))
 

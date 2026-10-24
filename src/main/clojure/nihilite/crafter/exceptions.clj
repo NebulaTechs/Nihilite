@@ -2,8 +2,9 @@
   "Exception types emitted into the agent bytecode.
 
    NihiliteAdviceException carries the cause of a failed advice dispatch;
-   HookCancelledException signals an intentional short-circuit, swallowed
-   by the installer before reaching user code. Both inherit RuntimeException
+   HookCancelledException signals an intentional short-circuit: the :cancel
+   action throws it out of the advice, so the host method body is skipped and
+   the exception reaches the caller. Both inherit RuntimeException
    and are generated via the private generate-class function so their class
    names and inheritance stay stable for instanceof checks and catch sites
    on the JVM side."
