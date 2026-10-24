@@ -35,8 +35,8 @@
    A :done of false means the session is still live: poll it by sending a
    second request whose code is (snapshot <session-id>). Polling costs one
    attach round trip per read, which is the price of loadAgent having no
-   return channel. Anything wanting cheaper reads should start a real service
-   from its own init script instead -- see examples/nrepl_service.clj."
+   return channel. Anything wanting cheaper reads can start a user-supplied
+   control plane from its own init script."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
             [nihilite.builder.eval :as ev])

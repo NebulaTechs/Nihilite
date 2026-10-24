@@ -50,8 +50,8 @@ closed by the request that created it, so this works. A request whose eval
 finishes normally *does* close its own session.
 
 One attach round trip per read is the price of `loadAgent` having no return
-channel. If you want cheaper reads, start a real service from your init script
-instead (`examples/nrepl_service.clj`).
+channel. For a complete file-backed attach round trip, see
+[`examples/dynamic_attach_eval.clj`](../examples/dynamic_attach_eval.clj).
 
 The wait defaults to 30s and is settable with `-Dnihilite.eval.wait-ms`, which
 matters mostly for tests that need to reach the `:done false` path without

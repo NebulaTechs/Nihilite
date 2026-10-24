@@ -6,8 +6,7 @@
    Both are gone. Nihilite opens no port; a process that wants to evaluate
    code in an attached JVM sends an eval request (see
    nihilite.builder.eval.protocol), and a process that wants a full control plane
-   starts its own service from its init script (see
-   examples/nrepl_service.clj)."
+   starts one in its own init script."
   (:require [nihilite.builder.eval :as ev]
             [nihilite.crafter.jul :as jul]
             [nihilite.builder.eval.protocol :as proto])
