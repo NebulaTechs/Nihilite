@@ -168,3 +168,48 @@ Two hypotheses were ruled out rather than left standing:
 Neither the JVM's nor this API's behaviour is reliable here, so a hook on
 `FileInputStream.read` cannot carry a test, let alone an example. The example
 set uses `FileOutputStream.write` instead.
+
+## The uninstall window
+
+`uninstall!` removes the spec from the registry *before* it retransforms the
+target class, and the removal has to come first: the transformer reads the
+registry as its input, so a spec still in the registry would be re-woven and
+the uninstall would do nothing. Between those two steps the spec is absent
+from the registry while the bytecode still carries the advice.
+
+That window is measured, not assumed:
+
+```sh
+clojure -T:build uninstall-race-driver
+```
+
+The driver parks a call *inside* the advice, performs the uninstall while
+that call is in flight, and then releases it. Measured on JDK 27:
+
+| Observation | Result |
+| --- | --- |
+| the uninstall window | ~20–24 ms |
+| a call that arrives during the window | finds no spec, is skipped, the target method runs normally |
+| a call that was already inside the advice | runs the old bridge to completion |
+| `:fired` after that stale fire | 0 |
+
+The last row is the one that matters. `stats/remove-stats` drops the counter
+record before the retransform, and `stats/bump-fired!` is
+`(when-let [r (get-stats spec-id)] (swap! (:fired r) inc))` — with the record
+gone the increment is a no-op. So the fire happened and the registry has no
+record of it. `install-status!` then reports `:registered? false` and
+`:fired 0`, which is self-consistent with the registry and inconsistent with
+the history.
+
+The driver asserts the shape, not a count: the stale bridge must run, the
+counter must read 0 afterwards, and `lookup` must return nil. A control
+phase runs the same bridge without parking it and asserts `:fired` is 1,
+which is what rules out the alternative explanation that the counter never
+counts anything.
+
+The window is a property of the current design, not a defect in it: the
+ordering is required, and the JVM cannot un-run bytecode that is already
+executing. What the measurement buys is that the boundary is documented
+rather than re-discovered, and that the size of the window is known. Closing
+it would mean draining in-flight calls before the removal, which is a
+larger change than the problem currently warrants.
