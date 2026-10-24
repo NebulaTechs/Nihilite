@@ -102,6 +102,38 @@
   []
   (.compareAndSet worker-started false true))
 
+(defn- ensure-context-classloader!
+  "Makes sure the thread this agent entry point runs on has a context
+   classloader, and returns the one it ended up with.
+
+   The Attach Listener thread that the JVM runs agentmain on has a null
+   context classloader. Clojure's class resolution depends on it:
+   RT.baseLoader() falls back to the context classloader when Compiler/LOADER
+   is unbound, so a null one makes baseLoader() return null, and
+   RT.makeClassLoader() then builds a DynamicClassLoader with a null parent
+   and an empty URL list. Requiring anything from source under that loader
+   fails with NoClassDefFoundError: clojure/lang/AFunction -- the compiler
+   cannot resolve the superclass of the fn* it is generating.
+
+   That is exactly what a cold attach hit: agentmain runs on the Attach
+   Listener, and arm-agent! requires the installer namespace before the
+   worker thread has had a chance to bind Compiler/LOADER. The premain path
+   never saw it, because premain runs on the application's main thread,
+   whose context classloader is the system one.
+
+   Only a null context classloader is replaced. A thread that already has a
+   meaningful one keeps it: the context classloader is how the instrumented
+   application resolves its own classes, and overwriting it would change
+   the application's behaviour rather than the agent's."
+  []
+  (let [thread (Thread/currentThread)
+        current (.getContextClassLoader thread)]
+    (if (nil? current)
+      (let [system (ClassLoader/getSystemClassLoader)]
+        (.setContextClassLoader thread system)
+        system)
+      current)))
+
 (defn- extend-system-class-loader-search
   "When the agent runs from inside its own jar, append that jar to the
    system classloader search path so the rest of Nihilite (and ByteBuddy)
@@ -197,6 +229,7 @@
 
    Returns true when the Instrumentation was newly registered."
   [^String label ^Instrumentation inst]
+  (ensure-context-classloader!)
   (extend-system-class-loader-search inst)
   (let [fresh? (agent-registerInstrumentation inst)]
     (when fresh?
