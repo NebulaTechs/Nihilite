@@ -205,6 +205,46 @@
     (is (= :not-running (:reason (ev/interrupt sid))))
     (ev/close-session sid)))
 
+(deftest an-interrupted-eval-is-not-a-failed-eval
+  ;; The InterruptedException used to escape the session thread and kill it.
+  ;; Two things went wrong at once. The session could never serve another
+  ;; eval, which is the promise docs/eval-protocol.md makes. And the JVM's
+  ;; default handler for an uncaught exception writes `Exception in thread
+  ;; "..." ` to stderr WITHOUT a trailing newline, before the stack trace --
+  ;; so any output written in that window landed on the same line, and a
+  ;; reader matching markers per line failed to see a marker that had been
+  ;; printed. Measured: the init-done marker arrived as
+  ;; `Exception in thread "nihilite-eval-s1" nihilite:init-done`.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(do (Thread/sleep 60000) :finished)")
+    (Thread/sleep 100)
+    (is (:interrupted? (ev/interrupt sid)))
+    (let [s (settle sid 3000)]
+      (is (false? (:running? s)))
+      (is (nil? (:error s))
+          "an interrupted eval is not a failed eval: :error is where the
+           caller's own code went wrong"))
+    ;; The thread survives the interrupt and serves the next eval.
+    (ev/eval-in sid "(+ 40 2)")
+    (let [s (settle sid 3000)]
+      (is (= "42" (:value s))
+          "the session must still serve an eval after an interrupt"))
+    (ev/close-session sid)))
+
+(deftest closing-a-session-while-an-eval-runs-ends-the-thread
+  ;; A close that lands while an eval is running interrupts that eval, and
+  ;; run-eval! swallows the InterruptedException -- which clears the
+  ;; thread's interrupt flag. Without a flag of its own the session thread
+  ;; would go back to waiting on a queue nobody will ever feed, and would
+  ;; outlive the session it belongs to.
+  (let [sid (ev/open-session)]
+    (ev/eval-in sid "(Thread/sleep 60000)")
+    (Thread/sleep 100)
+    (is (true? (ev/close-session sid)))
+    (Thread/sleep 200)
+    (is (not (ev/session? sid)))
+    (is (not-any? #(= sid %) (ev/session-ids)))))
+
 (deftest close-session-interrupt-then-forgets
   (let [sid (ev/open-session)]
     (ev/eval-in sid "(Thread/sleep 60000)")

@@ -29,7 +29,7 @@
            [java.util.concurrent.atomic AtomicLong]))
 
 (defrecord Session [id ns-obj eval-ids counter events value error
-                    running queue thread])
+                    running queue thread closed?])
 
 (defonce ^:private sessions (atom {}))
 
@@ -130,6 +130,14 @@
           (when (some? v)
             (reset! (:value s) (render v))
             (emit! s :out (str (render v) "\n"))))))
+    (catch InterruptedException _
+      ;; The eval was interrupted, not broken. Reporting it as a user error
+      ;; would put an InterruptedException in :error, and a caller polling
+      ;; for the reason would read "the code failed" where the truth is
+      ;; "somebody asked it to stop". The interrupt flag stays set, so the
+      ;; next blocking call in this thread throws again and the loop's own
+      ;; .take ends it.
+      (reset! (:running s) nil))
     (catch Throwable t
       (emit! s :err (str (type t) ": " (.getMessage ^Throwable t) "\n"))
       (reset! (:error s) (render t)))))
@@ -144,28 +152,72 @@
    left' rather than 'the most recent eval has a thread', which is a question a
    caller can actually act on.
 
-   InterruptedException ends the thread. Nothing else does: an eval that
-   ignores interrupts keeps running, and the loop stays behind it. That is
-   honest -- a tight (loop [] (recur)) cannot be stopped from outside, because
-   recur never checks the flag and Thread.stop was removed in JDK 20."
+   InterruptedException does NOT end the thread. It is how both an interrupt
+   and a close reach the loop, and the two mean different things: an interrupt
+   asks the running eval to stop but leaves the session usable, while a close
+   ends it. The session's :closed? flag says which one it was.
+
+   Letting the exception escape instead was wrong twice over. It killed the
+   thread on an ordinary interrupt, so a session could never serve another
+   eval -- the promise in docs/eval-protocol.md (the thread itself survives
+   and serves the next eval) was not true. And the JVM's default handler for
+   an uncaught exception writes `Exception in thread \"...\" ` to stderr
+   WITHOUT a trailing newline before the stack trace, so any other output
+   written in that window was concatenated onto that same line. In a JVM whose
+   stdout and stderr share a pipe that is one line, not two, and a driver
+   matching markers per line then failed to see a marker that had been
+   printed. Measured: the init-done marker arrived as
+   `Exception in thread \"nihilite-eval-s1\" nihilite:init-done`.
+
+   Nothing else ends the thread: an eval that ignores interrupts keeps
+   running, and the loop stays behind it. That is honest -- a tight
+   (loop [] (recur)) cannot be stopped from outside, because recur never
+   checks the flag and Thread.stop was removed in JDK 20."
   [^Session s]
   (let [^LinkedBlockingQueue q (:queue s)]
     (loop []
-      (let [task (.take q)]
-        (when task
-          (run-eval! s (:code task))
-          ;; Mark the next queued eval as the running one, rather than
-          ;; clearing :running and letting start-eval! set it. Clearing
-          ;; was wrong the moment a second eval was submitted while the
-          ;; first was executing: this thread finished the first, nil'd
-          ;; the atom, and the second -- already taken off the queue, so
-          ;; queue.size was 0 too -- was invisible to running?. Measured:
-          ;; eval "(+ 1 1)" then "(Thread/sleep 600)" reported
-          ;; :running? false for the whole 600ms, so a caller waiting on
-          ;; it was told the work was done while it was still running.
-          (let [next (.peek q)]
-            (reset! (:running s) (some-> next :eid)))
-          (recur))))))
+      ;; The close is checked at the top of every turn, not only where the
+      ;; interrupt is caught. A close that lands while an eval is RUNNING
+      ;; interrupts that eval, and run-eval! swallows the
+      ;; InterruptedException -- which clears the thread's interrupt flag --
+      ;; so the following .take would block forever and the thread would
+      ;; outlive the session it belongs to. Checking here means the thread
+      ;; ends on the turn after the interrupted eval, whatever happened to
+      ;; the flag.
+      (if @(:closed? s)
+        nil
+        (let [task (try
+                     (.take q)
+                     (catch InterruptedException _
+                       ;; Interrupted: either the session was closed, or an
+                       ;; interrupt asked the running eval to stop. The flag
+                       ;; tells them apart. In the interrupt case the session
+                       ;; stays open and the loop goes back to waiting.
+                       (when @(:closed? s)
+                         nil)
+                       (do
+                         ;; Recompute rather than clear: the interrupt dropped
+                         ;; whatever was queued, but a new eval may have been
+                         ;; submitted since, and clearing would hide it. This
+                         ;; is the same rule the post-eval path uses.
+                         (reset! (:running s) (some-> (.peek q) :eid))
+                         ::continue)))]
+          (if (= ::continue task)
+            (recur)
+            (when task
+              (run-eval! s (:code task))
+              ;; Mark the next queued eval as the running one, rather than
+              ;; clearing :running and letting start-eval! set it. Clearing
+              ;; was wrong the moment a second eval was submitted while the
+              ;; first was executing: this thread finished the first, nil'd
+              ;; the atom, and the second -- already taken off the queue, so
+              ;; queue.size was 0 too -- was invisible to running?. Measured:
+              ;; eval "(+ 1 1)" then "(Thread/sleep 600)" reported
+              ;; :running? false for the whole 600ms, so a caller waiting on
+              ;; it was told the work was done while it was still running.
+              (let [next (.peek q)]
+                (reset! (:running s) (some-> next :eid)))
+              (recur))))))))
 
 (defn register!
   "Creates a session, starts its thread, stores it, and returns its id."
@@ -182,7 +234,10 @@
                        ;; the eval id currently executing, or nil
                        (atom nil)
                        q
-                       nil)
+                       nil
+                       ;; set when the session is closed for good; the loop
+                       ;; uses it to tell a close from an interrupt
+                       (atom false))
         ;; The thread closes over `s`, which does not yet carry the thread.
         ;; It never needs it: the loop only reads the queue and the atoms.
         t   (doto (Thread. ^Runnable #(session-loop s)
@@ -234,7 +289,11 @@
   "Interrupts the current eval and discards anything queued behind it.
 
    The thread itself survives: it goes back to .take and serves the next eval.
-   Use stop! to end the session."
+   Use stop! to end the session.
+
+   The interrupt reaches the thread as an InterruptedException out of .take.
+   The session's :closed? flag is deliberately left alone, so the loop knows
+   this is an interrupt rather than a close and keeps the session usable."
   [^Session s]
   (when-let [^Thread t (:thread s)]
     (.interrupt t))
@@ -268,10 +327,15 @@
      :running? (running? s)}))
 
 (defn stop!
-  "Interrupts the session's thread and drops any queued work. The thread ends
-   on the InterruptedException .take throws; anything already executing keeps
-   running to completion, which is the cooperative limit, not a bug."
+  "Closes the session: interrupts its thread, drops any queued work, and
+   ends the thread. Anything already executing keeps running to completion,
+   which is the cooperative limit, not a bug.
+
+   The :closed? flag is set BEFORE the interrupt, so the loop can tell a
+   close from an interrupt when the InterruptedException arrives: a close
+   ends the thread, an interrupt leaves it serving the next eval."
   [^Session s]
+  (reset! (:closed? s) true)
   (when-let [^Thread t (:thread s)]
     (.interrupt t))
   (when-let [^LinkedBlockingQueue q (:queue s)]

@@ -118,6 +118,26 @@ anything queued behind it. The thread itself survives and serves the next eval.
 It unblocks a thread waiting on I/O, sleep or a monitor, and throws
 `InterruptedException` into it.
 
+An interrupted eval is not a failed eval. The `InterruptedException` is not
+reported through `:error`: `:error` is where a caller's code went wrong, and
+an interrupt is somebody asking the eval to stop. The session stays open, so
+the next `eval-in` on it runs normally.
+
+`close-session` is different: it ends the session, and its thread with it.
+The two are told apart by a flag the session carries, so a close that lands
+while an eval is still running still ends the thread — the interrupt that
+reaches the running eval clears the thread's interrupt flag, and without the
+flag the thread would go back to waiting on a queue nobody will ever feed.
+
+Neither path prints anything to stderr. An `InterruptedException` that
+escapes the session thread is written by the JVM's default handler as
+`Exception in thread "..." ` — without a trailing newline, before the stack
+trace — so any output written in that window lands on the same line. In a
+JVM whose stdout and stderr share a pipe that is one line, not two, and a
+reader matching markers per line then fails to see a marker that was
+printed. Measured: the init-done marker arrived as
+`Exception in thread "nihilite-eval-s1" nihilite:init-done`.
+
 It does **not** stop a tight `(loop [] (recur))`: Clojure's `recur` never checks
 the interrupt flag, and `Thread.stop`, which would, was removed in JDK 20.
 Measured here rather than assumed:
