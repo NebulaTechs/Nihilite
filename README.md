@@ -115,6 +115,7 @@ half-registered when it gives up.
 | `(api/install-status! id)` | install-side *and* runtime-side counters |
 | `(api/swap-bridge! id f)` | replace the bridge in place |
 | `(api/register-action! :kw)` | register a custom `:action` |
+| `(api/capability-report)` | what this JVM can do, and whether the agent is armed |
 
 `install-status!` reports two sides that never imply each other:
 
@@ -126,6 +127,14 @@ half-registered when it gives up.
 `:woven-count 1` means the bytes were rewritten, not that the advice runs. A
 `:fired` of 0 is indistinguishable from a dead hook until you know the target
 method has actually been called.
+
+`capability-report` answers the question around that one. A hook reporting
+`:woven-count 0` and `:pending? true` looks the same whether the agent is
+missing, the target class is not loaded, or the JVM does not support
+redefinition, and those three need three different fixes. The report says
+which, names the entry point that armed the agent, and carries a
+`:remediation` line when something is missing. It is read-only: asking it
+installs no agent, attaches to nothing, and retransforms no class.
 
 ## Limits
 

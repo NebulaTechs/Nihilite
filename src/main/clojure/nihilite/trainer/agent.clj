@@ -47,6 +47,17 @@
 (defonce ^:private registered-on
   (AtomicReference.))
 
+(defonce ^{:doc "Which entry point armed the agent: :premain, :agentmain, or
+  nil when the agent was not armed by an entry point.
+
+  Published here rather than inferred, because the difference is not
+  cosmetic: premain runs on the application's main thread and agentmain
+  runs on the Attach Listener, and the two have different classloader and
+  timing behaviour. nihilite.builder.capability reads this to say where
+  the agent came from instead of guessing."}
+  entry-point
+  (atom nil))
+
 (defonce ^:private worker-started
   (AtomicBoolean. false))
 
@@ -233,6 +244,7 @@
   (extend-system-class-loader-search inst)
   (let [fresh? (agent-registerInstrumentation inst)]
     (when fresh?
+      (reset! entry-point (keyword label))
       (require (quote nihilite.trainer.installer))
       ((resolve (quote nihilite.trainer.installer/install)) inst)
       (jul/info agent-log (str "[Nihilite Agent] " label

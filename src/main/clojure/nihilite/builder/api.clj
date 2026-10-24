@@ -2,12 +2,16 @@
   "Public facade over nihilite.builder.registry — the verbs a user actually
    reaches for at the REPL or in a script.
 
-   The public surface is nine verbs: `install!`, `uninstall!`, `lookup`,
+   The public surface is ten verbs: `install!`, `uninstall!`, `lookup`,
    `install-status!`, `list-specs`, `swap-bridge!`, `register-action!`,
-   `registered-actions`, and `unregister-action!`. They are intentionally
+   `registered-actions`, `unregister-action!`, and `capability-report`.
+   They are intentionally
    thin: every function delegates straight to `nihilite.builder.registry`, so
    contract guarantees (id-keyed uniqueness, target/method indexing, atomic
-   install/uninstall) are inherited unchanged.
+   install/uninstall) are inherited unchanged. `capability-report` is the one
+   that does not: it reads the JVM's own state and has no registry
+   counterpart, because it answers a different question -- what the JVM
+   can do, rather than what a hook did.
 
    Spec map shape. `install!` normalises the map and returns `true` when the
    id was newly registered, `false` when it replaced an existing spec. The
@@ -31,7 +35,8 @@
    | :action           | no       | `:observe` (default) / `:modify` / `:cancel`  |
    |                   |          | / `:subscriber`                               |
    | :tag              | no       | free-form grouping label                      |"
-  (:require [nihilite.builder.registry :as reg]))
+  (:require [nihilite.builder.registry :as reg]
+            [nihilite.builder.capability :as cap]))
 
 (defn install!
   "Install a hook spec under `:id`. Atomic: validation, indexing by
@@ -135,6 +140,42 @@
    called."
   [id]
   (reg/install-status! id))
+
+(defn capability-report
+  "What this JVM can do, and what Nihilite has done to it.
+
+   install-status! answers \"what happened to the hook I installed\". This
+   answers the questions around it: is the agent actually armed, and can
+   this JVM do instrumentation at all. A hook reporting :woven-count 0 and
+   :pending? true looks the same whether the agent is missing, the target
+   class is not loaded, or the JVM does not support redefinition, and those
+   three need three different fixes.
+
+   The report is READ-ONLY. Reading it installs no agent, attaches to
+   nothing, and retransforms no class. A diagnostic that changes the thing
+   it diagnoses gives an answer about a different JVM than the one asked
+   about.
+
+   The keys, in the order they are usually read:
+
+     :instrumentation-present?      whether an Instrumentation is registered
+     :entry-point                   :premain, :agentmain, or nil
+     :redefine-classes-supported?   what the Instrumentation reports
+     :retransform-classes-supported? what the Instrumentation reports
+     :java-version, :java-vendor, :vm-name, :os-name, :os-arch
+     :java-instrument-module-present? whether java.instrument is in the image
+     :jdk-attach-present?           whether com.sun.tools.attach is reachable
+     :attach-provider-count         how many AttachProviders the JVM offers
+     :relevant-jvm-arguments        the arguments that bear on instrumentation
+     :detail                        a one-line summary
+     :remediation                   what to do, or nil
+
+   :remediation is the field to read when something does not work: it says
+   which of the possible fixes applies, rather than leaving the reader to
+   work out whether the agent was never started, cannot be attached to, or
+   is running on a JVM that cannot redefine classes."
+  []
+  (cap/capability-report))
 
 (defn swap-bridge!
   "Replace the bridge fn on the spec with `:id`, in place. Useful for

@@ -141,6 +141,7 @@
        "               nihilite.test.dual-loader-driver"
        "               nihilite.test.concurrent-invoke-driver"
        "               nihilite.test.target-check-driver"
+       "               nihilite.test.capability-driver"
 "               nihilite.test.uninstall-race-driver"
 "               nihilite.test.multi-hook-fanout-driver"
         "               nihilite.test.weaving-contract-driver"
@@ -432,6 +433,15 @@
    registered -- and that a target class which is not loaded yet is still
    accepted, because the check must not narrow what can be hooked."
    }
+  :capability-driver
+   {:label "Capability driver"
+    :main "nihilite.test.capabilityDriver"
+    :args []
+    :doc "Proves the capability report tells the truth about a JVM that has
+   an agent: it says the agent is armed, names the entry point, agrees with
+   the Instrumentation on redefine and retransform, is read-only, and
+   resolves no class."
+   }
   :uninstall-race-driver
    {:label "Uninstall race driver"
     :main "nihilite.test.uninstallRaceDriver"
@@ -526,6 +536,7 @@
                :dual-loader-driver
                :concurrent-invoke-driver
                :target-check-driver
+               :capability-driver
                :uninstall-race-driver
                :multi-hook-fanout-driver
                :hostile-safe-driver]})

@@ -36,6 +36,7 @@
    "nihilite.test.retransform-batch-atomicity-test"
     "nihilite.test.ctx-return-test"
     "nihilite.test.target-check-test"
+    "nihilite.test.capability-test"
     "nihilite.test.eval-test"])
 
 (defn- safe-deref
