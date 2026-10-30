@@ -9,14 +9,34 @@ only way in, and there is no way back, so Nihilite reads it as a small format
 any language can implement:
 
 ```text
-eval:<transport>|<base64-code>
+eval:TRANSPORT|CODE-SOURCE
 ```
 
 | transport | effect |
 | --- | --- |
 | `discard` | run it, reply nowhere |
-| `file:<path>` | reply written to that file as EDN |
-| `tcp:<host>:<port>:<token>` | reply written to a socket, token echoed first |
+| `tcp:HOST:PORT:TOKEN` | reply written to a socket, token echoed first |
+
+| code-source | effect |
+| --- | --- |
+| `BASE64-CODE` | the code itself, Base64 of its UTF-8 bytes |
+| `tcp:HOST:PORT:TOKEN` | the code read from that socket |
+
+The two halves are independent. A request may carry the code inline and the
+reply over a socket, or the code over a socket and the reply discarded, or both
+over sockets.
+
+The socket form for the code is not a nicety. The attach protocol caps one
+request argument at 1024 characters on JDK 11 through 21
+(`AttachOperation::arg_length_max`, checked by the target in
+`AttachOperation::RequestReader::read_request`), and the JDK drops an oversized
+request without a word, so the attaching side sees only a `Premature EOF`. Code
+that travels over a socket keeps the request's size independent of the code's
+size, and a socket exists on every platform the JVM runs on, so nothing has to
+be written to shared storage first.
+
+The inline form stays for short code, where the whole request is one line of
+the attacher.
 
 Agent args without the `eval:` prefix are not an eval request, so an existing
 invocation behaves exactly as it did. The reply is one EDN map:
@@ -31,26 +51,45 @@ invocation behaves exactly as it did. The reply is one EDN map:
 | `:error` | the rendered exception, or nil |
 | `:done` | false if the eval was still running when the wait expired |
 
-A complete round trip:
+A complete round trip, with the code inline:
 
 ```java
 VirtualMachine vm = VirtualMachine.attach(pid);
 vm.loadAgent("target/nihilite.jar",
-             "eval:file:/tmp/reply.edn|" + base64("(nihilite.builder.api/list-specs)"));
+             "eval:tcp:127.0.0.1:9001:reply-token|" + base64("(nihilite.builder.api/list-specs)"));
 vm.detach();
-// /tmp/reply.edn now holds {:value "{...}", :done true, ...}
+// the socket on 127.0.0.1:9001 now holds "reply-token\n{:value \"{...}\", :done true, ...}"
 ```
+
+And with the code on its own socket, so its size does not enter the attach
+argument at all:
+
+```java
+ServerSocket code = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"));
+new Thread(() -> {                          // loadAgent blocks until
+  try (Socket s = code.accept()) {          // agentmain returns, and
+    s.getOutputStream().write(codeBytes);   // agentmain cannot return
+    s.shutdownOutput();                     // before it has the code
+  }
+}).start();
+vm.loadAgent("target/nihilite.jar",
+             "eval:tcp:127.0.0.1:9001:reply-token|tcp:127.0.0.1:" + code.getLocalPort() + ":code-token");
+```
+
+The target connects to the code socket, echoes the token on the first line so
+the attacher can confirm it reached the agent it asked, and then reads the code
+until the attacher closes its half of the connection.
 
 ## Sessions
 
 `:done false` means the eval outlived the wait. The `:session` in the reply is
 then **left open on purpose** — send a second request whose code is
-`(nihilite.builder.eval/snapshot "<session-id>")` to read it again. That session is not
+`(nihilite.builder.eval/snapshot "SESSION-ID")` to read it again. That session is not
 closed by the request that created it, so this works. A request whose eval
 finishes normally *does* close its own session.
 
 One attach round trip per read is the price of `loadAgent` having no return
-channel. For a complete file-backed attach round trip, see
+channel. For a complete socket-backed attach round trip, see
 [`examples/dynamic_attach_eval.clj`](../examples/dynamic_attach_eval.clj).
 
 The wait defaults to 30s and is settable with `-Dnihilite.eval.wait-ms`, which
@@ -148,9 +187,10 @@ Measured here rather than assumed:
 | 25 | `UnsupportedOperationException`, thread lives |
 
 nREPL's answer to the same problem is a scheduled reaper that force-kills after
-5s, using `Thread.stop` before JDK 20 and a JVMTI native agent after. We do not:
-it needs a platform `.so` unpacked and the target attaching to itself, it risks
-state corruption, and it buys the ability to kill code the user wrote wrongly.
+5s, using `Thread.stop` before JDK 20 and a JVMTI native agent after — and that
+agent has to be enabled for the kill to happen at all. We do not: it needs a
+platform `.so` unpacked and the target attaching to itself, it risks state
+corruption, and it buys the ability to kill code the user wrote wrongly.
 `:interrupted? true` therefore means the request was delivered, not that the
 eval stopped — poll `snapshot` for `:running?` to find out.
 
@@ -186,4 +226,5 @@ rather than a redesign. They are implemented in `nihilite.builder.eval.session`.
 
 What streaming cannot become: push rather than poll needs a channel the target
 can write to, which means the attaching side listens on loopback and the agent
-connects back. Nihilite itself still listens on nothing.
+connects back. The agent itself never listens: every channel it uses is one it
+dials out on.

@@ -168,18 +168,25 @@ rather than on the method.
 the only way in. Nihilite reads it as:
 
 ```text
-eval:<transport>|<base64-code>
+eval:TRANSPORT|CODE-SOURCE
 ```
 
-`discard`, `file:<path>` or `tcp:<host>:<port>:<token>`. The reply is an EDN map
-with `:value` `:out` `:err` `:error` `:session` `:done`:
+The transport says where the reply goes: `discard`, or
+`tcp:HOST:PORT:TOKEN`. The code-source says where the code comes from:
+the code itself as Base64, or `tcp:HOST:PORT:TOKEN` to read it from a
+socket. The reply is an EDN map with `:value` `:out` `:err` `:error` `:session`
+`:done`:
 
 ```java
 VirtualMachine vm = VirtualMachine.attach(pid);
 vm.loadAgent("target/nihilite.jar",
-             "eval:file:/tmp/reply.edn|" + base64("(nihilite.builder.api/list-specs)"));
+             "eval:tcp:127.0.0.1:9001:reply-token|" + base64("(nihilite.builder.api/list-specs)"));
 vm.detach();
 ```
+
+The socket form for the code is what makes a payload of any size possible: the
+attach protocol caps one request argument at 1024 characters on JDK 11 through
+21 and drops an oversized request without a word.
 
 Inside the target the same code is reachable directly as `nihilite.builder.eval`
 (`open-session`, `eval-in`, `snapshot`, `interrupt`, `close-session`) — a
