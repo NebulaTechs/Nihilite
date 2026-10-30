@@ -5,8 +5,8 @@
    instance is armed on the supplied Instrumentation, driven by a
    generated type-level matcher and a single composed transformer
    (both in nihilite.trainer.transformer). This file owns the AgentBuilder
-   wiring and the install / uninstall / uninstall-spec! entry points that
-   the registry and the agent worker call into."
+   wiring and the install / uninstall / uninstall-spec-with-target! entry points
+   that the registry and the agent worker call into."
   (:require [nihilite.builder.registry :as reg]
             [nihilite.crafter.jul :as jul]
             [nihilite.trainer.advice :as advice]
@@ -156,7 +156,7 @@
       (count candidates))))
 
 (defn uninstall-spec-with-target!
-  "Variant of uninstall-spec! that accepts the target-internal directly,
+  "Variant of uninstall that accepts the target-internal directly,
    so registry/uninstall! can call it BEFORE removing the spec (the
    install path removes first, but uninstall needs the target-internal
    while the spec is still in the registry). Returns the count of

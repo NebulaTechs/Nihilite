@@ -100,7 +100,7 @@
 (defn rt-onExit
   "Forwarder body called by the generated ReturnAdvice.onExit stub. Returns
    the original value when no spec matches; otherwise delegates to
-   dispatch-return."
+   dispatch-return-for-spec."
   [^String method-name ^java.lang.Class host-class ^String descriptor
    ^Object self ^objects args ^Object original]
   (let [result (reentrancy-guard

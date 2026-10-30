@@ -101,7 +101,7 @@
    getResource lookup therefore fails with NoSuchFileException once the
    agent runs from the uberjar (no classpath entry exists at all) and
    even on the classpath path it would re-read four files on every
-   weave. nil.kernel.kernel.bytegen/generated-class-bytes hands back the
+   weave. nihilite.crafter.bytegen/generated-class-bytes hands back the
    exact bytes that were injected."
   []
   (let [advice-names ["nihilite.trainer.HookAdvice"

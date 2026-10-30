@@ -20,7 +20,7 @@
    (require registry + dispatch, then install-redefine-dispatcher!) and
    bindCompilerLoader() before signaling Worker ready.
 
-   Like the other kernel/* classes, this is emitted via the private
+   Like the other trainer/* classes, this is emitted via the private
    generate-class function because the ns gen-class form spec rejects
    the java.lang.instrument.Instrumentation parameter type."
   (:require [clojure.tools.logging :as log]
@@ -37,7 +37,7 @@
    tools.logging's factory so the underlying backend follows the user's
    `clojure.tools.logging.factory` system property (JUL/SLF4J/Log4j2);
    cast to Logger because the JUL impl returns a Logger directly and
-   the SLF4J/Log4j2 impls return their own types, but the kernel log
+   the SLF4J/Log4j2 impls return their own types, but the agent's log
    calls use reflection on `Logger` methods — so we always go through
    the JUL adapter for the premain/agent path that has no Clojure
    source available inside the fat jar."
