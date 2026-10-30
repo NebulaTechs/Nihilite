@@ -10,13 +10,14 @@
    Both exist for one consumer. The transformer has to answer \"does this
    class have any hook, and if not, can I remember that answer\" for every
    class the JVM loads, which is why it caches a negative result and needs a
-   signal telling it when to stop trusting the cache. Nothing else needs
-   either.
+   signal telling it when to stop trusting the cache. The registry and the
+   dispatcher read the same two queries, so every caller sees one answer per
+   target rather than one answer per caller.
 
-   Writing stays in nilitite.registry: install!, uninstall! and clear! own the
+   Writing stays in nihilite.builder.registry: install!, uninstall! and clear! own the
    lock and the mutation, and they call in here to update the index. That
    keeps the by-target map and the revision counter next to the operations
-   that must keep them consistent, while the kernel only ever sees queries."
+   that must keep them consistent, while the transformer only ever sees queries."
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
            [java.util.concurrent.atomic AtomicLong]))
 

@@ -1,5 +1,5 @@
 (ns nihilite.builder.registry.dispatch
-  "Hook-event dispatch and redefine-dispatcher wiring. The kernel's
+  "Hook-event dispatch and redefine-dispatcher wiring. The trainer's
    generated advice classes and the redefine delegation method call
    into the public functions here (dispatch-for-spec, dispatch-return-
    for-spec, dispatch-throw-for-spec, dispatch-redefine) via
