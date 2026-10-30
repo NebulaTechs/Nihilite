@@ -1,5 +1,6 @@
 (ns nihilite.test.redefine-instance-driver
-  "Replaces src/test/java/nihilite/test/redefineInstanceDriver.java.
+  "Replaces src/test/java/nihilite/test/redefineInstanceDriver.java. The Java
+   layer was removed entirely; this is that pass in Clojure.
 
    Validates :redefine on an instance method: the bridge receives the
    calling instance via @This (verified by comparing identity).

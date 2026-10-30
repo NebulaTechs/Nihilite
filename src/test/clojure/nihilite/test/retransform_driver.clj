@@ -1,5 +1,6 @@
 (ns nihilite.test.retransform-driver
-  "Replaces src/test/java/nihilite/test/retransformDriver.java.
+  "Replaces src/test/java/nihilite/test/retransformDriver.java. The Java
+   layer was removed entirely; this is that pass in Clojure.
 
    Validates the full ByteBuddy advice + redefine path against a
    generated `nihilite.test.retransform_driver$DummyTarget` class. Each

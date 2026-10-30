@@ -2,7 +2,7 @@
   "The two WARNs a spec removal makes when nothing can be retransformed.
 
    The first assertion's message used to say \"Bridge.uninstallSpec\" — that
-   class is gone (the Java layer was removed entirely; kernel/installer.clj
+   class is gone (the Java layer was removed entirely; trainer/installer.clj
    replaced it). What it actually checks is installer/uninstall-spec-with-
    target!, so this namespace requires the installer itself. It used to pass
    without that require only because the contract runner shares one JVM with
