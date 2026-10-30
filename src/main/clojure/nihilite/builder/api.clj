@@ -30,7 +30,9 @@
    | :arity            | no       | expected arg count; derived from the          |
    |                   |          | descriptor when omitted, and rejected when it |
    |                   |          | disagrees with it                             |
-   | :bridge           | yes      | 1-arg fn called from the advice/delegator     |
+    | :bridge           | yes      | 1-arg fn called from the advice/delegator. Not |
+    |                   |          | validated: a spec without one registers and    |
+    |                   |          | never fires.                                   |
    | :note             | no       | free-form description                         |
    | :action           | no       | `:observe` (default) / `:modify` / `:cancel`  |
    |                   |          | / `:subscriber`                               |
@@ -39,9 +41,13 @@
             [nihilite.builder.capability :as cap]))
 
 (defn install!
-  "Install a hook spec under `:id`. Atomic: validation, indexing by
-   target/method, and (when an `Instrumentation` is registered)
-   ByteBuddy retransform all happen under a single lock.
+  "Install a hook spec under `:id`. The registry mutation is atomic:
+   indexing by target/method and (when an `Instrumentation` is registered)
+   the ByteBuddy retransform happen under a single lock, and a failure
+   during the retransform puts the registry back the way it was, so a spec
+   is either fully indexed and woven or it was never there. Validation runs
+   before the lock is taken: it reads the spec and the JVM's own class
+   list, never the registry, so there is nothing in it to race with.
 
    Re-installing an id that is already registered REPLACES it: the previous
    spec leaves the target and method indexes, the class is retransformed so
@@ -63,11 +69,17 @@
    duplicate id instead of replacing it, throwing
    `:nihilite/duplicate-spec-id`.
 
-   THE TARGET METHOD IS CHECKED, WHEN THE JVM CAN ANSWER. A spec naming a
-   method that does not exist, or that exists with a descriptor it does not
-   have, is rejected with `:nihilite/target-method-not-found` or
+   THE TARGET METHOD IS CHECKED, WHEN THE JVM CAN ANSWER. The registry
+   already checks the SHAPE of a spec -- the descriptor is a well-formed JVM
+   method descriptor, the arity agrees with it, the action and the position
+   are legal. Shape is not existence. A spec naming a method that does not
+   exist, or that exists with a descriptor it does not have, is rejected with
+   `:nihilite/target-method-not-found` or
    `:nihilite/target-descriptor-mismatch` before it is registered. Such a
-   spec would otherwise register, report a woven count, and never fire.
+   spec would otherwise register, report a woven count, and never fire --
+   the \"registers but never fires\" mode docs/hook-limits.md documents,
+   reached by a route the reader would not expect because everything about
+   the spec looked right.
 
    The check only runs when the target class is ALREADY LOADED, and it
    never loads a class to find out -- resolving a name means loading the

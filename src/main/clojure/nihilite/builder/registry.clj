@@ -28,8 +28,7 @@
   (atom builtin-actions))
 
 (defn registered-actions
-  "Every action keyword install! will accept: the built-ins plus whatever
-   register-action! has added."
+  "Contract: see `nihilite.builder.api/registered-actions`."
   []
   @actions-registry)
 
@@ -43,16 +42,7 @@
   action-key)
 
 (defn unregister-action!
-  "Removes an action added by register-action!, returning true when one was
-   there to remove and false when it was not.
-
-   The built-ins cannot be removed and this throws for them rather than
-   ignoring the request. Dropping one would not disable it: the dispatch layer
-   branches on `:cancel` and `:subscriber` in walk-bucket regardless of this
-   set, so a removed `:cancel` would keep short-circuiting while install!
-   started rejecting specs that use it — the spec and the runtime would
-   disagree, which is the failure mode api/install-status! exists to rule out.
-   To stop a hook from cancelling, change its `:action`."
+  "Contract: see `nihilite.builder.api/unregister-action!`."
   [action-key]
   (when (contains? builtin-actions action-key)
     (throw (ex-info (str "cannot unregister built-in action " action-key)
@@ -250,27 +240,7 @@
   inst)
 
 (defn- verify-target-method!
-  "Reject a spec whose target method does not exist, or exists with a
-   different descriptor, while the caller can still see the error.
-
-   The registry already checks the SHAPE of a spec: the descriptor is a
-   well-formed JVM method descriptor, the arity agrees with it, the action
-   and the position are legal. Shape is not existence. A spec naming a
-   method that is not there registers successfully, reports a woven
-   count, and never fires -- the \"registers but never fires\" mode
-   docs/hook-limits.md documents, reached by a route the reader would not
-   expect because everything about the spec looked right.
-
-   The check is only possible when the target class is ALREADY LOADED, and
-   it never loads a class to find out: resolving a name means loading the
-   class, and a hook installed to observe a class-loading path re-enters
-   its own advice when the verification does it. So the loaded-class list
-   the Instrumentation already holds is what gets read, and a class that is
-   not loaded passes: a hook for a class that has not arrived yet is a
-   legitimate thing to install, and the target may load later.
-
-   Without an Instrumentation there is no class list to read, so there is
-   nothing to check against and the spec passes."
+  "Contract: see `nihilite.builder.api/install!`."
   [spec-id ^String target-internal ^String method-name ^String descriptor]
   (let [result (target/check-target-method @instrumentation-ref
                                                target-internal method-name
@@ -456,25 +426,7 @@
   (some-> ^clojure.lang.Atom (get r k) deref))
 
 (defn install-status!
-  "Install-side and runtime-side status for one spec.
-
-   Install side (status-index): :registered?, :woven-count (how many loaded
-   classes were retransformed), :pending?, :target-loader, :last-error.
-   Runtime side (stats-index): :fired, :modified, :cancelled, :exceptions --
-   how many times the advice has actually reached the bridge, changed a return
-   value, short-circuited, or thrown.
-
-   Both sides are reported because neither implies the other. A woven-count of 1
-   says the bytes were rewritten, not that the advice will run: the advice can
-   be entered and find no spec, or a woven call site can stay unlinked while the
-   target method keeps executing. That is why :fired is reported next to
-   :woven-count rather than derived from it.
-
-   A :fired of 0 is NOT a verdict. It means no bridge has run yet, which is
-   indistinguishable from a permanently dead hook without observing whether the
-   target method is being called at all -- which the advice cannot see, because
-   an advice that never runs is exactly the case where it has no data. Check
-   :fired after the target method has demonstrably been called."
+  "Contract: see `nihilite.builder.api/install-status!`."
   [id]
   (let [id (str id)
         ref (.get status-index id)
@@ -805,7 +757,7 @@
 
 (defn matching
   "Specs currently registered for `target-internal`. The query the weaving
-   machinery uses; prefer nilitite.registry.index/matching when you only need
+   machinery uses; prefer nihilite.builder.registry.index/matching when you only need
    to read, since that layer exists precisely to keep callers off the
    registry's internals."
   ^java.util.List [target-internal]
@@ -821,6 +773,8 @@
 
 (defn replace-bridge!
   "Swaps a registered spec's bridge for `new-bridge`, in place.
+
+   Contract: see `nihilite.builder.api/swap-bridge!`.
 
    The spec value itself is immutable, so a new map is built and every place
    that holds the old one has to be rewritten. There are three, and all
@@ -838,9 +792,8 @@
    value per id in all three maps.
 
    Deliberately does NOT bump the revision or retransform: the shape a
-   transform matches on -- class, method, arity, position -- is unchanged, so
-   the already-woven call sites are still correct and the next fire picks the
-   new bridge up through the lookup. That is what makes this a hot rewrite."
+   transform matches on is unchanged, so the already-woven call sites are
+   still correct."
   [id new-bridge]
   (let [by-id ^ConcurrentHashMap by-id
         k (str id)]
