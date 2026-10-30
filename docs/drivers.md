@@ -1,6 +1,6 @@
 # Drivers
 
-`clojure -T:build check` runs one contract test and 18 driver passes in this
+`clojure -T:build check` runs one contract test and 21 driver passes in this
 order:
 
 ```clojure
@@ -38,15 +38,15 @@ test.
 | --- | --- |
 | `weaving-contract-driver` | the registry agrees with the JVM after a fresh install, an uninstall and reinstall, and a `clear!` and reinstall under a new id; the bridge's own counter is the ground truth for `:fired` |
 | `retransform-driver` | all four positions on an already-loaded class; a co-located `:entry` survives a `:redefine` uninstall; the reentrancy guard cuts a bridge that re-enters its own target |
-| `javaagent-driver` | the agent classpath shape: the system loader is a `URLClassLoader`, worker-equivalent concurrent requires succeed, and a file-transport eval request round-trips |
-| `eval-attach-driver` | a second process attaching to that child and driving `loadAgent` with `eval:` requests: value, `*out*`, thrown error, `:done false`, poll, interrupt, close, and a hook installed over the channel that then fires |
+| `javaagent-driver` | the agent classpath shape: the system loader is a `URLClassLoader`, worker-equivalent concurrent requires succeed, and a socket-transport eval request round-trips |
+| `eval-attach-driver` | a second process attaching to that child and driving `loadAgent` with `eval:` requests: value, `*out*`, thrown error, `:done false`, poll, interrupt, close, and a hook installed over the channel that then fires; the code also travels over its own socket, so a payload past the 1024-character attach argument limit still arrives |
 | `eval-jar-driver` | the eval stack loads and runs from the uberjar alone, with source directories, class directories, and the local Maven basis off the classpath |
 | `examples-jdkstdlib-driver` | the packaged agent runs the `jdkstdlib` example in a child JVM, and its `FileOutputStream.write` hook weaves, fires, and records no exception |
 | `examples-hotrewrite-driver` | the packaged agent runs the `hotrewrite` example in a child JVM, and `swap-bridge!` sends consecutive `BitSet.size` calls to bridge v1 and then bridge v2 |
 | `examples-positions-driver` | the packaged agent runs the `positions` example in a child JVM, and `:entry`, `:return`, `:throw`, and `:redefine` fire with their distinct bridge shapes |
 | `examples-lifecycle-driver` | the packaged agent runs the `lifecycle` example in a child JVM, and install, fire, status inspection, bridge swap, uninstall, and public lookup/list cleanup all succeed |
 | `examples-actions-driver` | the packaged agent runs the `actions` example in a child JVM, and `:observe`, `:modify`, `:cancel`, and `:subscriber` produce their distinct observable results and counters |
-| `examples-attach-eval-driver` | a plain target JVM with no Nihilite can be attached to at runtime, then returns the expected value through the file-backed eval protocol and closes its session |
+| `examples-attach-eval-driver` | a plain target JVM with no Nihilite can be attached to at runtime, then returns the expected value through the socket-backed eval protocol and closes its session |
 | `redefine-instance-driver` | an instance method redefined such that the body captures `self` via `@This` |
 | `indy-driver` | an invokedynamic call site woven into a bootstrap-loader method actually firing |
 | `prod-bootstrap-driver` | all four positions installing and firing on a bootstrap-loader class through the production `install!` path, with the worker itself supplying the redefine dispatcher |
@@ -87,7 +87,7 @@ keep the examples from depending on `examples/` being on the classpath.
 **`examples-attach-eval-driver` proves that a JVM without Nihilite can be
 attached to at runtime.** The target starts as a plain JVM with no agent. The
 attaching process loads the packaged agent jar through
-`com.sun.tools.attach.VirtualMachine`, then uses the file-backed eval protocol
+`com.sun.tools.attach.VirtualMachine`, then uses the socket-backed eval protocol
 to run the session lifecycle in that target.
 
 **`prod-bootstrap-driver` waits for the worker's dispatcher rather than

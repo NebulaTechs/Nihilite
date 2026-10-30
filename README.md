@@ -231,7 +231,7 @@ observable output, and CI check.
 clojure -T:build check
 ```
 
-The check runs one contract test plus 18 drivers that go through a real
+The check runs one contract test plus 21 drivers that go through a real
 `Instrumentation`, which the contract test cannot reach. What each driver
 proves and why it asserts what it does: [docs/drivers.md](docs/drivers.md).
 

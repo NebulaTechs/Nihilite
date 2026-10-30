@@ -61,7 +61,7 @@ jobs:
 
       # Do not expand this back into a per-driver list. It was one, in four
       # places, and had drifted by three drivers while the suite beside it ran
-      # all thirteen.
+      # every driver in :check-order.
       - name: check (contract tests + every driver in :check-order)
         run: clojure -T:build check
 
@@ -94,7 +94,7 @@ jobs:
 
       # Do not expand this back into a per-driver list. It was one, in four
       # places, and had drifted by three drivers while the suite beside it ran
-      # all thirteen.
+      # every driver in :check-order.
       - name: check (contract tests + every driver in :check-order)
         run: clojure -T:build check
 
@@ -127,7 +127,7 @@ jobs:
 
       # Do not expand this back into a per-driver list. It was one, in four
       # places, and had drifted by three drivers while the suite beside it ran
-      # all thirteen.
+      # every driver in :check-order.
       - name: check (contract tests + every driver in :check-order)
         run: clojure -T:build check
 
@@ -160,7 +160,7 @@ jobs:
 
       # Do not expand this back into a per-driver list. It was one, in four
       # places, and had drifted by three drivers while the suite beside it ran
-      # all thirteen.
+      # every driver in :check-order.
       - name: check (contract tests + every driver in :check-order)
         run: clojure -T:build check
 
