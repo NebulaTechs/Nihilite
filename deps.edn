@@ -2,8 +2,8 @@
          ;; target/classes LAST, and it must stay last. HookAdvice and the two
          ;; generated exception classes are written there by AOT and nothing
          ;; else can provide them, which is why the contract namespaces fail to
-         ;; load without it -- 13 of 21, on a static (catch
-         ;; HookCancelledException) in dispatch.clj:133 and advice.clj:90 whose
+         ;; load without it -- 13 of 23, on a static (catch
+         ;; HookCancelledException) in dispatch.clj:149 and advice.clj:90 whose
          ;; constant-pool ref has to resolve at ns-load.
          ;;
          ;; :extra-paths PREPENDS, so putting it there instead would place it
@@ -26,7 +26,7 @@
 :aliases
   {;; :dev adds the test sources so an editor or REPL sees them. Together with
    ;; target/classes in :paths that is enough to LOAD the contract namespaces,
-   ;; which it was not before: 13 of the 21 used to fail at ns-load on a
+   ;; which it was not before: 13 of the 23 used to fail at ns-load on a
    ;; generated exception class that no classpath provided.
    ;;
    ;; It still does NOT make `clojure -M:dev -m ...` a way to RUN the suite.

@@ -85,7 +85,7 @@
     (.mkdirs f)))
 
 (defn- compile-script-for
-  "Returns a Clojure -e script that AOT-compiles the given kernel namespaces.
+  "Returns a Clojure -e script that AOT-compiles the given namespaces.
    Each namespace is `require`d first because clojure.core/compile demands
    the source on the classpath (it re-resolves the var to recover its body,
    which an unknown symbol cannot satisfy)."
