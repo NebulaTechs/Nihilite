@@ -1,5 +1,6 @@
 (ns nihilite.test.javaagent-classpath-driver
-  "Replaces src/test/java/nihilite/javaagentClasspathDriver.java.
+  "Replaces src/test/java/nihilite/javaagentClasspathDriver.java. The Java
+   layer was removed entirely; this is that pass in Clojure.
 
    Two halves.
 
@@ -10,7 +11,7 @@
      - a worker-equivalent thread can require registry + dispatch + eval
        concurrently with the main thread doing the same
      - an eval request round-trips through the real protocol code, including
-       the file transport and the reply written to disk
+       the socket transport and the reply written to the socket
 
    And a jar-smoke path that spawns `java -jar <jar>` and gates on:
 
@@ -34,9 +35,9 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [nihilite.builder.eval.protocol :as proto])
-  (:import [java.io ByteArrayOutputStream File]
-           [java.net URLClassLoader]
-           [java.util Base64]
+  (:import [java.io ByteArrayOutputStream]
+           [java.net InetAddress InetSocketAddress ServerSocket URLClassLoader]
+           [java.util Base64 UUID]
            [java.util.concurrent TimeUnit])
   (:gen-class
     :name nihilite.test.javaagentClasspathDriver
@@ -105,19 +106,58 @@
 (defn- b64 ^String [^String s]
   (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
 
+(defn- read-token-line!
+  "Reads one newline-terminated line, one byte at a time.
+
+   Byte at a time on purpose: a buffered reader would swallow the bytes that
+   follow the newline, and the reply payload follows it."
+  ^String [^java.io.InputStream in]
+  (let [sb (StringBuilder.)]
+    (loop []
+      (let [b (.read in)]
+        (when (neg? b)
+          (throw (ex-info "peer closed the connection before sending its token" {})))
+        (if (= b 10)
+          (.toString sb)
+          (do (.append sb (char b)) (recur)))))))
+
+(defn- read-all!
+  "Reads the rest of the stream as UTF-8 text."
+  ^String [^java.io.InputStream in]
+  (let [buf (byte-array 8192)
+        sb  (StringBuilder.)]
+    (loop []
+      (let [n (.read in buf)]
+        (if (neg? n)
+          (.toString sb)
+          (do (.append sb (String. buf 0 n "UTF-8")) (recur)))))))
+
 (defn run-eval-protocol-probe []
-  (let [out-file (File/createTempFile "nihilite-eval-probe" ".edn")
-        code     "(do (println \"from-eval\") (+ 40 2))"]
-    (.delete out-file)
+  (let [server (ServerSocket.)
+        code   "(do (println \"from-eval\") (+ 40 2))"]
+    (.bind server (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0))
+    (.setSoTimeout server 10000)
     (try
-      (let [args    (str "eval:file:" (.getPath out-file) "|" (b64 code))
+      (let [token   (str (UUID/randomUUID))
+            args    (str "eval:tcp:127.0.0.1:" (.getLocalPort server) ":" token
+                         "|" (b64 code))
             req     (proto/parse-request args)
             reply   (proto/handle-args! args)
-            on-disk (when (.exists out-file) (slurp out-file))
+            socket  (.accept server)
+            in      (.getInputStream socket)
+            got     (read-token-line! in)
+            payload (read-all! in)
+            on-wire (try (edn/read-string payload) (catch Throwable _ nil))
             problems (cond-> []
-                       (not= {:kind :file :path (.getPath out-file)}
+                       (not= {:kind :tcp
+                              :host "127.0.0.1"
+                              :port (.getLocalPort server)
+                              :token token}
                              (:transport req))
                        (conj (str "transport parsed as " (pr-str (:transport req))))
+
+                       (not= token got)
+                       (conj (str "the reply carried the token " (pr-str got)))
 
                        (not= "42" (:value reply))
                        (conj (str ":value was " (pr-str (:value reply))))
@@ -128,12 +168,11 @@
                        (not (str/includes? (str (:out reply)) "from-eval"))
                        (conj (str ":out was " (pr-str (:out reply))))
 
-                       (nil? on-disk)
-                       (conj "file transport wrote nothing")
+                       (nil? on-wire)
+                       (conj "the socket carried no readable EDN reply")
 
-                       (and on-disk (nil? (try (edn/read-string on-disk)
-                                               (catch Throwable _ nil))))
-                       (conj "file transport wrote unreadable EDN"))]
+                       (and on-wire (not= (:value reply) (:value on-wire)))
+                       (conj "the reply on the socket differs from the returned reply"))]
         (println "javaagentClasspathDriver: eval transport =" (pr-str (:transport req)))
         (println "javaagentClasspathDriver: eval reply =" (pr-str reply))
         (if (seq problems)
@@ -147,7 +186,7 @@
         (log-cause-chain t)
         (fail!))
       (finally
-        (.delete out-file)))))
+        (.close server)))))
 
 (defn- check-markers [state snapshot-string]
   (when (and (not (:init-done? @state))

@@ -5,10 +5,17 @@
    exercises the path that actually matters and that nothing else reaches:
 
      VirtualMachine.attach(pid)
-       .loadAgent(jar, \"eval:file:<reply>|<base64-code>\")
+       .loadAgent(jar, \"eval:tcp:HOST:PORT:TOKEN|CODE-SOURCE\")
        .detach()
 
-   and then reads the reply the target JVM wrote to disk.
+   and then reads the reply the target JVM sent back over the socket.
+
+   Both code sources are covered. The inline one carries the code in the
+   attach argument, which the JDK's attach protocol caps at 1024 characters
+   on JDK 11 through 21, so it only works for short code. The socket one
+   carries the code on its own channel, and the driver sends a payload well
+   past that cap through it: that request could not be expressed at all
+   before, and it is the reason the protocol has a socket code source.
 
    The spawned child gets -javaagent and a classpath holding only third-party
    jars, so every nihilite class it uses comes out of the agent jar rather
@@ -25,7 +32,8 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str])
   (:import [java.io ByteArrayOutputStream File]
-           [java.util Base64]
+           [java.net InetAddress InetSocketAddress ServerSocket]
+           [java.util Base64 UUID]
            [java.util.concurrent TimeUnit]
            [com.sun.tools.attach VirtualMachine])
   (:gen-class
@@ -65,6 +73,115 @@
 
 (defn- b64 ^String [^String s]
   (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
+
+(def ^:private accept-timeout-ms
+  "How long the driver waits for the target to open a channel.
+
+   The target opens the reply channel before it answers, and the code channel
+   while the attach is still in flight, so a target that never opens one is
+   already broken and waiting longer only hides it."
+  30000)
+
+(def ^:private large-code
+  "A payload well past the 1024-character attach argument limit.
+
+   The attach argument used to carry the code itself, and the JDK's attach
+   protocol caps one argument at 1024 characters on JDK 11 through 21, so
+   this code could not be sent at all. It travels on a socket now, and its
+   size is the proof."
+  (str "(do"
+       "    (require 'nihilite.builder.eval)"
+       "    (let [pad \""
+       (apply str (repeat 1500 "x"))
+       "\"]"
+       "      {:pad-length (count pad)}))"))
+
+(defn- open-loopback-server!
+  "Opens a server socket on the loopback interface with an ephemeral port.
+
+   Loopback only: the channel is between this driver and the one child it
+   attached to, and nothing else should be able to reach it."
+  ^ServerSocket []
+  (let [server (ServerSocket.)]
+    (.bind server (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0))
+    (.setSoTimeout server accept-timeout-ms)
+    server))
+
+(defn- read-token-line!
+  "Reads one newline-terminated line, one byte at a time.
+
+   Byte at a time on purpose. A buffered reader would swallow the bytes that
+   follow the newline, and on the code channel those bytes are the code."
+  ^String [^java.io.InputStream in]
+  (let [sb (StringBuilder.)]
+    (loop []
+      (let [b (.read in)]
+        (when (neg? b)
+          (throw (ex-info "peer closed the connection before sending its token" {})))
+        (if (= b 10)
+          (.toString sb)
+          (do (.append sb (char b)) (recur)))))))
+
+(defn- read-all!
+  "Reads the rest of the stream as UTF-8 text."
+  ^String [^java.io.InputStream in]
+  (let [buf (byte-array 8192)
+        sb  (StringBuilder.)]
+    (loop []
+      (let [n (.read in buf)]
+        (if (neg? n)
+          (.toString sb)
+          (do (.append sb (String. buf 0 n "UTF-8")) (recur)))))))
+
+(defn- check-token!
+  "Requires the peer's token to be the one this driver handed out."
+  [expected got]
+  (when-not (= expected got)
+    (throw (ex-info "peer answered with the wrong token"
+                    {:expected expected :got got}))))
+
+(defn- read-reply!
+  "Accepts the target's reply on the reply channel and parses it."
+  [^ServerSocket server token]
+  (let [sock (.accept server)
+        in   (.getInputStream sock)]
+    (try
+      (check-token! token (read-token-line! in))
+      (edn/read-string (read-all! in))
+      (finally
+        (.close sock)))))
+
+(defn- start-code-feeder!
+  "Starts the thread that hands the code to the target.
+
+   loadAgent blocks until agentmain returns, and agentmain cannot return
+   before it has read the code, so the code has to be on its way while
+   loadAgent is still blocked. That is what this thread is for."
+  [^ServerSocket server token code]
+  (let [outcome (atom nil)
+        thread  (Thread.
+                 (fn []
+                   (try
+                     (let [sock (.accept server)
+                           in   (.getInputStream sock)]
+                       (try
+                         (check-token! token (read-token-line! in))
+                         (let [out (.getOutputStream sock)]
+                           (.write out (.getBytes ^String code "UTF-8"))
+                           (.flush out)
+                           (.shutdownOutput out))
+                         ;; Wait for the target to close its end so both
+                         ;; sides tear the socket down cleanly.
+                         (read-all! in)
+                         (reset! outcome {:ok true})
+                         (finally
+                           (.close sock))))
+                     (catch Throwable failure
+                       (reset! outcome {:error failure}))))
+                 "eval-attach-code-feeder")]
+    (.setDaemon thread true)
+    (.start thread)
+    {:thread thread :outcome outcome}))
 
 (defn- third-party-classpath
   "The driver's own classpath minus the project's own directories.
@@ -131,22 +248,39 @@
           (or (> (System/nanoTime) deadline) (not (.isAlive proc))) log
           :else (do (Thread/sleep 100) (recur)))))))
 
-(defn- reply-file ^File []
-  (doto (File/createTempFile "nihilite-attach-reply" ".edn")
-    (.deleteOnExit)))
-
 (defn- eval-in-target!
-  "One full attach round trip. Sends code, waits for loadAgent to return, and
-   returns the reply the target wrote.
+  "One full attach round trip with the code inline in the attach argument.
 
-   The reply file is removed first and asserted present after, so a request
-   that silently wrote nothing is a failure rather than a stale read."
-  [^VirtualMachine vm ^String jar ^File reply code]
-  (.delete reply)
-  (.loadAgent vm jar (str "eval:file:" (.getPath reply) "|" (b64 code)))
-  (when-not (.exists reply)
-    (throw (ex-info "target wrote no reply file" {:code code})))
-  (edn/read-string (slurp reply)))
+   The reply comes back over the socket. The code travels in the attach
+   argument, which the JDK caps at 1024 characters on JDK 11 through 21, so
+   this form only works for short code."
+  [^VirtualMachine vm ^String jar ^ServerSocket reply-server code]
+  (let [token   (str (UUID/randomUUID))
+        request (str "eval:tcp:127.0.0.1:" (.getLocalPort reply-server) ":" token
+                     "|" (b64 code))]
+    (.loadAgent vm jar request)
+    (read-reply! reply-server token)))
+
+(defn- eval-in-target-via-socket!
+  "One full attach round trip with the code on its own socket.
+
+   The attach argument carries only the two channel addresses, so the code's
+   size does not enter the attach protocol at all."
+  [^VirtualMachine vm ^String jar ^ServerSocket reply-server code]
+  (let [reply-token (str (UUID/randomUUID))
+        code-token  (str (UUID/randomUUID))
+        code-server (open-loopback-server!)
+        request     (str "eval:tcp:127.0.0.1:" (.getLocalPort reply-server) ":" reply-token
+                         "|tcp:127.0.0.1:" (.getLocalPort code-server) ":" code-token)]
+    (try
+      (let [{:keys [thread outcome]} (start-code-feeder! code-server code-token code)]
+        (.loadAgent vm jar request)
+        (.join thread)
+        (when-let [failure (:error outcome)]
+          (throw failure))
+        (read-reply! reply-server reply-token))
+      (finally
+        (.close code-server)))))
 
 (defn- value->data
   "The reply's :value is the session's rendering of the form's value, so it
@@ -168,8 +302,8 @@
    nesting stays shallow: at seven levels a single stray paren closed the
    inner try, and the compiler reported it as an unresolved finally rather
    than as the paren error it was."
-  [^VirtualMachine vm ^String jar ^File reply problems]
-  (let [ask (fn [code] (eval-in-target! vm jar reply code))]
+  [^VirtualMachine vm ^String jar ^ServerSocket reply-server problems]
+  (let [ask (fn [code] (eval-in-target! vm jar reply-server code))]
     ;; 1. the plain round trip
     (let [r (ask "(+ 1 2)")]
       (check "eval returns a value" problems
@@ -225,17 +359,28 @@
           fired (parse-long (str (:value r)))]
       (check "hook installed over the eval channel fires" problems
              (and fired (pos? fired))
+             (pr-str (select-keys r [:value :error]))))
+
+    ;; 10. a payload past the attach argument limit travels on the socket.
+    ;;     This request could not be expressed before: the code used to ride
+    ;;     in the attach argument, and the JDK drops an argument longer than
+    ;;     1024 characters without a word.
+    (check "the socket payload really is past 1024 characters" problems
+           (> (count large-code) 1024)
+           (str "payload was " (count large-code) " characters"))
+    (let [r (eval-in-target-via-socket! vm jar reply-server large-code)]
+      (check "socket code source carries a payload past 1024 chars" problems
+             (= {:pad-length 1500} (value->data r))
              (pr-str (select-keys r [:value :error]))))))
 
-(defn- report! [child reply problems]
+(defn- report! [child problems]
   (let [log (child-log child)
         seen (filterv (fn [[sig _]] (.contains log sig)) failure-signatures)]
     (when (seq seen)
       (swap! problems conj
              (str "child log carried " (str/join ", " (map first seen)))))
     (println "evalAttachDriver: child log tail:\n"
-             (subs log (max 0 (- (count log) 1200))))
-    (.delete reply)
+             (subs log (max 0 (- (count log) 8000))))
     (if (seq @problems)
       (do
         (println "evalAttachDriver: FAILED")
@@ -251,7 +396,7 @@
   (let [jar      (or (first args) "target/nihilite.jar")
         jar-file (File. ^String jar)
         problems (atom [])
-        reply    (reply-file)]
+        reply-server (open-loopback-server!)]
     (when-not (.exists jar-file)
       (println "evalAttachDriver: jar not found:" jar)
       (System/exit 2))
@@ -269,7 +414,7 @@
             ;; the only place the target's side of the failure appears -- is
             ;; never printed.
             (try
-              (run-attach-checks! vm jar reply problems)
+              (run-attach-checks! vm jar reply-server problems)
               (catch Throwable t
                 (swap! problems conj (str "attach checks threw: " (.getMessage t)))
                 (println "evalAttachDriver: attach checks threw"
@@ -281,4 +426,4 @@
                (catch InterruptedException _ (.interrupt (Thread/currentThread))))))
       ;; after the finally, not inside it: one finally per try, and report!
       ;; exits the process so it has to be the last form anyway.
-      (report! child reply problems))))
+      (report! child problems))))

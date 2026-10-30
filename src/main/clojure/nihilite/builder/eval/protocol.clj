@@ -3,20 +3,28 @@
 
    VirtualMachine.loadAgent takes a single String and returns void, so that
    String is the only way in and there is no way back. This namespace turns
-   it into a usable channel by replying through one of three transports, and
+   it into a usable channel by replying through one of two transports, and
    by keeping the protocol narrow enough that an attacher can implement it
    in any language:
 
-     eval:<transport>|<base64-code>
+     eval:TRANSPORT|CODE-SOURCE
 
-   <transport> is one of
+   TRANSPORT is one of
 
      discard              run it, reply nowhere
-     file:<path>          reply written to that file as EDN
-     tcp:<host>:<port>:<token>
-                          reply written to a socket, token echoed on the
+     tcp:HOST:PORT:TOKEN
+                          reply written to a socket, TOKEN echoed on the
                           first line so a concurrent attacher can tell its
                           own replies apart
+
+   CODE-SOURCE is one of
+
+     BASE64-CODE          the code itself, Base64 of its UTF-8 bytes
+     tcp:HOST:PORT:TOKEN
+                          the code read from that socket. The target
+                          connects, echoes TOKEN on the first line, then
+                          reads the code until the attacher closes its
+                          half of the connection.
 
    agentArgs without the eval: prefix is not an eval request, so an existing
    -javaagent or -jar invocation keeps behaving exactly as before.
@@ -33,15 +41,25 @@
      :done      false when the wait expired with the eval still running
 
    A :done of false means the session is still live: poll it by sending a
-   second request whose code is (snapshot <session-id>). Polling costs one
+    second request whose code is (snapshot SESSION-ID). Polling costs one
    attach round trip per read, which is the price of loadAgent having no
    return channel. Anything wanting cheaper reads can start a user-supplied
-   control plane from its own init script."
+   control plane from its own init script.
+
+   The two directions are symmetric: a socket can carry the code in and the
+   reply out. The socket form for the code is not a nicety. The attach
+   protocol allows at most 1024 characters in one request argument on JDK 11
+   through 21 -- AttachOperation::arg_length_max, checked by the target in
+   AttachOperation::RequestReader::read_request -- and the JDK drops an
+   oversized request without a word, so the attaching side sees only a
+   Premature EOF. Code that travels over a socket keeps the request's size
+   independent of the code's size, and a socket exists on every platform the
+   JVM runs on, Android included, so nothing has to be written to shared
+   storage first."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
             [nihilite.builder.eval :as ev])
-  (:import [java.io File]
-           [java.net InetSocketAddress Socket]
+  (:import [java.net InetSocketAddress Socket]
            [java.util Base64]))
 
 (def ^:const prefix "eval:")
@@ -65,24 +83,85 @@
   [^String args]
   (and (string? args) (.startsWith args ^String prefix)))
 
+(defn- parse-code-source
+  "Parses the CODE-SOURCE half of a request.
+
+   BASE64-CODE is the code itself, carried inline. tcp:HOST:PORT:TOKEN means
+   the code is read from that socket instead. Base64's alphabet cannot
+   contain a colon, so the two forms can never be confused."
+  [^String code-source]
+  (if (.startsWith code-source "tcp:")
+    (let [[_ host port token] (str/split code-source #":" 4)]
+      {:kind :tcp
+       :host  (or host "127.0.0.1")
+       :port  (parse-long (or port "0"))
+       :token (or token "")})
+    {:kind :inline :code (b64-decode code-source)}))
+
 (defn parse-request
-  "Splits agentArgs into {:transport :code}. Returns nil when args is not an
-   eval request, so the caller can fall through to its previous behaviour."
+  "Splits agentArgs into {:transport SPEC :code-source SPEC}. Returns nil when
+   args is not an eval request, so the caller can fall through to its previous
+   behaviour.
+
+   The two halves are parsed independently. TRANSPORT says where the reply
+   goes, CODE-SOURCE says where the code comes from, and a request is free to
+   use a different mechanism for each -- a socket for the code in, a socket
+   for the reply out.
+
+   Parsing does no I/O: the socket form is read later, by read-code!."
   [^String args]
   (when (eval-request? args)
     (let [body (subs args (count prefix))
           cut  (.indexOf ^String body "|")]
       (when (pos? cut)
-        (let [[kind & more] (str/split (subs body 0 cut) #":")]
+        (let [code-source (subs body (inc cut))
+              ;; Four parts at most, so a TOKEN that contains a colon keeps it
+              ;; instead of being cut short. The code source parses the same way.
+              [kind & more] (str/split (subs body 0 cut) #":" 4)]
           {:transport (case kind
                         "discard" {:kind :discard}
-                        "file"    {:kind :file :path (first more)}
                         "tcp"     {:kind :tcp
                                    :host  (nth more 0 "127.0.0.1")
                                    :port  (parse-long (nth more 1 "0"))
                                    :token (nth more 2 "")}
                         {:kind :unknown :spec kind})
-           :code (b64-decode (subs body (inc cut)))})))))
+           :code-source (parse-code-source code-source)})))))
+
+(defn- read-tcp-code!
+  "Reads the code from the attacher's socket.
+
+   The target connects, writes the token on the first line so the attacher
+   can check it is talking to the agent that answered its request, and then
+   reads until the attacher closes its half of the connection. The size of
+   the code is bounded by nothing but the socket, which is the whole point:
+   the attach argument it arrived in has a hard 1024-character limit on JDK
+   11 through 21."
+  [{:keys [host port token]}]
+  (with-open [sock (Socket.)]
+    (.connect sock (InetSocketAddress. ^String host (int port)) 5000)
+    (let [out (.getOutputStream sock)]
+      (.write out (.getBytes ^String (str token "\n") "UTF-8"))
+      (.flush out))
+    (let [in  (.getInputStream sock)
+          buf (byte-array 8192)]
+      (loop [sb (StringBuilder.)]
+        (let [n (.read in buf)]
+          (if (neg? n)
+            (.toString sb)
+            (recur (.append sb (String. buf 0 n "UTF-8")))))))))
+
+(defn read-code!
+  "Resolves the CODE-SOURCE half of a request into the code string.
+
+   Split out from parse-request because parsing is pure and the socket form
+   has to do I/O. An unknown code source throws: the request asked for
+   something this agent cannot provide, and silently evaluating nothing
+   would look like a successful no-op."
+  [{:keys [kind] :as source}]
+  (case kind
+    :inline (:code source)
+    :tcp    (read-tcp-code! source)
+    (throw (ex-info "unknown eval code source" {:code-source source}))))
 
 (defn- stream-text [snapshot stream]
   (apply str (keep (fn [e] (when (= stream (:stream e)) (:text e)))
@@ -138,10 +217,15 @@
       (.flush out))))
 
 (defn reply!
-  "Sends the reply through the transport. A transport that cannot be reached
+  "Sends the reply through the transport. A transport that cannot be REACHED
    is logged rather than thrown: the eval already ran, and losing the reply
    must not turn into an agent failure. The client sees the loss as a
    timeout, which is a signal it can act on.
+
+   A transport name this protocol does not implement is a different thing:
+   that is a malformed request, and the client is about to wait for a reply
+   that can never come. It is raised, so the attacher fails now instead of
+   timing out later.
 
    These two diagnostics go through the logging system rather than *err*
    because they are Nihilite's own failures, not the evaluated code's
@@ -150,23 +234,22 @@
    redirected logging. Logging also flushes, which a bare *err* println
    does not reliably do before System/exit."
   [{:keys [kind] :as transport} ^String payload]
-  (try
-    (case kind
-      :discard :ok
-      :file    (do (spit ^File (File. ^String (:path transport)) payload) :ok)
-      :tcp     (send-tcp! transport payload)
-      (do (log/warn "unknown eval transport:" (pr-str transport))
-          :unknown))
-    (catch Throwable t
-      (log/error t "eval reply failed")
-      :failed)))
+  (case kind
+    :discard :ok
+    :tcp     (try
+               (send-tcp! transport payload)
+               (catch Throwable t
+                 (log/error t "eval reply failed")
+                 :failed))
+    (throw (ex-info "unknown eval transport" {:transport transport}))))
 
 (defn handle-args!
   "Entry point for an agent's argument string. Returns nil when the args are
    not an eval request, so the caller can keep its previous behaviour."
   [^String args]
-  (if-let [{:keys [transport] :as req} (parse-request args)]
-    (let [reply (assoc (run-request! req) :token (:token transport))]
+  (if-let [{:keys [transport code-source]} (parse-request args)]
+    (let [code  (read-code! code-source)
+          reply (assoc (run-request! {:code code}) :token (:token transport))]
       (reply! transport (pr-str reply))
       reply)
     nil))
