@@ -1,6 +1,6 @@
 (ns nihilite.crafter.bytegen
   "Runtime ByteBuddy class generation. Replaces the AOT clojure.core$generate_class
-   path for kernel classes that don't need the JVM before premain runs.
+   path for the agent's classes that don't need the JVM before premain runs.
 
    Used by advice/dispatcher/transformer to materialise ByteBuddy-facing
    classes at first-use time, with method bodies that forward to plain
