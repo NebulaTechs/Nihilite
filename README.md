@@ -205,7 +205,7 @@ clojure -T:build uberjar        # -> target/nihilite.jar
 | [`examples/positions/init.clj`](examples/positions/init.clj) | the four hook positions `:entry`, `:return`, `:throw`, and `:redefine`, with their distinct bridge shapes | `java -Dnihilite.init='(load-file "examples/positions/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
 | [`examples/lifecycle/init.clj`](examples/lifecycle/init.clj) | install, fire, inspect `install-status!`, swap, uninstall, and public lookup/list cleanup | `java -Dnihilite.init='(load-file "examples/lifecycle/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
 | [`examples/actions/init.clj`](examples/actions/init.clj) | the four built-in actions `:observe`, `:modify`, `:cancel`, and `:subscriber`, and how their observable results differ | `java -Dnihilite.init='(load-file "examples/actions/init.clj")' -javaagent:target/nihilite.jar -jar your-app.jar` |
-| [`examples/dynamic_attach_eval.clj`](examples/dynamic_attach_eval.clj) | attaching to a running JVM with `com.sun.tools.attach.VirtualMachine` and driving the file-backed eval protocol with no Java source | `clojure examples/dynamic_attach_eval.clj <pid> target/nihilite.jar` |
+| [`examples/dynamic_attach_eval.clj`](examples/dynamic_attach_eval.clj) | attaching to a running JVM with `com.sun.tools.attach.VirtualMachine` and driving the socket-backed eval protocol with no Java source | `clojure examples/dynamic_attach_eval.clj <pid> target/nihilite.jar` |
 
 `nihilite.init` is a Clojure **FORM**, not a path. A bare
 `examples/jdkstdlib/init.clj` is analysed as a symbol and fails with

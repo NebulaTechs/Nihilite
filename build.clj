@@ -372,7 +372,7 @@
                 "dynamic-attach-eval"])
     :uber? true
     :doc "Proves the packaged agent can attach to a Clojure target that has
-    no Nihilite before the attach and evaluate through the file-backed protocol."}
+    no Nihilite before the attach and evaluate through the socket-backed protocol."}
   :retransform-driver
    {:label "Retransform driver"
     :main "nihilite.test.retransformDriver"

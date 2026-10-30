@@ -154,7 +154,7 @@ four actions and checks their results and runtime counters. The probe prints
 ## `dynamic_attach_eval.clj`
 
 **What it demonstrates:** Attaching Nihilite to an already-running JVM with
-`com.sun.tools.attach.VirtualMachine`, then driving the file-backed eval
+`com.sun.tools.attach.VirtualMachine`, then driving the socket-backed eval
 protocol without Java source. The evaluated code opens a session, evaluates
 `(+ 20 22)`, polls the result, and closes the session.
 
@@ -173,7 +173,7 @@ clojure examples/dynamic_attach_eval.clj <pid> target/nihilite.jar
 `nihilite:init-done`, because it had no Nihilite agent when it started.
 
 **CI-gated:** Yes. `clojure -T:build examples-attach-eval-driver` starts a
-plain target JVM, attaches to it, and checks the file-backed eval result. The
+plain target JVM, attaches to it, and checks the socket-backed eval result. The
 driver prints `DRIVER_PASS examples attach: dynamic-attach-eval`.
 
 ## How these are tested

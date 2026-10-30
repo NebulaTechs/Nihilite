@@ -6,15 +6,30 @@
 
      clojure examples/dynamic_attach_eval.clj <pid> <agent-jar>
 
-   The target must remain alive until this script finishes. The script uses
-   only the repository's file-backed eval protocol and exits nonzero on any
-   attach, protocol, parsing, session, or assertion failure."
+   The target must remain alive until this script finishes.
+
+   The channel is a socket in both directions and nothing is written to disk.
+   That matters twice over: the attach argument has a hard 1024-character
+   limit on JDK 11 through 21, and a file needs writable storage, which a
+   phone does not always have.
+
+   The script exits nonzero on any attach, protocol, parsing, session, or
+   assertion failure."
   (:require [clojure.edn :as edn])
   (:import [java.io File]
-           [java.util Base64]
+           [java.net InetAddress InetSocketAddress ServerSocket]
+           [java.util UUID]
            [com.sun.tools.attach VirtualMachine]))
 
 (def ^:private success-marker "nihilite:example-pass dynamic-attach-eval")
+
+(def ^:private accept-timeout-ms
+  "How long the script waits for the target to open a channel.
+
+   The target opens the code channel while the attach is still in flight and
+   the reply channel before it answers, so a target that never opens one is
+   already broken and waiting longer only hides it."
+  30000)
 
 (def ^:private expected-value
   {:eval-started? true
@@ -100,61 +115,140 @@
                {:jar jar-text}))
       {:pid pid :jar jar-text :jar-file jar-file})))
 
-(defn- base64-code
-  "Encode evaluated Clojure code as the UTF-8 Base64 payload used by the wire protocol."
-  ^String [^String code]
-  (.encodeToString (Base64/getEncoder) (.getBytes code "UTF-8")))
+(defn- open-loopback-server!
+  "Opens a server socket on the loopback interface with an ephemeral port.
 
-(defn- read-reply
-  "Read and validate one EDN reply map written by the target."
-  [^File reply-file]
-  (when-not (.isFile reply-file)
-    (fail! :protocol "the target wrote no reply file"
-           {:reply-file (.getPath reply-file)}))
+   Loopback only: this channel is between this script and the one target it
+   attached to, and nothing else should be able to reach it."
+  ^ServerSocket []
+  (let [server (ServerSocket.)]
+    (.bind server (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0))
+    (.setSoTimeout server accept-timeout-ms)
+    server))
+
+(defn- read-token-line!
+  "Reads one newline-terminated line, one byte at a time.
+
+   Byte at a time on purpose. A buffered reader would swallow the bytes that
+   follow the newline, and on the code channel those bytes are the code."
+  ^String [^java.io.InputStream in]
+  (let [sb (StringBuilder.)]
+    (loop []
+      (let [b (.read in)]
+        (when (neg? b)
+          (fail! :protocol "the peer closed the connection before sending its token"
+                 {}))
+        (if (= b 10)
+          (.toString sb)
+          (do (.append sb (char b)) (recur)))))))
+
+(defn- read-all!
+  "Reads the rest of the stream as UTF-8 text."
+  ^String [^java.io.InputStream in]
+  (let [buf (byte-array 8192)
+        sb  (StringBuilder.)]
+    (loop []
+      (let [n (.read in buf)]
+        (if (neg? n)
+          (.toString sb)
+          (do (.append sb (String. buf 0 n "UTF-8")) (recur)))))))
+
+(defn- check-token!
+  "Requires the peer's token to be the one this script handed out."
+  [stage expected got]
+  (when-not (= expected got)
+    (fail! stage "the peer answered with the wrong token"
+           {:expected expected :got got})))
+
+(defn- parse-reply
+  "Parse and validate one EDN reply map written by the target."
+  [payload]
   (let [reply
         (try
-          (edn/read-string (slurp reply-file))
+          (edn/read-string payload)
           (catch Throwable failure
             (fail! :parse "the target reply is not valid EDN"
-                   {:reply-file (.getPath reply-file)
-                    :cause (.getMessage failure)})))]
+                   {:cause (.getMessage failure)})))]
     (when-not (map? reply)
       (fail! :parse "the target reply is not an EDN map"
              {:reply reply}))
     reply))
 
+(defn- start-code-feeder!
+  "Starts the thread that hands the code to the target.
+
+   loadAgent blocks until agentmain returns, and agentmain cannot return
+   before it has read the code, so the code has to be on its way while
+   loadAgent is still blocked. That is what this thread is for."
+  [^ServerSocket server token code]
+  (let [outcome (atom nil)
+        thread  (Thread.
+                 (fn []
+                   (try
+                     (let [sock (.accept server)
+                           in   (.getInputStream sock)]
+                       (try
+                         (check-token! :protocol token (read-token-line! in))
+                         (let [out (.getOutputStream sock)]
+                           (.write out (.getBytes ^String code "UTF-8"))
+                           (.flush out)
+                           (.shutdownOutput out))
+                         ;; Wait for the target to close its end so both
+                         ;; sides tear the socket down cleanly.
+                         (read-all! in)
+                         (reset! outcome {:ok true})
+                         (finally
+                           (.close sock))))
+                     (catch Throwable failure
+                       (reset! outcome {:error failure}))))
+                 "nihilite-example-code-feeder")]
+    (.setDaemon thread true)
+    (.start thread)
+    {:thread thread :outcome outcome}))
+
+(defn- read-reply!
+  "Accepts the target's reply on the reply channel and parses it."
+  [^ServerSocket server token]
+  (let [sock (.accept server)
+        in   (.getInputStream sock)]
+    (try
+      (check-token! :protocol token (read-token-line! in))
+      (parse-reply (read-all! in))
+      (finally
+        (.close sock)))))
+
 (defn- validate-reply!
-  "Require the current successful file-transport reply shape."
-  [reply]
+  "Require the current successful reply shape."
+  [reply expected-token]
   (let [expected-keys #{:token :session :ns :value :error :out :err :done}]
     (when-not (= expected-keys (set (keys reply)))
       (fail! :protocol "the target reply has an unexpected shape"
-             {:reply reply})))
-  (when-not (true? (:done reply))
-    (fail! :protocol "the target evaluation did not finish"
-           {:reply reply}))
-  (when-not (nil? (:error reply))
-    (fail! :session "the target evaluation reported an error"
-           {:reply reply}))
-  (when-not (nil? (:token reply))
-    (fail! :protocol "the file transport returned an unexpected token"
-           {:reply reply}))
-  (when-not (string? (:session reply))
-    (fail! :protocol "the target reply has no session id"
-           {:reply reply}))
-  (when-not (string? (:ns reply))
-    (fail! :protocol "the target reply has no namespace"
-           {:reply reply}))
-  (when-not (string? (:value reply))
-    (fail! :protocol "the target reply has no rendered value"
-           {:reply reply}))
-  (when-not (string? (:out reply))
-    (fail! :protocol "the target reply has no output stream"
-           {:reply reply}))
-  (when-not (string? (:err reply))
-    (fail! :protocol "the target reply has no error stream"
-           {:reply reply}))
-  reply)
+             {:reply reply}))
+    (when-not (true? (:done reply))
+      (fail! :protocol "the target evaluation did not finish"
+             {:reply reply}))
+    (when-not (nil? (:error reply))
+      (fail! :session "the target evaluation reported an error"
+             {:reply reply}))
+    (when-not (= expected-token (:token reply))
+      (fail! :protocol "the reply carried an unexpected token"
+             {:expected expected-token :actual (:token reply)}))
+    (when-not (string? (:session reply))
+      (fail! :protocol "the target reply has no session id"
+             {:reply reply}))
+    (when-not (string? (:ns reply))
+      (fail! :protocol "the target reply has no namespace"
+             {:reply reply}))
+    (when-not (string? (:value reply))
+      (fail! :protocol "the target reply has no rendered value"
+             {:reply reply}))
+    (when-not (string? (:out reply))
+      (fail! :protocol "the target reply has no output stream"
+             {:reply reply}))
+    (when-not (string? (:err reply))
+      (fail! :protocol "the target reply has no error stream"
+             {:reply reply}))
+    reply))
 
 (defn- validate-value!
   "Parse the rendered value and require the expected deterministic result."
@@ -176,27 +270,39 @@
     value))
 
 (defn- attach-and-eval!
-  "Attach to the target, send one eval:file request, and return its reply."
-  [^long pid ^String jar ^File reply-file]
-  (let [request (str "eval:file:" (.getPath reply-file)
-                     "|" (base64-code lifecycle-code))
-        vm (VirtualMachine/attach (str pid))]
+  "Attaches to the target and runs one eval request over two sockets.
+
+   The request carries no code: the code travels on the code channel and the
+   reply comes back on the reply channel, so the attach argument stays short
+   enough for any JDK."
+  [^long pid ^String jar]
+  (let [reply-server (open-loopback-server!)
+        code-server  (open-loopback-server!)
+        reply-token  (str (UUID/randomUUID))
+        code-token   (str (UUID/randomUUID))
+        request      (str "eval:tcp:127.0.0.1:" (.getLocalPort reply-server) ":" reply-token
+                          "|tcp:127.0.0.1:" (.getLocalPort code-server) ":" code-token)]
     (try
-      (.loadAgent ^VirtualMachine vm ^String jar ^String request)
+      (let [{:keys [thread outcome]} (start-code-feeder! code-server code-token lifecycle-code)
+            vm (VirtualMachine/attach (str pid))]
+        (try
+          (.loadAgent ^VirtualMachine vm ^String jar ^String request)
+          (finally
+            (.detach ^VirtualMachine vm)))
+        (.join thread)
+        (when-let [failure (:error outcome)]
+          (throw failure))
+        {:reply (read-reply! reply-server reply-token) :token reply-token})
       (finally
-        (.detach ^VirtualMachine vm)))
-    (read-reply reply-file)))
+        (.close reply-server)
+        (.close code-server)))))
 
 (defn -main [& args]
   (try
     (let [{:keys [pid jar]} (parse-args args)
-          reply-file (File/createTempFile "nihilite-dynamic-attach-eval" ".edn")]
-      (try
-        (let [reply (attach-and-eval! pid jar reply-file)]
-          (validate-reply! reply)
-          (validate-value! reply))
-        (finally
-          (.delete reply-file))))
+          {:keys [reply token]} (attach-and-eval! pid jar)]
+      (validate-reply! reply token)
+      (validate-value! reply))
     (println success-marker)
     (flush)
     (catch Throwable failure
