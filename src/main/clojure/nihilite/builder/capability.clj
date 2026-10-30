@@ -207,7 +207,6 @@
               :entry-point entry-point
               :redefine-classes-supported? redefine?
               :retransform-classes-supported? retransform?
-              :native-library-prefix (:native-library-prefix facts)
               :detail (str "the agent is armed"
                            (when entry-point (str " from " entry-point)))
               :remediation nil})
