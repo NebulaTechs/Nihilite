@@ -19,18 +19,18 @@
    namespace is a real finding -- the ones in crafter/jul and
    trainer/advice were, and were fixed."
   (:require [clojure.java.io])
-    (:import [net.bytebuddy ByteBuddy]
-             [net.bytebuddy.description.annotation AnnotationDescription
-                                                      AnnotationDescription$Builder]
-            [net.bytebuddy.description.modifier ModifierContributor$ForMethod
-                                                  Ownership Visibility]
-            [net.bytebuddy.description.type TypeDescription$ForLoadedType]
-            [net.bytebuddy.asm MemberAttributeExtension$ForMethod
-                     AsmVisitorWrapper AsmVisitorWrapper$Compound]
-            [net.bytebuddy.implementation.bytecode ByteCodeAppender
-                                                    ByteCodeAppender$Size]
-            [net.bytebuddy.jar.asm Label MethodVisitor Opcodes]
-            [net.bytebuddy.matcher ElementMatchers]))
+  (:import [net.bytebuddy ByteBuddy]
+           [net.bytebuddy.description.annotation AnnotationDescription
+                                                AnnotationDescription$Builder]
+           [net.bytebuddy.description.modifier ModifierContributor$ForMethod
+                                                Ownership Visibility]
+           [net.bytebuddy.description.type TypeDescription$ForLoadedType]
+           [net.bytebuddy.asm MemberAttributeExtension$ForMethod
+                              AsmVisitorWrapper AsmVisitorWrapper$Compound]
+           [net.bytebuddy.implementation.bytecode ByteCodeAppender
+                                                  ByteCodeAppender$Size]
+           [net.bytebuddy.jar.asm Label MethodVisitor Opcodes]
+           [net.bytebuddy.matcher ElementMatchers]))
 
 (defn- define-value
   "Call `AnnotationDescription$Builder.define` for the value's runtime type
