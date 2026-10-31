@@ -3,10 +3,13 @@
 
    Four advice classes are produced at runtime by nihilite.crafter.bytegen
    (no AOT, no gen-class):
-     - nihilite.trainer.HookAdvice     OnMethodEnter,  :entry  position
-     - nihilite.trainer.ReturnAdvice   OnMethodExit + AssignReturned, :return
-     - nihilite.trainer.ThrowAdvice    OnMethodExit + Thrown,        :throw
-     - nihilite.trainer.RedefineAdvice OnMethodExit + AssignReturned, :redefine
+
+   ```java
+   nihilite.trainer.HookAdvice      // OnMethodEnter,  :entry  position
+   nihilite.trainer.ReturnAdvice    // OnMethodExit + AssignReturned, :return
+   nihilite.trainer.ThrowAdvice     // OnMethodExit + Thrown,        :throw
+   nihilite.trainer.RedefineAdvice  // OnMethodExit + AssignReturned, :redefine
+   ```
 
    The generated stub bodies forward to a Clojure function in this
    namespace (hk-/rt-/th-/rd- prefix). Those functions delegate to

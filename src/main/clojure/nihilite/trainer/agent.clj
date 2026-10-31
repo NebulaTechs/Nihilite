@@ -4,14 +4,16 @@
    nihilite.trainer.Agent replaces the original nihilite.agent.Agent + Worker
    pair. It exposes the static entry points the JVM resolves via the JAR
    manifest:
-     premain(String, Instrumentation)    Premain-Class, the -javaagent path
-     agentmain(String, Instrumentation)  Agent-Class, the attach path
-     main(String[])                      Main-Class, which only prints how to
-                                         mount the jar -- see agent-main
-     awaitWorkerReady()                  blocks until Clojure runtime
-                                         is up and the registry has
-                                         install-redefine-dispatcher
-                                         installed
+
+   ```java
+   premain(String, Instrumentation)    // Premain-Class, the -javaagent path
+   agentmain(String, Instrumentation)  // Agent-Class, the attach path
+   main(String[])                      // Main-Class, which only prints how to
+                                       // mount the jar -- see agent-main
+   awaitWorkerReady()                  // blocks until Clojure runtime
+                                       // is up and the registry has
+                                       // install-redefine-dispatcher installed
+   ```
 
    plus an accessor currentInstrumentation() that the advice classes
    use to look up the live Instrumentation when uninstalling a spec.

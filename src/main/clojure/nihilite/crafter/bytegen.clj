@@ -216,11 +216,13 @@
   "Returns an `Implementation` (reify of Implementation) that emits a
    gen-class-style forwarder body. The bytecode it produces:
 
-     Var v = Var.intern nsName, varName
-     if v.isBound, Object impl = v.get
-       if impl instanceof IFn,
-         return ((IFn) impl).invoke args..., void: just RETURN
-     throw new UnsupportedOperationException methodName nsName varName
+   ```java
+   Var v = Var.intern nsName, varName
+   if v.isBound, Object impl = v.get
+     if impl instanceof IFn,
+       return ((IFn) impl).invoke args...   // void: just RETURN
+   throw new UnsupportedOperationException methodName nsName varName
+   ```
 
    This is byte-buddy's low-level escape: a `ByteCodeAppender` that drives
    an ASM `MethodVisitor` (repackaged under `net.bytebuddy.jar.asm.*`).
