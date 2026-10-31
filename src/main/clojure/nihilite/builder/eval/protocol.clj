@@ -7,38 +7,39 @@
    by keeping the protocol narrow enough that an attacher can implement it
    in any language:
 
-     eval:TRANSPORT|CODE-SOURCE
+   ```text
+   eval:TRANSPORT|CODE-SOURCE
 
-   TRANSPORT is one of
+   # TRANSPORT is one of
+   discard              # run it, reply nowhere
+   tcp:HOST:PORT:TOKEN  # reply written to a socket, TOKEN echoed on the
+                        # first line so a concurrent attacher can tell its
+                        # own replies apart
 
-     discard              run it, reply nowhere
-     tcp:HOST:PORT:TOKEN
-                          reply written to a socket, TOKEN echoed on the
-                          first line so a concurrent attacher can tell its
-                          own replies apart
-
-   CODE-SOURCE is one of
-
-     BASE64-CODE          the code itself, Base64 of its UTF-8 bytes
-     tcp:HOST:PORT:TOKEN
-                          the code read from that socket. The target
-                          connects, echoes TOKEN on the first line, then
-                          reads the code until the attacher closes its
-                          half of the connection.
+   # CODE-SOURCE is one of
+   BASE64-CODE          # the code itself, Base64 of its UTF-8 bytes
+   tcp:HOST:PORT:TOKEN  # the code read from that socket. The target
+                        # connects, echoes TOKEN on the first line, then
+                        # reads the code until the attacher closes its
+                        # half of the connection.
+   ```
 
    agentArgs without the eval: prefix is not an eval request, so an existing
    -javaagent or -jar invocation keeps behaving exactly as before.
 
    The reply is one EDN map with these keys:
 
-     :token     echoed from the transport, for matching
-     :session   session id, usable for a follow-up poll
-     :ns        namespace the code ran in
-     :value     printed value of the last non-nil form
-     :error     printed exception, or nil
-     :out       everything written to *out*
-     :err       everything written to *err*
-     :done      false when the wait expired with the eval still running
+   ```clojure
+   {:token     ;; echoed from the transport, for matching
+    :session   ;; session id, usable for a follow-up poll
+    :ns        ;; namespace the code ran in
+    :value     ;; printed value of the last non-nil form
+    :error     ;; printed exception, or nil
+    :out       ;; everything written to *out*
+    :err       ;; everything written to *err*
+    :done      ;; false when the wait expired with the eval still running
+   }
+   ```
 
    A :done of false means the session is still live: poll it by sending a
     second request whose code is (snapshot SESSION-ID). Polling costs one
