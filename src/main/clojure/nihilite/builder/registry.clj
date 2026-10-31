@@ -343,11 +343,14 @@
 
 (defn- target-loader
   "Which classloader the loaded target class is defined by, as a keyword:
-     :bootstrap  -- JDK core (java.*), loader is nil
-     :platform   -- JDK platform modules, Clojure/ByteBuddy's own classes
-     :app        -- application classpath (-cp / -jar)
-     :unloaded   -- no matching class is currently loaded
-     :unknown    -- the class is loaded but its loader cannot be determined
+
+   ```clojure
+   :bootstrap  ;; JDK core (java.*), loader is nil
+   :platform   ;; JDK platform modules, Clojure/ByteBuddy's own classes
+   :app        ;; application classpath (-cp / -jar)
+   :unloaded   ;; no matching class is currently loaded
+   :unknown    ;; the class is loaded but its loader cannot be determined
+   ```
 
    Every tier is reachable: app-loader targets are dispatched through a plain
    static call to the advice, while bootstrap and platform targets go through

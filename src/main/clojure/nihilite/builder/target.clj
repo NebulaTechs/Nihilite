@@ -158,22 +158,24 @@
 
    Returns one of:
 
-     {:outcome :ok
-      :class   <the loaded Class>
-      :method  <the reflective Method>}
+   ```clojure
+   {:outcome :ok
+    :class   <the loaded Class>
+    :method  <the reflective Method>}
 
-     {:outcome :not-loaded
-      :class-name <the binary name that was looked for>}
+   {:outcome :not-loaded
+    :class-name <the binary name that was looked for>}
 
-     {:outcome :method-not-found
-      :class-name <the binary name>
-      :method-name <the method name>}
+   {:outcome :method-not-found
+    :class-name <the binary name>
+    :method-name <the method name>}
 
-     {:outcome :descriptor-mismatch
-      :class-name <the binary name>
-      :method-name <the method name>
-      :expected <the descriptor the spec carries>
-      :actual   <the descriptors the same-named methods really have>}
+   {:outcome :descriptor-mismatch
+    :class-name <the binary name>
+    :method-name <the method name>
+    :expected <the descriptor the spec carries>
+    :actual   <the descriptors the same-named methods really have>}
+   ```
 
    :not-loaded is not a failure. The class may be loaded later, and a hook
    for a class that has not arrived yet is a legitimate thing to install.
