@@ -170,7 +170,7 @@ flag the thread would go back to waiting on a queue nobody will ever feed.
 
 Neither path prints anything to stderr. An `InterruptedException` that
 escapes the session thread is written by the JVM's default handler as
-`Exception in thread "..." ` — without a trailing newline, before the stack
+`Exception in thread "..."` — without a trailing newline, before the stack
 trace — so any output written in that window lands on the same line. In a
 JVM whose stdout and stderr share a pipe that is one line, not two, and a
 reader matching markers per line then fails to see a marker that was

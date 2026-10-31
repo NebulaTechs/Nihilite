@@ -20,7 +20,7 @@ Two classes, and only the first is hopeless:
   `read`). JDK classes come from the module image and jar entries come through
   `ZipFile` + `Inflater`, neither of which touches it.
 
-### Where the cycle actually closes — two wrong answers
+## Where the cycle actually closes — two wrong answers
 
 This was chased rather than assumed, and the first two explanations both look
 right from the source and neither accounts for what is measured. It is recorded
