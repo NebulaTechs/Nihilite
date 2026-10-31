@@ -150,26 +150,27 @@
 
    Returns a map with these keys:
 
-     :instrumentation-present?   whether an Instrumentation has been
-                                  registered, i.e. the agent is armed
-     :entry-point                :premain, :agentmain, or nil when the
-                                  agent was not armed by an entry point
-     :redefine-classes-supported?   what the Instrumentation reports
-     :retransform-classes-supported? what the Instrumentation reports
-     :java-version, :java-vendor, :vm-name, :os-name, :os-arch
-                                  the JVM's own facts
-     :java-instrument-module-present?
-                                  whether the boot layer has the
-                                  java.instrument module, which holds the
-                                  Instrumentation API itself
-     :jdk-attach-present?        whether com.sun.tools.attach is reachable
-     :attach-provider-count      how many AttachProviders the JVM offers,
-                                  -1 when the question could not be answered
-     :relevant-jvm-arguments      the JVM arguments that bear on
-                                  instrumentation
-     :detail                     a one-line summary
-     :remediation                what to do when the agent is not armed,
-                                  or nil
+   ```clojure
+   :instrumentation-present?        ;; whether an Instrumentation has been
+                                    ;; registered, i.e. the agent is armed
+   :entry-point                     ;; :premain, :agentmain, or nil when the
+                                    ;; agent was not armed by an entry point
+   :redefine-classes-supported?     ;; what the Instrumentation reports
+   :retransform-classes-supported?  ;; what the Instrumentation reports
+   :java-version, :java-vendor, :vm-name, :os-name, :os-arch
+                                    ;; the JVM's own facts
+   :java-instrument-module-present? ;; whether the boot layer has the
+                                    ;; java.instrument module, which holds the
+                                    ;; Instrumentation API itself
+   :jdk-attach-present?             ;; whether com.sun.tools.attach is reachable
+   :attach-provider-count           ;; how many AttachProviders the JVM offers,
+                                    ;; -1 when the question could not be answered
+   :relevant-jvm-arguments          ;; the JVM arguments that bear on
+                                    ;; instrumentation
+   :detail                          ;; a one-line summary
+   :remediation                     ;; what to do when the agent is not armed,
+                                    ;; or nil
+   ```
 
    The report is read-only: it installs nothing, attaches to nothing, and
    retransforms nothing. Calling it twice on the same JVM gives the same

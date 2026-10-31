@@ -90,12 +90,15 @@
    the check cannot run there either.
 
     Examples:
-      (api/install! {:id \"trace-bitset-size\"
-                     :target-internal \"java/util/BitSet\"
-                     :method-name \"size\"
-                     :descriptor \"()I\"
-                     :position :entry
-                     :bridge   (fn [ctx] (println :entry ctx))})"
+
+    ```clojure
+    (api/install! {:id \"trace-bitset-size\"
+                   :target-internal \"java/util/BitSet\"
+                   :method-name \"size\"
+                   :descriptor \"()I\"
+                   :position :entry
+                   :bridge   (fn [ctx] (println :entry ctx))})
+    ```"
   [spec]
   (reg/install! spec))
 
@@ -170,17 +173,19 @@
 
    The keys, in the order they are usually read:
 
-     :instrumentation-present?      whether an Instrumentation is registered
-     :entry-point                   :premain, :agentmain, or nil
-     :redefine-classes-supported?   what the Instrumentation reports
-     :retransform-classes-supported? what the Instrumentation reports
-     :java-version, :java-vendor, :vm-name, :os-name, :os-arch
-     :java-instrument-module-present? whether java.instrument is in the image
-     :jdk-attach-present?           whether com.sun.tools.attach is reachable
-     :attach-provider-count         how many AttachProviders the JVM offers
-     :relevant-jvm-arguments        the arguments that bear on instrumentation
-     :detail                        a one-line summary
-     :remediation                   what to do, or nil
+   ```clojure
+   :instrumentation-present?        ;; whether an Instrumentation is registered
+   :entry-point                     ;; :premain, :agentmain, or nil
+   :redefine-classes-supported?     ;; what the Instrumentation reports
+   :retransform-classes-supported?  ;; what the Instrumentation reports
+   :java-version, :java-vendor, :vm-name, :os-name, :os-arch
+   :java-instrument-module-present? ;; whether java.instrument is in the image
+   :jdk-attach-present?             ;; whether com.sun.tools.attach is reachable
+   :attach-provider-count           ;; how many AttachProviders the JVM offers
+   :relevant-jvm-arguments          ;; the arguments that bear on instrumentation
+   :detail                          ;; a one-line summary
+   :remediation                     ;; what to do, or nil
+   ```
 
    :remediation is the field to read when something does not work: it says
    which of the possible fixes applies, rather than leaving the reader to
