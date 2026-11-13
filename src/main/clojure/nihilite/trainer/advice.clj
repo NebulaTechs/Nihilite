@@ -2,14 +2,10 @@
   "ByteBuddy advice entry points generated from Clojure via bytegen.
 
    Four advice classes are produced at runtime by nihilite.crafter.bytegen
-   (no AOT, no gen-class):
-
-   ```java
-   nihilite.trainer.HookAdvice      // OnMethodEnter,  :entry  position
-   nihilite.trainer.ReturnAdvice    // OnMethodExit + AssignReturned, :return
-   nihilite.trainer.ThrowAdvice     // OnMethodExit + Thrown,        :throw
-   nihilite.trainer.RedefineAdvice  // OnMethodExit + AssignReturned, :redefine
-   ```
+   (no AOT, no gen-class): one per position -- :entry, :return, :throw and
+   :redefine. Their names and the advice method each one binds the call
+   site to live in `advice-classes` below, which is the single source of
+   truth: the transformer and the installer both need them.
 
    The generated stub bodies forward to a Clojure function in this
    namespace (hk-/rt-/th-/rd- prefix). Those functions delegate to
@@ -21,7 +17,10 @@
             [clojure.tools.logging :as log])
   (:import [net.bytebuddy.implementation.bytecode.assign Assigner$Typing]))
 
-(def ^:private advice-classes (atom {}))
+(def ^:private loaded-advice-classes
+  "class-name -> the loaded Class, for the advice classes already generated
+   in this JVM."
+  (atom {}))
 
 ;; True while an advice body is running on this thread.
 ;;
@@ -265,23 +264,59 @@
      :method-annos [@to-return-anno @on-exit-noop-anno]
      :forward-var 'nihilite.trainer.advice/rd-onRedefine}]})
 
+(def advice-classes
+  "The four advice classes, by position.
+
+   position -> {:class <the generated class name> :method <the static
+   advice method ByteBuddy binds the call site to>}.
+
+   The single source of truth. The transformer needs the class names to
+   find the advice bytecode (advice-locator) and to wire the call site,
+   and the installer needs them with their method names to preload the
+   advice handles. Three files used to carry their own copy of four string
+   literals, which is three chances to drift -- and a drift here does not
+   fail loudly: the advice class simply is not the one the transformer
+   wired, and the hook registers, reports a woven count, and never fires.
+
+   The method names are resolved UP FRONT rather than at the call site
+   because a bootstrap must not trigger class loading: loading a class
+   reads its bytes through java.io.FileInputStream, which is itself a hook
+   target, so the nested link would recurse until the stack overflows."
+  {:entry    {:class "nihilite.trainer.HookAdvice"     :method "onEntry"}
+   :return   {:class "nihilite.trainer.ReturnAdvice"   :method "onExit"}
+   :throw    {:class "nihilite.trainer.ThrowAdvice"    :method "onThrow"}
+   :redefine {:class "nihilite.trainer.RedefineAdvice" :method "onRedefine"}})
+
+(defn advice-class-name
+  "The generated class name for `position`, or nil for a position this
+   namespace does not have an advice class for."
+  [position]
+  (:class (get advice-classes position)))
+
 (defn- ensure-class! [class-name spec inst]
-  (or (@advice-classes class-name)
-      (let [loaded (bg/define-class! (assoc spec :name class-name :instrumentation inst))]
-        (swap! advice-classes assoc class-name loaded)
+  (or (@loaded-advice-classes class-name)
+      ;; :save-dir nil says "do not write the generated class to disk". The
+      ;; bytes are kept in bytegen/generated-class-bytes and the transformer
+      ;; reads them from there, so the file on disk was never the source of
+      ;; truth -- and writing it meant writing into the working directory of
+      ;; the JVM that mounted the agent.
+      (let [loaded (bg/define-class! (assoc spec :name class-name
+                                             :instrumentation inst
+                                             :save-dir nil))]
+        (swap! loaded-advice-classes assoc class-name loaded)
         loaded)))
 
 (defn- ensure-hook-advice! [inst]
-  (ensure-class! "nihilite.trainer.HookAdvice" hook-spec inst))
+  (ensure-class! (advice-class-name :entry) hook-spec inst))
 
 (defn- ensure-return-advice! [inst]
-  (ensure-class! "nihilite.trainer.ReturnAdvice" return-spec inst))
+  (ensure-class! (advice-class-name :return) return-spec inst))
 
 (defn- ensure-throw-advice! [inst]
-  (ensure-class! "nihilite.trainer.ThrowAdvice" throw-spec inst))
+  (ensure-class! (advice-class-name :throw) throw-spec inst))
 
 (defn- ensure-redefine-advice! [inst]
-  (ensure-class! "nihilite.trainer.RedefineAdvice" redefine-spec inst))
+  (ensure-class! (advice-class-name :redefine) redefine-spec inst))
 
 (defn ensure-all!
   "Generates all four advice classes into the system classloader.

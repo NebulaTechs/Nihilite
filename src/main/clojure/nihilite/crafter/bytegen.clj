@@ -18,7 +18,6 @@
    helps, so these are left. Any reflection warning appearing OUTSIDE this
    namespace is a real finding -- the ones in crafter/jul and
    trainer/advice were, and were fixed."
-  (:require [clojure.java.io])
   (:import [net.bytebuddy ByteBuddy]
            [net.bytebuddy.description.annotation AnnotationDescription
                                                 AnnotationDescription$Builder]
@@ -401,17 +400,24 @@
           (.intercept ^net.bytebuddy.dynamic.DynamicType$Builder$MethodDefinition$ReceiverTypeDefinition
                        b body))))))
 
-(def ^:private method-annotation-spec
-  "Map from method name (string) → vector of AnnotationDescription. Populated
-   by define-class! from method specs and consumed by the AsmVisitorWrapper
-   pass that emits RuntimeVisibleAnnotations for matching methods."
-  (atom {}))
+(defn- method-annotation-map
+  "Map from method name (string) → vector of AnnotationDescription, read off
+   the method specs and consumed by the AsmVisitorWrapper pass that emits
+   RuntimeVisibleAnnotations for matching methods.
 
-(defn- collect-method-annos! [spec]
-  (let [name (str (:name spec))
-        annos (or (:method-annos spec) [])]
-    (when (seq annos)
-      (swap! method-annotation-spec assoc name annos))))
+   A pure function of the specs, not an accumulator in a global atom. It used
+   to be an atom that define-class! reset on entry and filled as it walked
+   the method list, which meant two concurrent define-class! calls raced: the
+   second one's reset wiped the first one's annotations, and the first class
+   came out with no @Advice$OnMethodEnter on it — an advice that silently
+   does nothing, which is the failure mode this project cannot have."
+  [methods]
+  (reduce (fn [acc spec]
+            (let [name (str (:name spec))
+                  annos (or (:method-annos spec) [])]
+              (if (seq annos) (assoc acc name annos) acc)))
+          {}
+          methods))
 
 (defn- build-method-extension-writer
   "Build an AsmVisitorWrapper that adds the annotations in `spec-map`
@@ -456,15 +462,36 @@
           fields))
 
 (defn define-class!
+  "Generates one class from `spec` and injects it into the system classloader.
+
+   `:save-dir` is where the generated .class is ALSO written to disk, for
+   inspection. It is OFF by default, and that is deliberate: the default used
+   to be `target/classes`, a RELATIVE path, so it resolved against the
+   working directory of whatever JVM mounted the agent — the host
+   application's directory, not Nihilite's. The agent wrote six class files
+   into the application's working directory on every mount, and a JVM whose
+   working directory was not writable could not mount the agent at all:
+   ByteBuddy's saveIn threw `Could not create directory:
+   target/classes/nihilite/trainer` out of premain and the JVM aborted with
+   exit 134.
+
+   Nothing reads those files. The injected class leaves no classpath entry
+   behind (ByteBuddy's injector deletes its temporary jar), so the
+   transformer reads the advice bytecode from `generated-class-bytes` instead
+   — see `nihilite.trainer.transformer/advice-locator`. The bytes are kept
+   in this JVM; the file on disk was never the source of truth.
+
+   A caller that wants the file says where to put it: `:save-dir \"/tmp/x\"`."
   [spec]
-  (reset! method-annotation-spec {})
   (let [name ^String (:name spec)
         super ^Class (or (:super spec) Object)
         interfaces (or (:interfaces spec) [])
         fields (or (:fields spec) [])
         methods (or (:methods spec) [])
         inst ^java.lang.instrument.Instrumentation (:instrumentation spec)
-        save-dir (or (:save-dir spec) (clojure.java.io/file "target" "classes"))
+        ;; Absent means "do not write it anywhere". A caller that wants the
+        ;; file names the directory; there is no implicit one.
+        save-dir (:save-dir spec)
         builder (reduce (fn [b iface]
                           (.implement b ^net.bytebuddy.description.type.TypeDefinition
                                      (into-array net.bytebuddy.description.type.TypeDefinition
@@ -473,13 +500,11 @@
                             (.subclass super)
                             (.name name))
                         interfaces)
-        b (-> (reduce (fn [b m]
-                        (collect-method-annos! m)
-                        (define-method b m))
+        b (-> (reduce (fn [b m] (define-method b m))
                       builder
                       methods)
              (build-fields fields))
-        spec-map @method-annotation-spec
+        spec-map (method-annotation-map methods)
         dynamic-type (-> b
                          (.visit ^AsmVisitorWrapper (if (seq spec-map)
                                                       (build-method-extension-writer spec-map)

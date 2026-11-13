@@ -38,7 +38,7 @@ test.
 | --- | --- |
 | `weaving-contract-driver` | the registry agrees with the JVM after a fresh install, an uninstall and reinstall, and a `clear!` and reinstall under a new id; the bridge's own counter is the ground truth for `:fired` |
 | `retransform-driver` | all four positions on an already-loaded class; a co-located `:entry` survives a `:redefine` uninstall; the reentrancy guard cuts a bridge that re-enters its own target |
-| `javaagent-driver` | the agent classpath shape: the system loader is a `URLClassLoader`, worker-equivalent concurrent requires succeed, and a socket-transport eval request round-trips |
+| `javaagent-driver` | the packaged agent mounts through `-javaagent:` on a child JVM whose working directory is a fresh temp directory: the init form evaluated, a hook wove and fired, install-status! reported the firing, no bridge or transformer errors, and the working directory was left byte-for-byte untouched |
 | `eval-attach-driver` | a second process attaching to that child and driving `loadAgent` with `eval:` requests: value, `*out*`, thrown error, `:done false`, poll, interrupt, close, and a hook installed over the channel that then fires; the code also travels over its own socket, so a payload past the 1024-character attach argument limit still arrives |
 | `eval-jar-driver` | the eval stack loads and runs from the uberjar alone, with source directories, class directories, and the local Maven basis off the classpath |
 | `examples-jdkstdlib-driver` | the packaged agent runs the `jdkstdlib` example in a child JVM, and its `FileOutputStream.write` hook weaves, fires, and records no exception |
@@ -65,6 +65,17 @@ clojure -T:build retransform-driver      # one driver on its own
 ```
 
 ## Why the drivers assert what they assert
+
+**`javaagent-driver`'s child runs in a working directory of its own**, a fresh
+temp directory, and the driver asserts that the agent left it untouched. The
+agent generates six classes at mount time and used to save them to
+`target/classes` — a *relative* path, so it resolved against the working
+directory of whatever JVM mounted the agent. That put six `.class` files into
+the host application's directory on every mount, and a JVM whose working
+directory was not writable could not mount the agent at all: ByteBuddy's
+`saveIn` threw `Could not create directory: target/classes/nihilite/trainer`
+out of `premain` and the JVM aborted with exit 134. The bytes are kept in
+memory and read from there, so nothing on disk was ever needed.
 
 **`javaagent-driver` and the standalone `jar-smoke` pass use `-javaagent:`,
 never `-java -jar`.** Weaving needs a real `Instrumentation`, and only the

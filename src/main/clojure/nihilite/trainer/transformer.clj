@@ -16,6 +16,7 @@
   (:require [clojure.tools.logging :as log]
             [nihilite.crafter.classgen :as cg]
             [nihilite.crafter.bytegen :as bg]
+            [nihilite.trainer.advice :as advice]
             [nihilite.trainer.bucket :as bucket]
             [nihilite.trainer.indy :as indy])
   (:import [net.bytebuddy.asm Advice]
@@ -104,10 +105,7 @@
    weave. nihilite.crafter.bytegen/generated-class-bytes hands back the
    exact bytes that were injected."
   []
-  (let [advice-names ["nihilite.trainer.HookAdvice"
-                      "nihilite.trainer.ReturnAdvice"
-                      "nihilite.trainer.ThrowAdvice"
-                      "nihilite.trainer.RedefineAdvice"]
+  (let [advice-names (keys advice/advice-classes)
         pairs (into {}
                     (for [n advice-names
                           :let [bs (bg/generated-class-bytes n)]
@@ -130,9 +128,9 @@
 (defn- visit-return-advice [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) "nihilite.trainer.ReturnAdvice")
+          wcm (indy/wire (Advice/withCustomMapping) (advice/advice-class-name :return))
           advice (.to (.with wcm (post-processor-factory))
-                      (Class/forName "nihilite.trainer.ReturnAdvice")
+                      (Class/forName (advice/advice-class-name :return))
                       (advice-locator))]
       (.visit builder (.on advice matcher)))
     builder))
@@ -155,9 +153,9 @@
      (let [entry-b   (:entry buckets)
            return-b  (:return buckets)
            throw-b   (:throw buckets)
-           b (visit-advice builder entry-b "nihilite.trainer.HookAdvice")
-           b2 (visit-return-advice b return-b)]
-       (visit-advice b2 throw-b "nihilite.trainer.ThrowAdvice"))
+            b (visit-advice builder entry-b (advice/advice-class-name :entry))
+            b2 (visit-return-advice b return-b)]
+        (visit-advice b2 throw-b (advice/advice-class-name :throw)))
      builder))
 
 (defn- wrap-redefine
@@ -180,11 +178,11 @@
   [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) "nihilite.trainer.RedefineAdvice")
+          wcm (indy/wire (Advice/withCustomMapping) (advice/advice-class-name :redefine))
           ppf (post-processor-factory)
           loc (advice-locator)
           advice (.to (.with wcm ppf)
-                      (Class/forName "nihilite.trainer.RedefineAdvice")
+                      (Class/forName (advice/advice-class-name :redefine))
                       loc)
           replacement (.wrap advice
                              ^net.bytebuddy.implementation.Implementation
@@ -284,14 +282,39 @@
   nil)
 
 (defn ensure-all!
-  "Same as gen-all! but invoked at runtime (e.g. from the installer).
-   Binds *compile-files* true and *compile-path* to target/classes so the
-   reflection-driven clojure.core$generate_class path writes .class files
-   that the JVM can load via the existing classpath."
+  "Makes sure the two generated classes are loadable.
+
+   Both are AOT'd: `compile-clj` compiles this namespace, whose
+   `(when *compile-files* (gen-all!))` writes them into target/classes, and
+   the uberjar carries them. So in every supported deployment they are
+   already on the classpath and this writes nothing at all.
+
+   It used to REGENERATE them here, into `target/classes` -- a RELATIVE
+   path, resolved against the working directory of whatever JVM mounted the
+   agent. That wrote two class files into the host application's directory
+   on every mount, and a JVM whose working directory was not writable could
+   not mount the agent at all: `Compiler/writeClassFile` threw an IOException
+   out of premain because *compile-path* did not exist, and the JVM aborted.
+   The classes were already there, so the generation was redundant and the
+   failure it caused was not.
+
+   A class that really is missing is reported by name. This is the
+   transformer the AgentBuilder installs; without it the agent cannot weave
+   anything, and saying so is more use than a write into somebody else's
+   directory."
   []
-  (binding [*compile-files* true
-            *compile-path* "target/classes"]
-    (gen-all!))
+  (doseq [c ["nihilite.trainer.HookTypeMatcher"
+             "nihilite.trainer.AdviceTransformer"]]
+    (when-not (try (Class/forName c false (ClassLoader/getSystemClassLoader))
+                   (catch ClassNotFoundException _ nil)
+                   (catch LinkageError _ nil))
+      (throw (ex-info
+              (str "the generated class " c " is not on the classpath. It is "
+                   "written by the AOT build (clojure -T:build compile-clj) and "
+                   "ships inside the agent jar; a JVM that cannot see it cannot "
+                   "run the transformer.")
+              {:nihilite/kind :nihilite/missing-transformer-class
+               :nihilite/class c}))))
   nil)
 
 (when *compile-files*

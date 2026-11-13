@@ -323,7 +323,9 @@
   (binding [*ns* (find-ns 'nihilite.trainer.agent)]
     (println usage-banner)
     (flush)
-    nil))(defn- generate-class!
+    nil))
+
+(defn- generate-class!
   "Generate nihilite.trainer.Agent with its static entry points: premain and
    agentmain for the JVM, main for the jar's Main-Class, plus the worker's
    handshake methods. All are forwarded to Clojure vars with prefix agent-."

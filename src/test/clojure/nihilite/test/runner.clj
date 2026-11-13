@@ -34,10 +34,11 @@
    "nihilite.test.redefine-advice-composition-test"
    "nihilite.test.multi-hook-fanout-test"
    "nihilite.test.retransform-batch-atomicity-test"
-    "nihilite.test.ctx-return-test"
-    "nihilite.test.target-check-test"
-    "nihilite.test.capability-test"
-    "nihilite.test.eval-test"])
+   "nihilite.test.ctx-return-test"
+   "nihilite.test.target-check-test"
+   "nihilite.test.capability-test"
+   "nihilite.test.bytegen-save-dir-test"
+   "nihilite.test.eval-test"])
 
 (defn- safe-deref
   [r]
@@ -85,7 +86,7 @@
                        (assoc cur
                               :pass  (+ pass  (:pass counters 0))
                               :fail  (+ fail  (:fail counters 0))
-                              :error (+ error (:error counters 0)))))))))
+                              :error (+ error  (:error counters 0)))))))))
       (let [{:keys [pass fail error]} @agg
             load-fail-bias (* (count @load-failures) 1000)
             total-fail (+ fail error load-fail-bias)]

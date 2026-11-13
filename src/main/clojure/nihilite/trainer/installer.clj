@@ -57,27 +57,16 @@
     (.setAccessible ctor true)
     (.newInstance ctor (object-array []))))
 
-(def ^:private advice-classes
-  "advice class name -> the advice method ByteBuddy will bind the call site to.
-   The bootstrap method looks these up instead of resolving them, because a
-   bootstrap must not trigger class loading: loading a class reads its bytes
-   through java.io.FileInputStream, which is itself a hook target, so the
-   nested link would recurse until the stack overflows."
-  [["nihilite.trainer.HookAdvice" "onEntry"]
-   ["nihilite.trainer.ReturnAdvice" "onExit"]
-   ["nihilite.trainer.ThrowAdvice" "onThrow"]
-   ["nihilite.trainer.RedefineAdvice" "onRedefine"]])
-
 (defn- arm-indy!
   "Injects the bootstrap-side dispatcher, pushes the agent bridge into it, and
    resolves every advice method up front. Must run after advice/ensure-all!,
    since the advice classes have to exist before they can be preloaded."
   []
   (indy/install-bridge!)
-  (doseq [[class-name method-name] advice-classes]
-    (indy/preload-advice! class-name method-name))
+  (doseq [[_ {:keys [class method]}] advice/advice-classes]
+    (indy/preload-advice! class method))
   (jul/info installer-log "HookInstaller armed invokedynamic dispatch for"
-            (count advice-classes) "advice classes")
+            (count advice/advice-classes) "advice classes")
   nil)
 
 (defn- preload-registry-read-side!

@@ -1,19 +1,11 @@
 (ns nihilite.test.javaagent-classpath-driver
-  "Replaces src/test/java/nihilite/javaagentClasspathDriver.java. The Java
-   layer was removed entirely; this is that pass in Clojure.
+  "The jar-smoke pass: spawns a child JVM with the packaged agent mounted
+   through -javaagent:, and gates on what the child reports.
 
-   Two halves.
+   The child runs in a fresh temporary working directory, so the driver can
+   also prove the agent left the host application's directory untouched.
 
-   In-process probes, which run inside the driver's own JVM:
-
-     - the system classloader is a URLClassLoader, which is what lets a user
-       add a jar onto it from an init script
-     - a worker-equivalent thread can require registry + dispatch + eval
-       concurrently with the main thread doing the same
-     - an eval request round-trips through the real protocol code, including
-       the socket transport and the reply written to the socket
-
-   And a jar-smoke path that spawns `java -jar <jar>` and gates on:
+   Gated on:
 
      - the init form evaluated (`nihilite:init-done`)
      - a hook fired (`nihilite:hook-fired N`, N > 0)
@@ -22,6 +14,13 @@
        probe's own atom
      - nothing in the child's log reported `observer threw` or
        `AgentBuilder onError`
+     - the child's WORKING DIRECTORY was left untouched. It runs in a
+       fresh temp directory, and the agent must not write a single file
+       into it: the six classes it generates at mount time are kept in
+       memory and read from there, so the `target/classes` directory it
+       used to save them into -- a relative path, resolved against the
+       application's own directory -- was never needed. A JVM whose
+       working directory is not writable could not mount the agent at all.
 
    The jar-smoke path no longer waits on a server binding, because there is no
    server: `java -jar` runs the init script and returns, so the child's output
@@ -31,13 +30,24 @@
    `observer threw` is the signature of a hook whose bridge never completed,
    so it is a failure marker rather than something a human has to notice.
 
+   THE IN-PROCESS PROBES THIS DRIVER USED TO CARRY ARE GONE. It had three:
+   the system classloader is a URLClassLoader, a worker-equivalent thread
+   can require registry + dispatch + eval concurrently with the main thread
+   doing the same, and an eval request round-trips through the real protocol
+   code. None of them ever ran: build.clj passes `spawn-jar-smoke` as the
+   first argument, so -main took that branch and the probes were
+   unreachable from `check` and from every build task. Dead coverage reads
+   like live coverage in the file, and the two things they claimed to prove
+   are covered elsewhere: the eval protocol over a socket by
+   eval-attach-driver, and the worker/dispatcher require race by
+   prod-bootstrap-driver.
+
    Invoked from build.clj as `java nihilite.test.javaagentClasspathDriver`."
-  (:require [clojure.edn :as edn]
-            [clojure.string :as str]
-            [nihilite.builder.eval.protocol :as proto])
-  (:import [java.io ByteArrayOutputStream]
-           [java.net InetAddress InetSocketAddress ServerSocket URLClassLoader]
-           [java.util Base64 UUID]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str])
+  (:import [java.io ByteArrayOutputStream File]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [java.util.concurrent TimeUnit])
   (:gen-class
     :name nihilite.test.javaagentClasspathDriver
@@ -48,145 +58,6 @@
 
 (defn pass! [] (swap! pass-count inc))
 (defn fail! [] (swap! fail-count inc))
-
-(defn log-cause-chain [t]
-  (loop [cause t]
-    (when cause
-      (println "  " (.getName (class cause))
-               (when-let [m (.getMessage cause)] (str ": " m)))
-      (recur (.getCause cause)))))
-
-(defn run-system-classloader-probe []
-  (try
-    (let [sys (ClassLoader/getSystemClassLoader)]
-      (println "javaagentClasspathDriver: system loader class =" (.getName (class sys)))
-      (println "javaagentClasspathDriver: system loader is URLClassLoader?"
-               (instance? URLClassLoader sys))
-      (pass!))
-    (catch Throwable t
-      (println "javaagentClasspathDriver: system loader probe FAILED")
-      (log-cause-chain t)
-      (fail!))))
-
-(defn run-worker-equivalent-probe []
-  (let [worker-error (atom nil)
-        worker-done (atom false)
-        worker-lock (Object.)
-        worker-thread (Thread.
-                       (fn []
-                         (try
-                           (require 'nihilite.builder.registry)
-                           (require 'nihilite.builder.registry.dispatch)
-                           (require 'nihilite.builder.eval)
-                           (require 'nihilite.builder.eval.protocol)
-                           (catch Throwable t
-                             (reset! worker-error t))
-                           (finally
-                             (locking worker-lock
-                               (reset! worker-done true)
-                               (.notifyAll worker-lock)))))
-                       "driver-worker-equivalent")]
-    (.setDaemon worker-thread true)
-    (.start worker-thread)
-    (try
-      (require 'nihilite.builder.eval.protocol)
-      (catch Throwable t (log-cause-chain t)))
-    (locking worker-lock
-      (while (not @worker-done)
-        (.wait worker-lock)))
-    (if-let [we @worker-error]
-      (do
-        (println "javaagentClasspathDriver: worker-equivalent concurrent require FAILED")
-        (log-cause-chain we)
-        (fail!))
-      (do
-        (println "javaagentClasspathDriver: worker-equivalent concurrent require OK")
-        (pass!)))))
-
-(defn- b64 ^String [^String s]
-  (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
-
-(defn- read-token-line!
-  "Reads one newline-terminated line, one byte at a time.
-
-   Byte at a time on purpose: a buffered reader would swallow the bytes that
-   follow the newline, and the reply payload follows it."
-  ^String [^java.io.InputStream in]
-  (let [sb (StringBuilder.)]
-    (loop []
-      (let [b (.read in)]
-        (when (neg? b)
-          (throw (ex-info "peer closed the connection before sending its token" {})))
-        (if (= b 10)
-          (.toString sb)
-          (do (.append sb (char b)) (recur)))))))
-
-(defn- read-all!
-  "Reads the rest of the stream as UTF-8 text."
-  ^String [^java.io.InputStream in]
-  (let [buf (byte-array 8192)
-        sb  (StringBuilder.)]
-    (loop []
-      (let [n (.read in buf)]
-        (if (neg? n)
-          (.toString sb)
-          (do (.append sb (String. buf 0 n "UTF-8")) (recur)))))))
-
-(defn run-eval-protocol-probe []
-  (let [server (ServerSocket.)
-        code   "(do (println \"from-eval\") (+ 40 2))"]
-    (.bind server (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0))
-    (.setSoTimeout server 10000)
-    (try
-      (let [token   (str (UUID/randomUUID))
-            args    (str "eval:tcp:127.0.0.1:" (.getLocalPort server) ":" token
-                         "|" (b64 code))
-            req     (proto/parse-request args)
-            reply   (proto/handle-args! args)
-            socket  (.accept server)
-            in      (.getInputStream socket)
-            got     (read-token-line! in)
-            payload (read-all! in)
-            on-wire (try (edn/read-string payload) (catch Throwable _ nil))
-            problems (cond-> []
-                       (not= {:kind :tcp
-                              :host "127.0.0.1"
-                              :port (.getLocalPort server)
-                              :token token}
-                             (:transport req))
-                       (conj (str "transport parsed as " (pr-str (:transport req))))
-
-                       (not= token got)
-                       (conj (str "the reply carried the token " (pr-str got)))
-
-                       (not= "42" (:value reply))
-                       (conj (str ":value was " (pr-str (:value reply))))
-
-                       (not (:done reply))
-                       (conj ":done was false")
-
-                       (not (str/includes? (str (:out reply)) "from-eval"))
-                       (conj (str ":out was " (pr-str (:out reply))))
-
-                       (nil? on-wire)
-                       (conj "the socket carried no readable EDN reply")
-
-                       (and on-wire (not= (:value reply) (:value on-wire)))
-                       (conj "the reply on the socket differs from the returned reply"))]
-        (println "javaagentClasspathDriver: eval transport =" (pr-str (:transport req)))
-        (println "javaagentClasspathDriver: eval reply =" (pr-str reply))
-        (if (seq problems)
-          (do
-            (doseq [p problems]
-              (println "javaagentClasspathDriver:   problem --" p))
-            (fail!))
-          (pass!)))
-      (catch Throwable t
-        (println "javaagentClasspathDriver: eval protocol probe FAILED")
-        (log-cause-chain t)
-        (fail!))
-      (finally
-        (.close server)))))
 
 (defn- check-markers [state snapshot-string]
   (when (and (not (:init-done? @state))
@@ -226,8 +97,57 @@
    unreviewable, and got it wrong twice."
   "src/test/clojure/probe/jar_smoke.clj")
 
+(defn- absolute-path
+  "The path as the CHILD has to see it.
+
+   The jar-smoke child runs with a working directory of its own, so a
+   relative path would resolve against that directory instead of the
+   project root -- and the init script would not be found."
+  [path]
+  (.getAbsolutePath (io/file path)))
+
 (defn- host-java-major []
   (Integer/parseInt (first (re-seq #"\d+" (System/getProperty "java.version")))))
+
+(defn- absolute-classpath
+  "The driver's own classpath with every entry made absolute.
+
+   The jar-smoke child runs with a working directory of its own, so the
+   driver can prove the agent does not write into the application's
+   directory. A relative classpath entry would resolve against THAT
+   directory instead of the project root, and the child would not find
+   Nihilite at all."
+  []
+  (let [sep File/pathSeparator
+        pattern (re-pattern (java.util.regex.Pattern/quote sep))]
+    (->> (str/split (System/getProperty "java.class.path") pattern)
+         (map (fn [^String entry]
+                (try (.getCanonicalPath (File. entry))
+                     (catch Throwable _ entry))))
+         (str/join sep))))
+
+(defn- fresh-working-directory ^File []
+  (.toFile (Files/createTempDirectory "nihilite-jar-smoke"
+                                     (make-array FileAttribute 0))))
+
+(defn- agent-written-directories
+  "What the agent left behind in the working directory it was mounted in.
+
+   The agent generates six classes at mount time and used to save them to
+   `target/classes` -- a RELATIVE path, so it resolved against the working
+   directory of whatever JVM mounted it. That put six .class files into the
+   host application's directory on every mount, and a JVM whose working
+   directory was not writable could not mount the agent at all: ByteBuddy's
+   saveIn threw out of premain and the JVM aborted with exit 134.
+
+   The bytes are kept in memory (bytegen/generated-class-bytes) and the
+   transformer reads them from there, so nothing on disk was ever needed."
+  [^File work-dir]
+  (let [target (io/file work-dir "target")]
+    (when (.exists target)
+      (->> (file-seq target)
+           (filter #(.isFile ^File %))
+           (mapv #(str (.getName ^File %)))))))
 
 (defn spawn-jar-smoke [argv]
   (let [nihilite-jar (nth argv 1)
@@ -235,12 +155,12 @@
         ;; load-file only loads the namespace; it does not call -main. Without
         ;; the explicit call the fixture loads, prints nothing, and the hook is
         ;; never installed -- which reads as "the hook never fired".
-        q        (fn [path] (str "  (load-file \"" (.replace path "\\" "\\\\") "\")"))
+        q        (fn [path] (str "  (load-file \"" (.replace (absolute-path path) "\\" "\\\\") "\")"))
         fixture  (str "(do\n" (q jar-smoke-fixture) "\n  (probe.jar-smoke/-main))")
         init-form (if (or (nil? init-script) (str/blank? init-script))
                     fixture
                     (str "(do\n" (q init-script) "\n  (load-file \""
-                         (.replace jar-smoke-fixture "\\" "\\\\")
+                         (.replace (absolute-path jar-smoke-fixture) "\\" "\\\\")
                          "\")\n  (probe.jar-smoke/-main))"))
         ;; -javaagent, not -jar. Weaving needs a real Instrumentation, and only
         ;; the agent entry points get one: java -jar reaches Main-Class, which
@@ -254,10 +174,13 @@
                          (when (>= (host-java-major) 21) ["-XX:+EnableDynamicAgentLoading"])
                          [(str "-javaagent:" nihilite-jar)
                           (str "-Dnihilite.init=" init-form)
-                          "-cp" (System/getProperty "java.class.path")
+                          "-cp" (absolute-classpath)
                           "clojure.main"
                           "-e" "(do (Thread/sleep 60000) (System/exit 0))"]))
-        pb (doto (ProcessBuilder. cmd) (.redirectErrorStream true))
+        work-dir (fresh-working-directory)
+        pb (doto (ProcessBuilder. cmd)
+             (.redirectErrorStream true)
+             (.directory work-dir))
         proc (.start pb)
         is (.getInputStream proc)
         pipe (ByteArrayOutputStream.)
@@ -288,8 +211,19 @@
     (try (.waitFor proc 5 TimeUnit/SECONDS) (catch InterruptedException _ (.interrupt (Thread/currentThread))))
     (let [log (locking pipe (.toString pipe))
           errors (log-failures log)
-          fires  (:hook-fires @state)]
+          fires  (:hook-fires @state)
+          written (agent-written-directories work-dir)]
       (cond
+        (seq written)
+        (do
+          (println "javaagentClasspathDriver: the agent wrote into the working"
+                   "directory it was mounted in:" (pr-str written))
+          (println "  the agent must keep the host application's directory"
+                   "untouched: the generated classes are kept in memory and"
+                   "read from there, so nothing on disk was ever needed")
+          (println "...captured log (full):\n" log)
+          (fail!))
+
         (seq errors)
         (do
           (println "javaagentClasspathDriver: jar-smoke child log reported"
@@ -345,7 +279,10 @@
           (pass!))))))
 
 (defn -main [& args]
-  (if (and (seq args) (= "spawn-jar-smoke" (first args)))
+  (if-not (and (seq args) (= "spawn-jar-smoke" (first args)))
+    (do
+      (println "javaagentClasspathDriver: usage: spawn-jar-smoke <jar> [init-script]")
+      (System/exit 1))
     (do
       (spawn-jar-smoke (vec args))
       (if (and (zero? @fail-count) (pos? @pass-count))
@@ -355,13 +292,4 @@
           (System/exit 0))
         (do
           (println "DRIVER_FAIL jar-smoke: pass=" @pass-count " fail=" @fail-count)
-          (System/exit 1))))
-    (do
-      (run-system-classloader-probe)
-      (run-worker-equivalent-probe)
-      (run-eval-protocol-probe)
-      (if (and (zero? @fail-count) (= 3 @pass-count))
-        (do (println "DRIVER_PASS javaagent classpath: 3/3 probes OK")
-            (System/exit 0))
-        (do (println "DRIVER_FAIL javaagent classpath: pass=" @pass-count " fail=" @fail-count)
-            (System/exit 1))))))
+          (System/exit 1))))))
