@@ -57,9 +57,20 @@
     (throw (ex-info (str label " failed") result)))
   result)
 
+(def ^:private main-compiled
+  "Whether target/classes holds the AOT'd main namespaces. Reset by clean,
+   which is what wipes that directory."
+  (atom false))
+
+(def ^:private drivers-compiled
+  "Whether target/test-classes holds the AOT'd test drivers. Reset by clean."
+  (atom false))
+
 (defn clean
   [_]
   (b/delete {:path "target"})
+  (reset! main-compiled false)
+  (reset! drivers-compiled false)
   nil)
 
 (defn- reset-derived-dir!
@@ -115,6 +126,7 @@
                                                      nihilite.trainer.indy
                                                      nihilite.trainer.installer
                                                      nihilite.trainer.agent])]}))
+  (reset! main-compiled true)
   nil)
 
 (defn- compile-test-driver-script
@@ -141,9 +153,9 @@
        "               nihilite.test.dual-loader-driver"
        "               nihilite.test.concurrent-invoke-driver"
        "               nihilite.test.target-check-driver"
-       "               nihilite.test.capability-driver"
-"               nihilite.test.uninstall-race-driver"
-"               nihilite.test.multi-hook-fanout-driver"
+        "               nihilite.test.capability-driver"
+        "               nihilite.test.uninstall-race-driver"
+        "               nihilite.test.multi-hook-fanout-driver"
         "               nihilite.test.weaving-contract-driver"
         "               nihilite.test.eval-jar-driver"
         "               nihilite.test.examples-driver"
@@ -166,7 +178,27 @@
                 "-M"
                 "-e"
                 (compile-test-driver-script)]}))
+  (reset! drivers-compiled true)
   nil)
+
+(defn- ensure-compiled!
+  "AOT-compiles what a driver needs, ONCE per process.
+
+   Every driver used to recompile both sets before it ran: compile-clj
+   takes about ten seconds and compile-test-drivers! about three, and
+   `check` runs twenty-two drivers. So almost five minutes of every CI job
+   went into recompiling the same twenty-three namespaces twenty-three
+   times over, and the source does not change between two drivers of one
+   run.
+
+   The flags are reset by clean, which is what wipes the directories they
+   describe, so a build that wipes and rebuilds still knows what is on
+   disk."
+  []
+  (when-not @main-compiled
+    (compile-clj nil))
+  (when-not @drivers-compiled
+    (compile-test-drivers!)))
 
 (defn- copy-main-resources!
   []
@@ -236,8 +268,7 @@
   ([label main-class args extra-jvm-opts extra-env]
    (java-command! label main-class args extra-jvm-opts extra-env nil))
   ([label main-class args extra-jvm-opts extra-env jar-only?]
-   (compile-clj nil)
-   (compile-test-drivers!)
+   (ensure-compiled!)
    (when jar-only?
      (when-not (.exists (io/file uber-file))
        (uberjar nil)))
