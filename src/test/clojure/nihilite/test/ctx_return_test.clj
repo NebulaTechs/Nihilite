@@ -54,6 +54,36 @@
       (is (= "original" @seen)
           "the bridge read the target's return value"))))
 
+(deftest ctx-cancel-through-a-context-works
+  (testing "cancelling through a HookContext used to throw
+            IllegalAccessError: Update to non-static final field
+            HookContext.cancelled attempted from a different class. A
+            defrecord's fields are final, so ctx-cancel! could not write
+            the boolean it was asked to write."
+    (let [ev (dispatch/->hook-event {:id                  "spec-cancel"
+                                     :position            :entry
+                                     :target-internal     "java/lang/String"
+                                     :method-name         "toString"
+                                     :method-descriptor   "()Ljava/lang/String;"}
+                                    "self" (object-array 0) nil)
+          ctx (dispatch/->ctx ev)]
+      (is (false? (dispatch/ctx-cancelled? ctx))
+          "a fresh context is not cancelled")
+      (is (true? (dispatch/ctx-cancel! ctx true))
+          "the cancellation is delivered")
+      (is (true? (dispatch/ctx-cancelled? ctx))
+          "and the context reads back as cancelled")
+      (is (true? ((:cancelled? ev)))
+          "the context shares the event's cancellation state"))))
+
+(deftest ctx-cancel-through-a-hand-made-context-says-it-cannot
+  (testing "a HookContext built by hand carries no cancellation channel, so
+            ctx-cancel! reports that rather than pretending or throwing"
+    (let [ctx (reg/map->HookContext {:hook-id "s" :cancelled false})]
+      (is (false? (dispatch/ctx-cancel! ctx true))
+          "no channel, so nothing was delivered")
+      (is (false? (dispatch/ctx-cancelled? ctx))))))
+
 (deftest event-to-context-roundtrip-preserves-return-value
   (testing "dispatch/->ctx converts HookEvent to HookContext; the kebab-case
             keys (:hook-id, :return-value) must survive that hop"

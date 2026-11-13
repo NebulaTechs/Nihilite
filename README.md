@@ -56,6 +56,13 @@ successfully and never fire. `:position` is `:entry`, `:return`, `:throw` or
 `:redefine`, and `:action` is `:observe` (default), `:modify`, `:cancel` or
 `:subscriber`.
 
+A `:position` outside those four throws `:nihilite/invalid-position`, and so
+does a string that spells none of them — including a typo, which used to
+silently become `:entry` and fire at the wrong moment. The transformer
+partitions the specs into exactly four position buckets, so a fifth position
+would register, report a woven count, and never fire. The same string
+spelling of a legal position (`"ENTRY"`) is accepted and normalised.
+
 `:arity` is optional: the descriptor already says how many parameters the method
 takes, so omitting it derives the count, and supplying one that disagrees
 throws `:nihilite/arity-descriptor-mismatch` rather than registering a hook

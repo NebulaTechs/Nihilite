@@ -68,7 +68,16 @@
    action method-key internal-class method-descriptor tag])
 
 (defrecord HookContext
-  [hook-id self args phase return-value cancelled])
+  ;; The cancellation surface mirrors HookEvent's: :cancelled? and :cancel!
+  ;; are closures over one AtomicBoolean, so the state can be read and set
+  ;; after the record was built.
+  ;;
+  ;; It used to be a plain boolean field, and ctx-cancel! set it with
+  ;; `set!`. A defrecord's fields are final, so that threw
+  ;; IllegalAccessError -- \"Update to non-static final field
+  ;; HookContext.cancelled attempted from a different class\" -- every time
+  ;; anyone cancelled through a context.
+  [hook-id self args phase return-value cancelled cancelled? cancel!])
 
 (defrecord HookEvent
   ;; Filled by ->hook-event and read from user bridges.
@@ -96,17 +105,39 @@
     (instance? HookEvent x) (:return-value x)
     :else nil))
 
+(def ^:private legal-positions
+  "The positions a spec may name, in a stable order for the error message.
+
+   A position outside this set cannot be woven: nihilite.trainer.bucket
+   partitions the specs into exactly these four buckets, so a spec in a
+   fifth one would be registered, report a woven count, and never fire --
+   the 'registers but never fires' mode docs/hook-limits.md documents."
+  [:entry :return :throw :redefine])
+
+(def ^:private legal-position-set (set legal-positions))
+
 (defn normalize-position
+  "The position keyword `p` names, or nil when it names none.
+
+   The four legal positions are :entry, :return, :throw and :redefine. A
+   string is matched case-insensitively.
+
+   nil means \"this names no position\". It used to mean \"default to
+   :entry\", which turned a typo into a working hook of the WRONG kind: a
+   :return hook written as \"retrun\" became an :entry hook, fired at the
+   wrong moment, and said nothing. A caller that wants a default says so
+   explicitly -- install! uses :entry when the spec names no position at
+   all, and rejects anything else it cannot read."
   [p]
   (cond
-    (keyword? p) p
+    (keyword? p) (when (contains? legal-position-set p) p)
     (string? p)  (case (.toUpperCase ^String p)
                    "ENTRY"    :entry
                    "RETURN"   :return
                    "THROW"    :throw
                    "REDEFINE" :redefine
-                   :entry)
-    :else        :entry))
+                   nil)
+    :else        nil))
 
 (defn normalize-action
   [a]
@@ -390,9 +421,17 @@
       existing)))
 
 (defn- record-status!
+  "Applies `f` to a spec's status record, atomically.
+
+   updateAndGet, not get-then-set. The status of one spec can be written
+   from two threads at once -- an install and an uninstall racing, or two
+   installs replacing the same id -- and a read-modify-write that loses an
+   update leaves the record describing something that never happened: a
+   spec that was uninstalled reporting :registered? true again."
   [spec-id f]
   (let [ref ^java.util.concurrent.atomic.AtomicReference (status-record spec-id)]
-    (.set ref (f (.get ref)))
+    (.updateAndGet ref (reify java.util.function.UnaryOperator
+                          (apply [_ cur] (f cur))))
     nil))
 
 (defn- mark-installed! [spec-id target-internal count]
@@ -401,7 +440,12 @@
       (assoc cur :woven-count (long count)
                   :pending?    (zero? (long count))
                   :target-loader (target-loader target-internal)
-                  :registered? true))))
+                  :registered? true
+                  ;; The previous attempt's error is not this attempt's.
+                  ;; Leaving it made install-status! report a failure and a
+                  ;; success at the same time: :registered? true next to the
+                  ;; :last-error of an install that is long over.
+                  :last-error  nil))))
 
 (defn- mark-uninstalled! [spec-id count]
   (record-status! spec-id
@@ -452,7 +496,7 @@
         spec-id    (some-> id str)
         spec-target (some-> target-internal str)
         spec-method (some-> method-name str)
-        spec-pos    (normalize-position position)
+        spec-pos    (if (nil? position) :entry (normalize-position position))
         ;; The descriptor already states the parameter count, so an
         ;; omitted :arity is redundant rather than unknown. Falling back
         ;; to it makes the two agree by construction, and
@@ -555,12 +599,28 @@
                        :nihilite/id spec-id
                        :nihilite/action spec-action
                        :nihilite/position spec-pos})))
-    (when (#{:invoke-before :invoke-return :invoke-throw} spec-pos)
-      (throw (ex-info (str ":position " spec-pos " is reserved/removed; "
+    ;; The three names this project used before the positions were renamed.
+    ;; They are checked against the RAW value, because normalize-position
+    ;; answers nil for anything it does not recognise -- including these --
+    ;; and the general rule below would report them as an unknown position
+    ;; rather than as the removed names they are.
+    (when (#{:invoke-before :invoke-return :invoke-throw} position)
+      (throw (ex-info (str ":position " position " is reserved/removed; "
                             "use :entry/:return/:throw/:redefine")
                       {:nihilite/kind :nihilite/invalid-position
                        :nihilite/id spec-id
-                       :nihilite/position spec-pos})))
+                       :nihilite/position position})))
+    (when-not (contains? legal-position-set spec-pos)
+      (throw (ex-info
+              (str ":position must be one of " (pr-str legal-positions)
+                   ", or the string spelling of one of them (got "
+                   (pr-str position) ", id=" spec-id "). A spec in any other "
+                   "position would be registered, report a woven count, and "
+                   "never fire.")
+              {:nihilite/kind :nihilite/invalid-position
+               :nihilite/id spec-id
+               :nihilite/position position
+               :nihilite/positions legal-positions})))
     (verify-target-method! spec-id spec-target spec-method spec-desc)
     (let [norm-spec (assoc spec
                            :id spec-id
@@ -578,9 +638,9 @@
        ;; dispatcher. Wait before touching any index, so a timeout leaves
        ;; nothing half-registered: a spec that is in by-id but never woven is
        ;; indistinguishable from a live hook until someone checks.
-       (when (= :redefine spec-pos)
-         (await-redefine-dispatcher! spec-id))
-(locking registry-lock
+        (when (= :redefine spec-pos)
+          (await-redefine-dispatcher! spec-id))
+        (locking registry-lock
           (bump-revision!)
           (let [prev (.put by-id (:id norm-spec) norm-spec)
                 replaced? (some? prev)
@@ -694,42 +754,42 @@
                (when mb (.remove mb removed))
                (when (and mb (.isEmpty mb))
                  (.remove by-method mk mb))))
-           (stats/remove-stats (:id removed))
-(let [uninstaller @uninstaller-ref
+            (stats/remove-stats (:id removed))
+            (let [uninstaller @uninstaller-ref
                   count (try
                           (if uninstaller
                             (uninstaller (str id) target)
                             0)
-(catch Throwable t
-                         ;; The spec is already out of by-id by the time the
-                         ;; retransform runs, and it has to be: hook-type-matches?
-                         ;; (transformer.clj:71-77) reads this registry as its
-                         ;; input and returns false only for a target whose
-                         ;; bucket is empty, so leaving the spec in place would
-                         ;; re-weave it and uninstall would do nothing. Removal
-                         ;; before the retransform is therefore structural here,
-                         ;; NOT an ordering mistake -- do not "fix" this by
-                         ;; moving the uninstaller call earlier.
-                         ;;
-                         ;; What that ordering must not cost is a status that
-                         ;; contradicts the registry. mark-uninstalled! below is
-                         ;; the ONLY writer of :registered? (registry.clj:337-342),
-                         ;; and on this path it never ran, so a failed uninstall
-                         ;; used to leave :registered? true -- with a stale
-                         ;; :woven-count and four runtime counters already reset
-                         ;; to 0 by stats/remove-stats above -- for a spec that
-                         ;; lookup no longer returns, permanently.
-                         ;;
-                         ;; Writing it here makes both outcomes self-consistent:
-                         ;; the spec is gone, the status says so, and the error is
-                         ;; still thrown rather than swallowed.
-                         (mark-uninstalled! (:id removed) 0)
-                         (mark-error! (:id removed) (.getMessage t))
-                         (throw (ex-info (str "uninstall retransform failed for id=" id)
-                                         {:nihilite/kind :nihilite/uninstall-failed
-                                          :nihilite/id   id
-                                          :nihilite/cause (.getMessage t)}
-                                         t))))]
+                          (catch Throwable t
+                            ;; The spec is already out of by-id by the time the
+                            ;; retransform runs, and it has to be: hook-type-matches?
+                            ;; (transformer.clj:71-77) reads this registry as its
+                            ;; input and returns false only for a target whose
+                            ;; bucket is empty, so leaving the spec in place would
+                            ;; re-weave it and uninstall would do nothing. Removal
+                            ;; before the retransform is therefore structural here,
+                            ;; NOT an ordering mistake -- do not "fix" this by
+                            ;; moving the uninstaller call earlier.
+                            ;;
+                            ;; What that ordering must not cost is a status that
+                            ;; contradicts the registry. mark-uninstalled! below is
+                            ;; the ONLY writer of :registered? (registry.clj:337-342),
+                            ;; and on this path it never ran, so a failed uninstall
+                            ;; used to leave :registered? true -- with a stale
+                            ;; :woven-count and four runtime counters already reset
+                            ;; to 0 by stats/remove-stats above -- for a spec that
+                            ;; lookup no longer returns, permanently.
+                            ;;
+                            ;; Writing it here makes both outcomes self-consistent:
+                            ;; the spec is gone, the status says so, and the error is
+                            ;; still thrown rather than swallowed.
+                            (mark-uninstalled! (:id removed) 0)
+                            (mark-error! (:id removed) (.getMessage t))
+                            (throw (ex-info (str "uninstall retransform failed for id=" id)
+                                            {:nihilite/kind :nihilite/uninstall-failed
+                                             :nihilite/id   id
+                                             :nihilite/cause (.getMessage t)}
+                                            t))))]
              (mark-uninstalled! (:id removed) count)
              (if (zero? count)
                (log/warn "hook removed from registry but 0 classes retransformed"

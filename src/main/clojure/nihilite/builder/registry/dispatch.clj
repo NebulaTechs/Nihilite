@@ -13,8 +13,7 @@
   (:require [clojure.tools.logging :as log]
             [nihilite.builder.registry :as reg]
             [nihilite.builder.registry.index :as index]
-            [nihilite.builder.registry.stats :as stats]
-            [nihilite.crafter.exceptions :as exc]))
+            [nihilite.builder.registry.stats :as stats]))
 
 (defn ->hook-event
   "Construct HookEvent. :cancelled? / :cancel! are closures over AtomicBoolean."
@@ -99,17 +98,45 @@
          :args        (.-args ev)
          :phase       (.-phase ev)
          :return-value (.-return-value ev)
-         :cancelled   ((.-cancelled? ev))}))
+         ;; The context shares the EVENT's cancellation state, so a cancel
+         ;; through the context is visible to the event and the other way
+         ;; round. :cancelled is the snapshot at conversion time; the live
+         ;; state is in :cancelled?.
+         :cancelled   ((.-cancelled? ev))
+         :cancelled?  (fn [] ((.-cancelled? ev)))
+         :cancel!     (fn [v] ((.-cancel! ev) (boolean v)))}))
     :else nil))
 
-(defn ctx-cancel!     [x value]    (cond
-                                     (instance? nihilite.builder.registry.HookContext x)
-                                     (set! (.-cancelled ^nihilite.builder.registry.HookContext x) (boolean value))
-                                     (instance? nihilite.builder.registry.HookEvent x)
-                                     (let [ev ^nihilite.builder.registry.HookEvent x]
-                                       (when-let [c (.-cancel! ev)] (c (boolean value))))))
+(defn ctx-cancel!
+  "Cancels through `x`, a HookContext or a HookEvent.
+
+   Returns true when the cancellation was delivered, false when `x` carries
+   no cancellation channel -- a HookContext built by hand rather than
+   through ->ctx. A context that cannot be cancelled is not an error: the
+   call says so instead of pretending.
+
+   It used to set the context's :cancelled field with `set!`, which cannot
+   work: a defrecord's fields are final, so every cancel through a context
+   threw IllegalAccessError -- \"Update to non-static final field
+   HookContext.cancelled attempted from a different class\"."
+  [x value]
+  (cond
+    (instance? nihilite.builder.registry.HookContext x)
+    (if-let [c (.-cancel! ^nihilite.builder.registry.HookContext x)]
+      (do (c (boolean value)) true)
+      false)
+
+    (instance? nihilite.builder.registry.HookEvent x)
+    (let [ev ^nihilite.builder.registry.HookEvent x]
+      (if-let [c (.-cancel! ev)]
+        (do (c (boolean value)) true)
+        false))))
+
 (defn ctx-cancelled?  [x]          (cond
-                                     (instance? nihilite.builder.registry.HookContext x) (.-cancelled ^nihilite.builder.registry.HookContext x)
+                                     (instance? nihilite.builder.registry.HookContext x)
+                                     (let [c (.-cancelled? ^nihilite.builder.registry.HookContext x)]
+                                       (if (fn? c) (boolean (c))
+                                           (boolean (.-cancelled ^nihilite.builder.registry.HookContext x))))
                                      (instance? nihilite.builder.registry.HookEvent x)
                                      (let [c (.-cancelled? ^nihilite.builder.registry.HookEvent x)]
                                        (if (fn? c) (boolean (c)) (boolean c)))
@@ -140,14 +167,22 @@
           bucket))
 
 (defn dispatch-for-spec
+  "Walks the hooks at this method's :entry position and returns the walk's
+   outcome.
+
+   No catch of HookCancelledException here, because it could never fire:
+   dispatch-one! already catches Exception, and HookCancelledException is
+   a RuntimeException, so a bridge that threw one was counted as an
+   observer exception and the walk carried on. Cancellation is driven by
+   the :cancel action and the :nihilite/short-circuit return value, not by
+   the exception -- the advice layer turns that return value into the
+   exception itself (nihilite.trainer.advice/hk-onEntry), which is where
+   it belongs: the advice knows the exception has to escape the method."
   [spec-id self args]
-  (try
-    (when-let [spec (reg/lookup spec-id)]
-      (let [bucket (reg/spec-bucket spec)
-            event  (->hook-event spec self args nil)]
-        (walk-bucket bucket event spec-id)))
-    (catch nihilite.crafter.HookCancelledException _
-      (throw (exc/cancelled!)))))
+  (when-let [spec (reg/lookup spec-id)]
+    (let [bucket (reg/spec-bucket spec)
+          event  (->hook-event spec self args nil)]
+      (walk-bucket bucket event spec-id))))
 
 (def ^:private boxed-primitives
   "descriptor return char -> the wrapper class, so a bridge value can be
@@ -160,6 +195,14 @@
    \S Short
    \F Float
    \D Double})
+
+(def ^:private boxed-primitive-targets
+  "The wrapper classes a numeric bridge value may be narrowed to, as a set.
+
+   A def, not a `(set (vals boxed-primitives))` recomputed per call: this is
+   on the path every :modify fire takes, and rebuilding the set on every
+   one of them is work nobody asked for."
+  (set (vals boxed-primitives)))
 
 (defn- bi
   ([s] (java.math.BigInteger. ^String s))
@@ -375,7 +418,7 @@
       (string? target) rv
       (instance? target rv) rv
       ;; rv is a Number standing in for a narrower or wider numeric return
-      (and (number? rv) (contains? (set (vals boxed-primitives)) target))
+      (and (number? rv) (contains? boxed-primitive-targets target))
       (let [narrowed (condp identical? target
                        Integer (.intValue ^Number rv)
                        Long (.longValue ^Number rv)
@@ -406,7 +449,11 @@
           event  (->hook-event spec self args original)
           result (atom original)
           decided? (atom false)
-          modified? (atom false)]
+          ;; The id of the spec whose bridge actually produced the value, or
+          ;; nil when nothing was modified. NOT the id of the spec that owns
+          ;; the call site: several hooks can share one method, and the
+          ;; counter belongs to the hook that did the modifying.
+          modified-by (atom nil)]
       (doseq [s bucket
               :while (and (not @decided?)
                           (not (ctx-cancelled? event)))]
@@ -432,7 +479,7 @@
                           :nihilite/returned (class rv')
                           :nihilite/descriptor desc})))
               (reset! result rv')
-              (reset! modified? true)
+              (reset! modified-by (:id s))
               (reset! decided? true))
 
             ;; No :cancel branch here, unlike walk-bucket: install! rejects
@@ -445,8 +492,8 @@
                 (stats/bump-cancelled! (:id s))
                 (reset! decided? true))
             :else nil)))
-      (when @modified?
-        (when-let [r (stats/get-stats spec-id)]
+      (when-let [id @modified-by]
+        (when-let [r (stats/get-stats id)]
           (swap! (:modified r) inc)))
       @result)
     original))
@@ -469,13 +516,21 @@
    — then gets invoked with the 1-argument ctx and throws ArityException.
 
    The 4-argument form keeps `position` nil for callers that genuinely do
-   not know it, matching the first spec whose method and arity agree."
+   not know it, matching the first spec whose method and arity agree.
+
+   A position that is given but cannot be read matches NOTHING, which is
+   different from not giving one at all. The registry's normalize-position
+   answers nil for a position it does not recognise -- a typo, or one of
+   the names it dropped -- and treating that as \"match any\" would hand
+   back a :redefine spec for an :entry call: the very ArityException this
+   function exists to prevent."
   ([^String class-internal ^String method-name parameter-count
     ^String descriptor position]
    (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
               (reg/method-key class-internal method-name descriptor))
          mb (when mk (.get (reg/get-by-method) mk))
-         pos-kw (when position (reg/normalize-position position))]
+         pos-kw (when position (reg/normalize-position position))
+         match-any? (nil? position)]
      (cond
        mb
        (let [pcnt (int parameter-count)]
@@ -483,14 +538,15 @@
                  (let [ar (:arity s)
                        sp (:position s)]
                    (when (and (or (nil? ar) (= ar pcnt))
-                              (or (nil? pos-kw) (= sp pos-kw)))
+                              (or match-any? (= sp pos-kw)))
                      (:id s))))
                mb))
        :else
        (lookup-spec-for-call class-internal method-name parameter-count position))))
   ([^String class-internal method-name parameter-count position]
    (let [b (index/live-bucket class-internal)
-         pos-kw (when position (reg/normalize-position position))]
+         pos-kw (when position (reg/normalize-position position))
+         match-any? (nil? position)]
      (when b
        (let [iname (str method-name)
              pcnt  (int parameter-count)]
@@ -500,7 +556,7 @@
                        sp (:position s)]
                    (when (and (= mn iname)
                               (or (nil? ar) (= ar pcnt))
-                              (or (nil? pos-kw) (= sp pos-kw)))
+                              (or match-any? (= sp pos-kw)))
                      (:id s))))
                b))))))
 
@@ -523,36 +579,33 @@
    reached the woven method unchecked and surfaced as a bare
    ClassCastException naming neither the hook nor the spec."
   [host-internal method-name self args descriptor]
-  (try
-    (let [param-count (count args)
-          spec-id     (lookup-spec-for-call host-internal method-name param-count descriptor :redefine)]
-      (if-let [spec (and spec-id (reg/lookup spec-id))]
-        (if-let [bridge-fn (safe-bridge spec)]
-          (try
-            (stats/bump-fired! spec-id)
-            (let [desc (or (:method-descriptor spec) descriptor)
-                  rv   (coerce-return (bridge-fn self args method-name) desc)]
-              (when-not (modify-value-compatible? rv nil desc)
-                (throw (ex-info
-                         (str ":redefine bridge for spec " spec-id " returned "
-                              (.getName (class rv))
-                              ", which cannot be the target's " desc
-                              " return value. A :redefine bridge must RETURN"
-                              " a value the target method can return.")
-                         {:nihilite/kind :nihilite/invalid-redefine-value
-                          :nihilite/id spec-id
-                          :nihilite/returned (class rv)
-                          :nihilite/descriptor desc})))
-              rv)
-            (catch Throwable t
-              (log/error t "bridge redefine-fire failed (id=" spec-id ")")
-              (throw t)))
-          (throw (IllegalStateException.
-                   (str "no bridge fn for spec id " spec-id))))
+  (let [param-count (count args)
+        spec-id     (lookup-spec-for-call host-internal method-name param-count descriptor :redefine)]
+    (if-let [spec (and spec-id (reg/lookup spec-id))]
+      (if-let [bridge-fn (safe-bridge spec)]
+        (try
+          (stats/bump-fired! spec-id)
+          (let [desc (or (:method-descriptor spec) descriptor)
+                rv   (coerce-return (bridge-fn self args method-name) desc)]
+            (when-not (modify-value-compatible? rv nil desc)
+              (throw (ex-info
+                       (str ":redefine bridge for spec " spec-id " returned "
+                            (.getName (class rv))
+                            ", which cannot be the target's " desc
+                            " return value. A :redefine bridge must RETURN"
+                            " a value the target method can return.")
+                       {:nihilite/kind :nihilite/invalid-redefine-value
+                        :nihilite/id spec-id
+                        :nihilite/returned (class rv)
+                        :nihilite/descriptor desc})))
+            rv)
+          (catch Throwable t
+            (log/error t "bridge redefine-fire failed (id=" spec-id ")")
+            (throw t)))
         (throw (IllegalStateException.
-                 (str "no spec for " host-internal "/" method-name "/" param-count)))))
-    (catch Throwable t
-      (throw t))))
+                 (str "no bridge fn for spec id " spec-id))))
+      (throw (IllegalStateException.
+               (str "no spec for " host-internal "/" method-name "/" param-count))))))
 
 (defn install-redefine-dispatcher!
   ([] (install-redefine-dispatcher! reg/set-redefine-dispatcher!))

@@ -143,12 +143,52 @@
   (dispatch/dispatch-return-for-spec "status-modified" nil (object-array 0) 0)
   (is (= 2 (:modified (reg/install-status! "status-modified")))))
 
+(deftest status-modified-belongs-to-the-hook-that-modified
+  ;; Two :return hooks on one method: an observer and a :modify.
+  ;;
+  ;; The :modified counter used to be bumped on the id the dispatch was
+  ;; CALLED with -- the first spec registered for that method and position --
+  ;; so the observer reported :modified 1 and the hook that actually replaced
+  ;; the value reported 0. The single-spec test above could not see it: with
+  ;; one spec the call-site id and the modifying id are the same id.
+  (api/install! (assoc (entry-spec "status-mod-observer") :position :return))
+  (api/install! (modifying-spec "status-mod-writer"))
+  (is (= 42 (dispatch/dispatch-return-for-spec "status-mod-observer"
+                                               nil (object-array 0) 0))
+      "the :modify hook's value replaced the target's return value")
+  (is (= 1 (:modified (reg/install-status! "status-mod-writer")))
+      "the hook that replaced the value owns the :modified count")
+  (is (zero? (:modified (reg/install-status! "status-mod-observer")))
+      "the observer sitting next to it did not modify anything")
+  (is (= 1 (:fired (reg/install-status! "status-mod-writer")))
+      "and both hooks did run, so the counter is not counting fires"))
+
 (deftest status-modified-stays-zero-for-an-observer
   (api/install! (entry-spec "status-not-modified"))
   (dispatch/dispatch-for-spec "status-not-modified" nil (object-array 0))
   (let [s (reg/install-status! "status-not-modified")]
     (is (= 1 (:fired s)) "the bridge ran")
     (is (zero? (:modified s)) "but nothing was replaced, so nothing counted")))
+
+(deftest status-last-error-is-cleared-by-a-later-successful-install
+  ;; A failed install records :last-error. A later install of the same id
+  ;; that succeeds has to clear it: install-status! reporting :registered?
+  ;; true next to the :last-error of an attempt that is long over
+  ;; describes two different things at once, and a reader has no way to
+  ;; tell which one is current.
+  ;;
+  ;; The precondition is set through the registry's own writer because the
+  ;; only public path to :last-error is a retransform failure, which needs
+  ;; a real Instrumentation -- that half is the driver's job. What is
+  ;; asserted here is the clearing, which is pure registry state.
+  (#'nihilite.builder.registry/mark-error! "status-last-error" "an old failure")
+  (is (= "an old failure"
+         (:last-error (reg/install-status! "status-last-error")))
+      "the error is there before the install")
+  (api/install! (entry-spec "status-last-error"))
+  (is (true? (:registered? (reg/install-status! "status-last-error"))))
+  (is (nil? (:last-error (reg/install-status! "status-last-error")))
+      "a successful install clears the previous attempt's error"))
 
 (deftest status-exceptions-tracks-real-throws
   ;; (contains? s :exceptions) is satisfied by a hardcoded 0 just as easily.
