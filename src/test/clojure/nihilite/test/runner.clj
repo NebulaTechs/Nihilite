@@ -38,6 +38,7 @@
    "nihilite.test.target-check-test"
    "nihilite.test.capability-test"
    "nihilite.test.bytegen-save-dir-test"
+   "nihilite.test.bytegen-primitive-test"
    "nihilite.test.position-validation-test"
    "nihilite.test.spec-validation-test"
    "nihilite.test.eval-test"])

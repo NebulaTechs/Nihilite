@@ -31,6 +31,95 @@
            [net.bytebuddy.jar.asm Label MethodVisitor Opcodes]
            [net.bytebuddy.matcher ElementMatchers]))
 
+(def ^:private primitive-table
+  "The JVM's eight primitive types, each with the facts the bytecode generator
+   needs about it: its Class, its descriptor, the box class that carries it,
+   the return opcode that returns it, the load opcode that pushes it, and
+   whether it occupies two stack slots.
+
+   These were six parallel tables over the same eight names -- one for the
+   name-to-Class mapping, one for the descriptor, one for the box class, one
+   for the return opcode, a fifth that repeated the box class under a second
+   name, and a sixth for the load opcode -- plus a seventh copy of the
+   two-slot fact written twice inside the same function. A table per fact
+   meant a new primitive had to be added in seven places, and the copies had
+   already drifted: one of them threw on an unknown type while its twin
+   returned nil.
+
+   One entry per primitive, keyed by the type's name, so the facts cannot
+   disagree about which type they describe. `void` is absent on purpose: it
+   has no box class and no return opcode, because a method returning void
+   returns without carrying a value. The two-slot fact is true only of long
+   and double; the int-sized types share one 32-bit slot, so they share
+   ILOAD too."
+  {"boolean" {:class Boolean/TYPE :desc "Z" :box "Boolean" :return-opcode Opcodes/IRETURN :load-opcode Opcodes/ILOAD}
+   "byte"    {:class Byte/TYPE    :desc "B" :box "Byte"    :return-opcode Opcodes/IRETURN :load-opcode Opcodes/ILOAD}
+   "char"    {:class Character/TYPE :desc "C" :box "Character" :return-opcode Opcodes/IRETURN :load-opcode Opcodes/ILOAD}
+   "short"   {:class Short/TYPE   :desc "S" :box "Short"   :return-opcode Opcodes/IRETURN :load-opcode Opcodes/ILOAD}
+   "int"     {:class Integer/TYPE :desc "I" :box "Integer" :return-opcode Opcodes/IRETURN :load-opcode Opcodes/ILOAD}
+   "long"    {:class Long/TYPE    :desc "J" :box "Long"    :return-opcode Opcodes/LRETURN :load-opcode Opcodes/LLOAD :wide? true}
+   "float"   {:class Float/TYPE   :desc "F" :box "Float"   :return-opcode Opcodes/FRETURN :load-opcode Opcodes/FLOAD}
+   "double"  {:class Double/TYPE  :desc "D" :box "Double"  :return-opcode Opcodes/DRETURN :load-opcode Opcodes/DLOAD :wide? true}})
+
+(defn- primitive
+  "The table entry for a primitive class, or nil when the class is not one of
+   the eight the table knows.
+
+   The lookup is by name rather than by identity so that `Integer/TYPE` and
+   the string \"int\" reach the same entry."
+  [^Class t]
+  (get primitive-table (.getName t)))
+
+(defn- primitive-class
+  "The Class for a primitive type named by a string, or nil when the name is
+   not one of the eight the table knows.
+
+   `void` is the one primitive with no entry: it has no box class and no
+   return opcode, because a method returning void returns without carrying
+   a value."
+  [name]
+  (:class (get primitive-table name)))
+
+(defn- wide?
+  "True when a primitive occupies two stack slots. long and double do; the
+   int-sized types do not."
+  [^Class t]
+  (boolean (:wide? (primitive t))))
+
+(defn- prim-desc
+  "JVM descriptor for a primitive type."
+  [^Class t]
+  (if-let [{:keys [desc]} (primitive t)]
+    desc
+    (throw (IllegalArgumentException. (str "not primitive: " t)))))
+
+(defn- prim-box
+  "Box class for a primitive type, or nil when the value is already a
+   reference.
+
+   The same box class names the type that carries a primitive through an
+   Object -- so it is both what a primitive argument is boxed INTO and what a
+   primitive return value is unpacked FROM."
+  [^Class t]
+  (:box (primitive t)))
+
+(defn- prim-return
+  "The xRETURN opcode matching a primitive return type."
+  [^Class t]
+  (if-let [{:keys [return-opcode]} (primitive t)]
+    return-opcode
+    (throw (IllegalArgumentException. (str "not primitive: " t)))))
+
+(defn- load-opcode
+  "The xLOAD opcode for a value of the given type.
+
+   A reference type is pushed with ALOAD; a primitive with the opcode its
+   table entry names."
+  [^Class t]
+  (if-let [{:keys [load-opcode]} (primitive t)]
+    load-opcode
+    Opcodes/ALOAD))
+
 (defn- define-value
   "Call `AnnotationDescription$Builder.define` for the value's runtime type
    and return the NEW builder instance. ByteBuddy's AnnotationDescription$Builder
@@ -72,17 +161,9 @@
   (cond
     (class? t) t
     (string? t) (let [s t
-                      primitive? (case s
-                                   "void" Void/TYPE
-                                   "boolean" Boolean/TYPE
-                                   "byte" Byte/TYPE
-                                   "char" Character/TYPE
-                                   "short" Short/TYPE
-                                   "int" Integer/TYPE
-                                   "long" Long/TYPE
-                                   "float" Float/TYPE
-                                   "double" Double/TYPE
-                                   nil)]
+                      primitive? (if (= s "void")
+                                   Void/TYPE
+                                   (primitive-class s))]
                   (cond
                     primitive? primitive?
                     (.startsWith s "[") (Class/forName s)
@@ -118,89 +199,18 @@
 (defn- empty-implementation []
   net.bytebuddy.implementation.StubMethod/INSTANCE)
 
-(defn- prim-desc
-  "JVM descriptor for a primitive type."
-  [^Class t]
-  (case (.getName t)
-    "boolean" "Z"
-    "byte" "B"
-    "char" "C"
-    "short" "S"
-    "int" "I"
-    "long" "J"
-    "float" "F"
-    "double" "D"
-    (throw (IllegalArgumentException. (str "not primitive: " t)))))
-
-(defn- prim-unbox
-  "Box class for a primitive return type, used to unpack the Object a
-   Clojure fn returns into the primitive the generated method declares."
-  [^Class t]
-  (case (.getName t)
-    "boolean" "Boolean"
-    "byte" "Byte"
-    "char" "Character"
-    "short" "Short"
-    "int" "Integer"
-    "long" "Long"
-    "float" "Float"
-    "double" "Double"))
-
-(defn- prim-return
-  "The xRETURN opcode matching a primitive return type."
-  [^Class t]
-  (case (.getName t)
-    "boolean" Opcodes/IRETURN
-    "byte" Opcodes/IRETURN
-    "char" Opcodes/IRETURN
-    "short" Opcodes/IRETURN
-    "int" Opcodes/IRETURN
-    "long" Opcodes/LRETURN
-    "float" Opcodes/FRETURN
-    "double" Opcodes/DRETURN
-    (throw (IllegalArgumentException. (str "not primitive: " t)))))
-
 (defn- invoke-desc-for
   [param-classes]
   (let [n (count param-classes)
         objs (apply str (repeat n "Ljava/lang/Object;"))]
     (str "(" objs ")Ljava/lang/Object;")))
 
-(defn- prim-box
-  "Box class for a primitive type, or nil when the value is already a
-   reference."
-  [^Class t]
-  (when (.isPrimitive t)
-    (case (.getName t)
-      "boolean" "Boolean"
-      "byte" "Byte"
-      "char" "Character"
-      "short" "Short"
-      "int" "Integer"
-      "long" "Long"
-      "float" "Float"
-      "double" "Double")))
-
-(defn- load-opcode
-  "The xLOAD opcode for a value of the given type."
-  [^Class t]
-  (cond
-    (identical? t Long/TYPE) Opcodes/LLOAD
-    (identical? t Double/TYPE) Opcodes/DLOAD
-    (identical? t Float/TYPE) Opcodes/FLOAD
-    (or (identical? t Integer/TYPE)
-        (identical? t Short/TYPE)
-        (identical? t Byte/TYPE)
-        (identical? t Character/TYPE)) Opcodes/ILOAD
-    :else Opcodes/ALOAD))
-
 (defn- param-opcode-at
   "Type of the value in local slot `i`, accounting for the receiver that an
    instance method keeps in slot 0 and for long/double taking two slots."
   [i param-classes static?]
   (let [slots (mapcat (fn [^Class t]
-                        (if (or (identical? t Long/TYPE)
-                                (identical? t Double/TYPE))
+                        (if (wide? t)
                           [t t]
                           [t]))
                       param-classes)
@@ -266,7 +276,7 @@
                                       (str "java/lang/" box)
                                       "valueOf"
                                       (str "(" (prim-desc t) ")Ljava/lang/"
-                                           (prim-unbox t) ";")
+                                           box ";")
                                       false))))
         ;; The appender must reserve a local slot for every value it loads
         ;; and a wide slot for the receiver plus any long/double argument, so
@@ -274,9 +284,7 @@
         ;; from the operand stack. A too-small local count makes the emitted
         ;; frame claim a slot is a reference when it holds a primitive, which
         ;; fails verification at load time.
-        local-size (or stack-size (+ 1 (reduce + (map #(if (or (identical? Long/TYPE %)
-                                                             (identical? Double/TYPE %))
-                                                          2 1)
+        local-size (or stack-size (+ 1 (reduce + (map #(if (wide? %) 2 1)
                                                         param-classes))))
         size (ByteCodeAppender$Size. (or stack-size (+ 2 n-locals)) local-size)]
     (reify net.bytebuddy.implementation.Implementation
@@ -325,7 +333,7 @@
                    ;; needs the boxed value unpacked rather than cast, so the
                    ;; generated method would fail verification otherwise.
                     (if (.isPrimitive return-type)
-                      (let [unbox (prim-unbox return-type)]
+                      (let [unbox (prim-box return-type)]
                         (.visitTypeInsn mv Opcodes/CHECKCAST
                                        (str "java/lang/" unbox))
                         (call-method mv Opcodes/INVOKEVIRTUAL
