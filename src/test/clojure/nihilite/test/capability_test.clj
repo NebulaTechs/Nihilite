@@ -18,23 +18,18 @@
             [nihilite.builder.registry :as reg]))
 
 (deftest report-has-the-documented-shape
-  (let [r (cap/capability-report)]
-    (doseq [k [:instrumentation-present?
-                :entry-point
-                :redefine-classes-supported?
-                :retransform-classes-supported?
-                :java-version
-                :java-vendor
-                :vm-name
-                :os-name
-                :os-arch
-                :java-instrument-module-present?
-                :jdk-attach-present?
-                :attach-provider-count
-                :relevant-jvm-arguments
-                :detail
-                :remediation]]
-      (is (contains? r k) (str "the report must carry " k)))
+  ;; The declared key set is the contract, and it is declared once, in
+  ;; capability/report-key-doc. Comparing the report's actual key set
+  ;; against it in both directions catches a key added to the report without
+  ;; being documented, and a documented key the report stopped carrying --
+  ;; neither of which a one-way "contains?" check can see.
+  (let [r (cap/capability-report)
+        documented (set (map first cap/report-key-doc))
+        actual (set (keys r))]
+    (is (= documented actual)
+        (str "the report must carry exactly the documented keys; "
+             "missing " (pr-str (remove documented actual))
+             ", undeclared " (pr-str (remove actual documented))))
     (is (string? (:detail r)))
     (is (or (nil? (:remediation r)) (string? (:remediation r))))))
 

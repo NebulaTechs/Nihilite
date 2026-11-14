@@ -145,36 +145,54 @@
      :instrumentation inst
      :entry-point (when (instance? clojure.lang.Atom ep-holder) @ep-holder)}))
 
+(def report-key-doc
+  "Every key the capability report carries, and what that key says.
+
+   The report's shape is public API, so it is stated once here, as data,
+   rather than as prose repeated in every docstring that mentions the report.
+   Both docstrings are rendered from this vector, so a key cannot be added to
+   the report without this file saying what the new key means -- and a key
+   cannot be documented without the report having to carry it.
+
+   A vector of [key description] pairs rather than a map, because the order
+   is the order a reader wants the keys in, and a map would reorder them."
+  [[:instrumentation-present? "whether an Instrumentation has been registered, i.e. the agent is armed"]
+   [:entry-point ":premain, :agentmain, or nil when the agent was not armed by an entry point"]
+   [:redefine-classes-supported? "what the Instrumentation reports"]
+   [:retransform-classes-supported? "what the Instrumentation reports"]
+   [:java-version "the JVM's own version"]
+   [:java-vendor "the JVM's own vendor"]
+   [:vm-name "the JVM's own VM name"]
+   [:os-name "the JVM's own OS name"]
+   [:os-arch "the JVM's own OS architecture"]
+   [:java-instrument-module-present? "whether the boot layer has the java.instrument module, which holds the Instrumentation API itself"]
+   [:jdk-attach-present? "whether com.sun.tools.attach is reachable"]
+   [:attach-provider-count "how many AttachProviders the JVM offers, -1 when the question could not be answered"]
+   [:relevant-jvm-arguments "the JVM arguments that bear on instrumentation"]
+   [:detail "a one-line summary"]
+   [:remediation "what to do when the agent is not armed, or nil"]])
+
+(defn render-report-keys
+  "The report's key list, rendered for a docstring.
+
+   Both public docstrings that describe the report use this, so the two
+   cannot drift apart from each other, or from the report itself."
+  []
+  (str/join "\n"
+            (map (fn [[k d]] (format "    %-33s ;; %s" k d))
+                 report-key-doc)))
+
 (defn capability-report
-  "What this JVM can do, and what Nihilite has done to it.
-
-   Returns a map with these keys:
-
-   ```clojure
-   :instrumentation-present?        ;; whether an Instrumentation has been
-                                    ;; registered, i.e. the agent is armed
-   :entry-point                     ;; :premain, :agentmain, or nil when the
-                                    ;; agent was not armed by an entry point
-   :redefine-classes-supported?     ;; what the Instrumentation reports
-   :retransform-classes-supported?  ;; what the Instrumentation reports
-   :java-version, :java-vendor, :vm-name, :os-name, :os-arch
-                                    ;; the JVM's own facts
-   :java-instrument-module-present? ;; whether the boot layer has the
-                                    ;; java.instrument module, which holds the
-                                    ;; Instrumentation API itself
-   :jdk-attach-present?             ;; whether com.sun.tools.attach is reachable
-   :attach-provider-count           ;; how many AttachProviders the JVM offers,
-                                    ;; -1 when the question could not be answered
-   :relevant-jvm-arguments          ;; the JVM arguments that bear on
-                                    ;; instrumentation
-   :detail                          ;; a one-line summary
-   :remediation                     ;; what to do when the agent is not armed,
-                                    ;; or nil
-   ```
-
-   The report is read-only: it installs nothing, attaches to nothing, and
-   retransforms nothing. Calling it twice on the same JVM gives the same
-   answer unless the JVM itself changed."
+  {:doc (str "What this JVM can do, and what Nihilite has done to it.\n\n"
+              "   Returns a map with these keys:\n\n"
+              (render-report-keys)
+              "\n\n    :remediation is the field to read when something does not work: it says\n"
+              "    which of the possible fixes applies, rather than leaving the reader to\n"
+              "    work out whether the agent was never started, cannot be attached to, or\n"
+              "    is running on a JVM that cannot redefine classes.\n\n"
+              "    The report is read-only: it installs nothing, attaches to nothing, and\n"
+              "    retransforms nothing. Calling it twice on the same JVM gives the same\n"
+              "    answer unless the JVM itself changed.")}
   []
   (let [{:keys [instrumentation-present? instrumentation entry-point]}
         (agent-state)
