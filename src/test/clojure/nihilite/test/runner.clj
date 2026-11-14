@@ -39,6 +39,7 @@
    "nihilite.test.capability-test"
    "nihilite.test.bytegen-save-dir-test"
    "nihilite.test.position-validation-test"
+   "nihilite.test.spec-validation-test"
    "nihilite.test.eval-test"])
 
 (defn- safe-deref

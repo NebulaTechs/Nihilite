@@ -20,12 +20,19 @@
    descriptor claims otherwise cannot match a real method either."
   #{\B \C \D \F \I \J \S \V \Z})
 
-(defn- valid-object-type-name?
-  "Whether a `L...;` body is a well-formed internal class name: a
-   sequence of `/`-separated identifiers, each starting with a letter or
-   `_` or `$`. Deliberately does not resolve the name -- resolving means
-   loading the type, and a hook installed to observe a class-loading path
-   would re-enter the advice."
+(defn valid-class-name?
+  "Whether `n` is a well-formed JVM internal class name: a sequence of
+   `/`-separated identifiers, each starting with a letter or `_` or `$`.
+
+   Two callers, one grammar. A descriptor spells a class as
+   `Ljava/lang/String;`, and a hook spec names its target the same way
+   with `java/lang/String` -- so a name that is wrong in one is wrong in
+   the other, and the check that refuses one has to be the check that
+   refuses the other.
+
+   Deliberately does not resolve the name -- resolving means loading the
+   type, and a hook installed to observe a class-loading path would
+   re-enter the advice."
   [^String n]
   (and (pos? (count n))
        ;; Every character must be legal in an identifier. Checking each
@@ -66,7 +73,7 @@
                (let [semi (.lastIndexOf tok (int \;))]
                  (and (= semi (dec (count tok)))
                       (> semi (inc i))
-                      (valid-object-type-name? (subs tok (inc i) semi))))
+                       (valid-class-name? (subs tok (inc i) semi))))
 
                :else false))
            false))))

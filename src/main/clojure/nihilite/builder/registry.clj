@@ -489,32 +489,89 @@
              :cancelled  (counter-value rec :cancelled)
              :exceptions (counter-value rec :exceptions)))))
 
-(defn install!
+(defn- normalize-spec
+  "The spec's fields, read into the shapes the registry works with.
+
+   Reads only, and throws nothing. A spec that names something the
+   registry cannot use is a spec the VALIDATOR has to report, and it has
+   to report it with the kind that names the problem rather than with
+   whatever exception the reading happened to raise.
+
+   That separation is not decoration. The reading used to compute the
+   arity with (int arity) and the internal class name with
+   (.replace target \"/\" \".\") while the spec was still raw, so a spec
+   whose :arity was a string died on a ClassCastException and a spec
+   with no :target-internal died on a NullPointerException -- both before
+   the check written for them could run. Those two checks were dead
+   code, and the kinds they carry were unreachable.
+
+   The values that are opaque labels -- :id and :tag -- are read as
+   strings, because the registry has no opinion about what an id looks
+   like. The values that have a grammar -- :target-internal and
+   :descriptor -- are read as strings too, and the validator is what
+   checks them against that grammar.
+
+   :arity is left raw on purpose: the validator has to be able to tell
+   an absent arity from one that is present and unusable."
   [spec]
   (let [{:keys [id target-internal method-name position arity
-                descriptor action tag]} spec
-        spec-id    (some-> id str)
-        spec-target (some-> target-internal str)
-        spec-method (some-> method-name str)
-        spec-pos    (if (nil? position) :entry (normalize-position position))
-        ;; The descriptor already states the parameter count, so an
-        ;; omitted :arity is redundant rather than unknown. Falling back
-        ;; to it makes the two agree by construction, and
-        ;; lookup-spec-for-call's (or (nil? ar) (= ar pcnt)) check
-        ;; actually run for a caller that left :arity out.
-        spec-arity  (cond
-                      (some? arity) (int arity)
-                      (and (string? descriptor) (pos? (count descriptor)))
-                      (desc/descriptor-param-count descriptor)
-                      :else nil)
-        spec-desc   (some-> descriptor str)
-        spec-action (if (contains? spec :action) (normalize-action action) :observe)
-        spec-tag    (some-> tag str)
-        desc-missing? (or (nil? spec-desc) (empty? spec-desc))
-        spec-method-key (when-not desc-missing?
-                          (method-key spec-target spec-method spec-desc))
-        spec-internal-class (when-not desc-missing?
-                            (.replace ^String spec-target "/" "."))]
+                descriptor action tag]} spec]
+    {:id (some-> id str)
+     :target-internal (some-> target-internal str)
+     :method-name (some-> method-name str)
+     :position (if (nil? position) :entry (normalize-position position))
+     :arity arity
+     :descriptor (some-> descriptor str)
+     :action (if (contains? spec :action) (normalize-action action) :observe)
+     :tag (some-> tag str)}))
+
+(defn- derive-arity
+  "The arity a spec declares, or nil when it declares none.
+
+   The descriptor already states the parameter count, so an omitted
+   :arity is redundant rather than unknown. Falling back to it makes the
+   two agree by construction, and lookup-spec-for-call's
+   (or (nil? ar) (= ar pcnt)) check actually run for a caller that left
+   :arity out.
+
+   The declared arity has to be an integer by the time this runs: the
+   validator checks that before anything reads the number, because
+   reading a non-numeric arity as one is how a bad spec used to come
+   back as a ClassCastException rather than as :nihilite/bad-arity.
+
+   long, not int: an int would truncate a Long arity past 2^31 into a
+   negative number and turn a spec that cannot match into one that
+   mismatches for the wrong reason."
+  [arity descriptor]
+  (cond
+    (some? arity) (long arity)
+    (and (string? descriptor) (pos? (count descriptor)))
+    (desc/descriptor-param-count descriptor)
+    :else nil))
+
+(defn- validate-spec!
+  "The spec's shape, checked. Throws the first problem it finds.
+
+   Every rejection is an ex-info carrying a :nihilite/kind, so a caller
+   can tell what to fix without reading the message. The kinds are
+   named in nihilite.builder.api/install!.
+
+   The checks are in dependency order: a field has to be present and
+   well-formed before a rule that compares it with another field can be
+   applied, and a field has to be well-formed before a rule about what
+   it may be combined with can mean anything.
+
+   Returns the arity the spec declares, which is the one value derived
+   from the spec that the caller needs afterwards."
+  [spec norm]
+  (let [spec-id    (:id norm)
+        spec-target (:target-internal norm)
+        spec-method (:method-name norm)
+        spec-pos    (:position norm)
+        spec-desc   (:descriptor norm)
+        spec-action (:action norm)
+        spec-tag    (:tag norm)
+        arity       (:arity norm)]
     (when (empty? spec-id)
       (throw (ex-info ":id required for HookSpec"
                       {:nihilite/kind :nihilite/missing-id
@@ -523,6 +580,16 @@
       (throw (ex-info ":target-internal required for HookSpec"
                       {:nihilite/kind :nihilite/missing-target
                        :nihilite/spec spec})))
+    ;; A target that is not a well-formed internal class name can never
+    ;; name a class, so a hook on it would register, report a woven
+    ;; count, and never fire. The check has to be the same grammar the
+    ;; descriptor uses, so a name that is wrong in one is wrong in both.
+    (when-not (desc/valid-class-name? spec-target)
+      (throw (ex-info (str ":target-internal must be a JVM internal class name, "
+                            "like \"java/util/BitSet\" (id=" spec-id ")")
+                      {:nihilite/kind :nihilite/bad-target
+                       :nihilite/id spec-id
+                       :nihilite/target spec-target})))
     (when (empty? spec-method)
       (throw (ex-info ":method-name required for HookSpec"
                       {:nihilite/kind :nihilite/missing-method
@@ -531,11 +598,11 @@
       (throw (ex-info ":arity must be a non-negative integer or nil"
                       {:nihilite/kind :nihilite/bad-arity
                        :nihilite/spec spec})))
-    (when (and (some? tag) (empty? spec-tag))
+    (when (and (some? (:tag spec)) (empty? spec-tag))
       (throw (ex-info ":tag must be a non-empty string when present"
                       {:nihilite/kind :nihilite/bad-tag
                        :nihilite/id spec-id})))
-    (when desc-missing?
+    (when (or (nil? spec-desc) (empty? spec-desc))
       (throw (ex-info (str ":descriptor required for HookSpec id=" spec-id)
                       {:nihilite/kind :nihilite/missing-descriptor
                        :nihilite/id spec-id
@@ -549,7 +616,8 @@
                        :nihilite/descriptor spec-desc
                        :nihilite/target spec-target
                        :nihilite/method spec-method})))
-    (let [declared (desc/descriptor-param-count spec-desc)]
+    (let [declared (desc/descriptor-param-count spec-desc)
+          spec-arity (derive-arity arity spec-desc)]
       (when-not (nil? declared)
         (when (and (some? spec-arity) (not= spec-arity declared))
           (throw (ex-info
@@ -604,124 +672,173 @@
     ;; answers nil for anything it does not recognise -- including these --
     ;; and the general rule below would report them as an unknown position
     ;; rather than as the removed names they are.
-    (when (#{:invoke-before :invoke-return :invoke-throw} position)
-      (throw (ex-info (str ":position " position " is reserved/removed; "
+    (when (#{:invoke-before :invoke-return :invoke-throw} (:position spec))
+      (throw (ex-info (str ":position " (:position spec) " is reserved/removed; "
                             "use :entry/:return/:throw/:redefine")
                       {:nihilite/kind :nihilite/invalid-position
                        :nihilite/id spec-id
-                       :nihilite/position position})))
+                       :nihilite/position (:position spec)})))
     (when-not (contains? legal-position-set spec-pos)
       (throw (ex-info
               (str ":position must be one of " (pr-str legal-positions)
                    ", or the string spelling of one of them (got "
-                   (pr-str position) ", id=" spec-id "). A spec in any other "
+                   (pr-str (:position spec)) ", id=" spec-id "). A spec in any other "
                    "position would be registered, report a woven count, and "
                    "never fire.")
               {:nihilite/kind :nihilite/invalid-position
                :nihilite/id spec-id
-               :nihilite/position position
+               :nihilite/position (:position spec)
                :nihilite/positions legal-positions})))
+    (derive-arity arity spec-desc)))
+
+(defn- index-and-weave!
+  "Index a validated spec and weave it, atomically.
+
+   The spec is already validated when it gets here: every key it carries
+   is a value the registry works with, and the target method has been
+   checked against the JVM.
+
+   ATOMICITY. The spec goes into three indexes -- by-id, the target
+   bucket and the method bucket -- and the retransform that weaves it is
+   the only fallible step in the middle of that. When it fails, undo!
+   takes the new spec back out of all three and puts the previous one
+   back where it was, so a spec is either fully indexed and woven or it
+   was never there. Without that, the spec stays in by-id while
+   mark-installed! never executes: lookup returns a live hook,
+   install-status! reports :registered? false, and a retry via
+   install-fresh! throws :nihilite/duplicate-spec-id for something the
+   caller believes was a no-op.
+
+   A :redefine hook replaces the method body, so from the moment the
+   retransform lands the advice's only route to the bridge is the
+   dispatcher. The wait happens before any index is touched, so a timeout
+   leaves nothing half-registered: a spec that is in by-id but never
+   woven is indistinguishable from a live hook until someone checks.
+
+   Returns true when the id was new, false when it replaced an existing
+   spec."
+  [norm-spec]
+  (let [spec-id (:id norm-spec)
+        spec-target (:target-internal norm-spec)]
+    (when (= :redefine (:position norm-spec))
+      (await-redefine-dispatcher! spec-id))
+    (locking registry-lock
+      (bump-revision!)
+      (let [prev (.put by-id spec-id norm-spec)
+            replaced? (some? prev)
+            spec-target-kw (:target-internal norm-spec)
+            spec-bucket (index/bucket spec-target-kw)
+            spec-method-bkt (when-let [mk (:method-key norm-spec)]
+                              (method-bucket mk))
+            prev-bucket (when replaced?
+                          (index/live-bucket (:target-internal prev)))
+            prev-method-bkt (when-let [pmk (when replaced? (:method-key prev))]
+                              (.get by-method pmk))
+            ;; Undo everything this install wrote, putting back what was
+            ;; there before. Needed because the retransform below is the
+            ;; only fallible step in this block and nothing after it can run
+            ;; when it throws. Without this the spec stays in by-id, the
+            ;; target bucket and the method bucket while mark-installed!
+            ;; never executes, so lookup returns a live hook,
+            ;; install-status! reports :registered? false, and a retry via
+            ;; install-fresh! throws :nihilite/duplicate-spec-id for
+            ;; something the caller believes was a no-op.
+            ;;
+            ;; prev and norm-spec share an id -- that is the whole point of
+            ;; the replace path -- so the new spec is taken out of every
+            ;; index FIRST and the old one is restored after. Doing it the
+            ;; other way round would delete the spec just restored.
+            undo!
+            (fn []
+              (.remove by-id spec-id)
+              (.remove spec-bucket norm-spec)
+              (when spec-method-bkt (.remove spec-method-bkt norm-spec))
+              ;; forget-target! only drops the key when the bucket really
+              ;; did empty out, which is what keeps it from racing a
+              ;; concurrent install into a different bucket.
+              (index/forget-target! spec-target-kw spec-bucket)
+              (when replaced?
+                (.put by-id (:id prev) prev)
+                (when prev-bucket (.add prev-bucket prev))
+                (when prev-method-bkt (.add prev-method-bkt prev)))
+              (when-not replaced?
+                (stats/remove-stats spec-id))
+              (bump-revision!))]
+        (when replaced?
+          (when prev-bucket (.remove prev-bucket prev))
+          (when prev-method-bkt (.remove prev-method-bkt prev)))
+        (.add spec-bucket norm-spec)
+        (when spec-method-bkt (.add spec-method-bkt norm-spec))
+        (when-not replaced?
+          (stats/ensure-stats spec-id))
+        ;; A replaced spec changes the registry contents, so the armed
+        ;; AgentBuilder must re-visit already-loaded matching classes —
+        ;; otherwise the new bridge/position never reaches the JVM.
+        (let [woven (int (try
+                           (retransform-loaded-matching! spec-target)
+                           (catch Throwable t
+                             (undo!)
+                             ;; On a replace, prev is back in place, so the
+                             ;; status that already described it is still
+                             ;; accurate and only needs the error recorded.
+                             ;; On a first install there is nothing left to
+                             ;; describe, so the status has to be told the
+                             ;; spec is not registered -- the same repair
+                             ;; uninstall! makes on its failure path.
+                             (when-not replaced?
+                               (mark-uninstalled! spec-id 0))
+                             (mark-error! spec-id (.getMessage t))
+                             (throw t))))]
+          (if replaced?
+            (do (log/info "hook replaced:" spec-id
+                          "target=" spec-target
+                          "method=" (:method-name norm-spec))
+                (mark-installed! spec-id spec-target woven)
+                false)
+            (do (log/info "hook registered:" spec-id
+                          "target=" spec-target
+                          "method=" (:method-name norm-spec)
+                          "@" (:position norm-spec)
+                          "action=" (:action norm-spec)
+                          (when-let [t (:tag norm-spec)] (str " tag=" t))
+                          (when-let [n (:note norm-spec)] (str "// " n)))
+                (mark-installed! spec-id spec-target woven)
+                true)))))))
+
+(defn install!
+  "Install a hook spec under `:id`.
+
+   Three phases, in this order, because each one depends on the last:
+   read the spec into the shapes the registry works in, refuse a spec
+   that does not fit those shapes, and only then derive and index it.
+
+   The derived values -- the arity, the method key, the internal class
+   name -- are computed AFTER the validation, because deriving them from
+   an unvalidated spec is what used to turn a bad spec into a
+   NullPointerException instead of a kind a caller can branch on.
+
+   Returns true when the id was newly registered, false when it replaced
+   an existing spec."
+  [spec]
+  (let [norm (normalize-spec spec)
+        spec-arity (validate-spec! spec norm)
+        spec-id    (:id norm)
+        spec-target (:target-internal norm)
+        spec-method (:method-name norm)
+        spec-desc   (:descriptor norm)
+        norm-spec (assoc spec
+                         :id spec-id
+                         :target-internal spec-target
+                         :method-name spec-method
+                         :position (:position norm)
+                         :arity spec-arity
+                         :action (:action norm)
+                         :tag (:tag norm)
+                         :method-key (method-key spec-target spec-method spec-desc)
+                         :internal-class (.replace ^String spec-target "/" ".")
+                         :method-descriptor spec-desc)]
     (verify-target-method! spec-id spec-target spec-method spec-desc)
-    (let [norm-spec (assoc spec
-                           :id spec-id
-                           :target-internal spec-target
-                           :method-name spec-method
-                           :position spec-pos
-                           :arity spec-arity
-                           :action spec-action
-                           :tag spec-tag
-                           :method-key spec-method-key
-                           :internal-class spec-internal-class
-                           :method-descriptor spec-desc)]
-       ;; A :redefine hook replaces the method body, so from the moment the
-       ;; retransform lands the advice's only route to the bridge is the
-       ;; dispatcher. Wait before touching any index, so a timeout leaves
-       ;; nothing half-registered: a spec that is in by-id but never woven is
-       ;; indistinguishable from a live hook until someone checks.
-        (when (= :redefine spec-pos)
-          (await-redefine-dispatcher! spec-id))
-        (locking registry-lock
-          (bump-revision!)
-          (let [prev (.put by-id (:id norm-spec) norm-spec)
-                replaced? (some? prev)
-                spec-target-kw (:target-internal norm-spec)
-                spec-bucket (index/bucket spec-target-kw)
-                spec-method-bkt (when-let [mk (:method-key norm-spec)]
-                                  (method-bucket mk))
-                prev-bucket (when replaced?
-                              (index/live-bucket (:target-internal prev)))
-                prev-method-bkt (when-let [pmk (when replaced? (:method-key prev))]
-                                  (.get by-method pmk))
-                ;; Undo everything this install wrote, putting back what was
-                ;; there before. Needed because the retransform below is the
-                ;; only fallible step in this block and nothing after it can run
-                ;; when it throws. Without this the spec stays in by-id, the
-                ;; target bucket and the method bucket while mark-installed!
-                ;; never executes, so lookup returns a live hook,
-                ;; install-status! reports :registered? false, and a retry via
-                ;; install-fresh! throws :nihilite/duplicate-spec-id for
-                ;; something the caller believes was a no-op.
-                ;;
-                ;; prev and norm-spec share an id -- that is the whole point of
-                ;; the replace path -- so the new spec is taken out of every
-                ;; index FIRST and the old one is restored after. Doing it the
-                ;; other way round would delete the spec just restored.
-                undo!
-                (fn []
-                  (.remove by-id (:id norm-spec))
-                  (.remove spec-bucket norm-spec)
-                  (when spec-method-bkt (.remove spec-method-bkt norm-spec))
-                  ;; forget-target! only drops the key when the bucket really
-                  ;; did empty out, which is what keeps it from racing a
-                  ;; concurrent install into a different bucket.
-                  (index/forget-target! spec-target-kw spec-bucket)
-                  (when replaced?
-                    (.put by-id (:id prev) prev)
-                    (when prev-bucket (.add prev-bucket prev))
-                    (when prev-method-bkt (.add prev-method-bkt prev)))
-                  (when-not replaced?
-                    (stats/remove-stats spec-id))
-                  (bump-revision!))]
-            (when replaced?
-              (when prev-bucket (.remove prev-bucket prev))
-              (when prev-method-bkt (.remove prev-method-bkt prev)))
-            (.add spec-bucket norm-spec)
-            (when spec-method-bkt (.add spec-method-bkt norm-spec))
-            (when-not replaced?
-              (stats/ensure-stats spec-id))
-            ;; A replaced spec changes the registry contents, so the armed
-            ;; AgentBuilder must re-visit already-loaded matching classes —
-            ;; otherwise the new bridge/position never reaches the JVM.
-            (let [woven (int (try
-                               (retransform-loaded-matching! spec-target)
-                               (catch Throwable t
-                                 (undo!)
-                                 ;; On a replace, prev is back in place, so the
-                                 ;; status that already described it is still
-                                 ;; accurate and only needs the error recorded.
-                                 ;; On a first install there is nothing left to
-                                 ;; describe, so the status has to be told the
-                                 ;; spec is not registered -- the same repair
-                                 ;; uninstall! makes on its failure path.
-                                 (when-not replaced?
-                                   (mark-uninstalled! (:id norm-spec) 0))
-                                 (mark-error! (:id norm-spec) (.getMessage t))
-                                 (throw t))))]
-            (if replaced?
-              (do (log/info "hook replaced:" (:id norm-spec)
-                            "target=" (:target-internal norm-spec)
-                            "method=" (:method-name norm-spec))
-                  (mark-installed! (:id norm-spec) spec-target woven)
-                  false)
-              (do (log/info "hook registered:" (:id norm-spec)
-                            "target=" (:target-internal norm-spec)
-                            "method=" (:method-name norm-spec)
-                            "@" (:position norm-spec)
-                            "action=" (:action norm-spec)
-                            (when-let [t (:tag norm-spec)] (str " tag=" t))
-                            (when-let [n (:note norm-spec)] (str "// " n)))
-                  (mark-installed! (:id norm-spec) spec-target woven)
-                  true))))))))
+    (index-and-weave! norm-spec)))
 
 (defonce ^{:doc "The Trainer's uninstall-with-retransform entry point, published
   when nihilite.trainer.installer loads. Stays nil in a JVM that never loaded

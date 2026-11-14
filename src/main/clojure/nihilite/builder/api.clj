@@ -22,7 +22,9 @@
    | ----------------- | -------- | --------------------------------------------- |
    | :id               | yes      | unique hook identifier (any printable string)  |
    | :target-internal  | yes      | JVM internal name of the target class, e.g.   |
-   |                   |          | `\"java/lang/String\"`                          |
+   |                   |          | `\"java/lang/String\"`. Must be a well-formed   |
+   |                   |          | internal name -- the same grammar the         |
+   |                   |          | descriptor is checked against.                |
    | :method-name      | yes      | method name (string)                          |
    | :descriptor       | yes      | raw method descriptor, e.g. `\"()I\"`          |
    | :position         | no       | `:entry` / `:return` / `:throw` / `:redefine` |
@@ -61,13 +63,18 @@
    Throws `ex-info` when the spec is missing required keys
    (`:nihilite/missing-id` / `:nihilite/missing-target` /
    `:nihilite/missing-method` / `:nihilite/missing-descriptor`) or carries a
-   value the registry rejects (`:nihilite/bad-descriptor`,
-   `:nihilite/bad-arity`, `:nihilite/bad-tag`,
+   value the registry rejects (`:nihilite/bad-target`,
+   `:nihilite/bad-descriptor`, `:nihilite/bad-arity`, `:nihilite/bad-tag`,
    `:nihilite/arity-descriptor-mismatch`, `:nihilite/invalid-action`,
    `:nihilite/invalid-position`, and the per-position action rules).
    `nihilite.builder.registry/install-fresh!` is the variant that refuses a
    duplicate id instead of replacing it, throwing
    `:nihilite/duplicate-spec-id`.
+
+   Every one of those is an `ex-info` carrying a `:nihilite/kind`, so a
+   caller can branch on the kind instead of matching on the message. A
+   spec the registry cannot read is refused by KIND, never by whatever
+   exception the reading happened to raise.
 
    THE TARGET METHOD IS CHECKED, WHEN THE JVM CAN ANSWER. The registry
    already checks the SHAPE of a spec -- the descriptor is a well-formed JVM
