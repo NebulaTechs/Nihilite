@@ -19,6 +19,56 @@
 (defn- text-of [snapshot]
   (apply str (map :text (:events snapshot))))
 
+(deftest a-snapshot-never-reports-a-finished-eval-that-produced-nothing
+  ;; The snapshot reads the session's log and the session's running flag, and
+  ;; the ORDER of those two reads is load-bearing.
+  ;;
+  ;; The session thread emits a chunk and only THEN clears :running, so a
+  ;; reader that takes the flag FIRST and the log second cannot see "not
+  ;; running" together with a log that is missing the output. The other
+  ;; order loses output: the reader takes an empty log, the eval finishes
+  ;; and clears the flag, and the reader then reads the flag as not-running
+  ;; -- a finished eval that produced nothing, which is what the caller is
+  ;; told. The caller stops polling and never sees the output it was
+  ;; waiting for.
+  ;;
+  ;; The window is created on purpose rather than waited for. The running
+  ;; flag is a stand-in whose deref waits, so the eval can finish between
+  ;; the reader's two reads -- which is exactly what the race looks like
+  ;; from the reader's side, and it happens on every run instead of once in
+  ;; a few thousand.
+  (let [log      (atom [])
+        flag     (atom 1)
+        arrived  (java.util.concurrent.CountDownLatch. 1)
+        release  (java.util.concurrent.CountDownLatch. 1)
+        ;; Derefs the flag at the moment it is asked, not at the moment the
+        ;; reader arrived -- so the reader sees the flag as the eval left it.
+        blocking-flag
+        (reify clojure.lang.IDeref
+          (deref [_]
+            (.countDown arrived)
+            (.await release)
+            @flag))
+        s (session/->Session "snapshot-race" (find-ns 'clojure.core)
+                             (java.util.concurrent.atomic.AtomicLong. 0)
+                             (java.util.concurrent.atomic.AtomicLong. 0)
+                             log
+                             (atom nil) (atom nil) blocking-flag
+                             (java.util.concurrent.LinkedBlockingQueue.)
+                             nil (atom false))
+        snap (future (session/read-state s nil))]
+    (is (.await arrived 5 java.util.concurrent.TimeUnit/SECONDS)
+        "the reader must reach the running flag")
+    ;; The eval finishes here, in the window between the reader's two reads.
+    (swap! log conj {:seq 1 :stream :out :text "first"})
+    (reset! flag nil)
+    (.countDown release)
+    (let [state @snap]
+      (is (false? (:running? state))
+          "the eval did finish, so the snapshot must say so")
+      (is (seq (:events state))
+          "a snapshot that reports the eval as finished must carry the output it produced: a caller that trusts it stops polling, and an empty log means the output is gone"))))
+
 (deftest running-stays-true-while-a-later-eval-runs
   ;; A second eval submitted while the first was executing used to make
   ;; :running? report false for the whole of the second. The thread cleared

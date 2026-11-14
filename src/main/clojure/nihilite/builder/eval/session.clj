@@ -319,20 +319,40 @@
    `:cursor` comes back monotonic -- the higher of what you passed in and the
    last chunk in this page. Deriving it from the page alone would reset it to 0
    whenever a read returned nothing new, and the caller's next read would start
-   from the beginning and reprint the whole session."
+   from the beginning and reprint the whole session.
+
+   THE RUNNING FLAG IS READ BEFORE THE LOG, and that order is load-bearing.
+   The session thread emits a chunk and only THEN clears :running, so a reader
+   that takes the flag first and the log second cannot see the flag as
+   not-running together with a log that is missing the output: if the flag
+   reads as not-running, the eval had already finished and its output was
+   already in the log.
+
+   The other order loses output. A reader takes an empty log, the eval
+   finishes and clears the flag, and the reader then reads the flag as
+   not-running -- a finished eval that produced nothing, which is exactly what
+   the caller is told. The caller stops polling and never sees the output it
+   was waiting for. Measured: with the log read first, a poll that landed in
+   that window reported :running? false with an empty :events, and the
+   session's own cursor test failed on JDK 25 about once in 2000 polls.
+
+   The other side of that trade is that a snapshot can report an eval as
+   still running when it finished a moment ago. That costs one more poll.
+   Losing the output costs everything."
   [^Session s since]
-  (let [all    @(:events s)
-        lower  (long (or since 0))
-        events (if (zero? lower)
-                 all
-                 (filterv #(> (:seq %) lower) all))]
+  (let [running? (running? s)
+        all      @(:events s)
+        lower    (long (or since 0))
+        events   (if (zero? lower)
+                   all
+                   (filterv #(> (:seq %) lower) all))]
     {:session (:id s)
      :ns (str (ns-name (:ns-obj s)))
      :events events
      :cursor (long (max lower (:seq (peek events) 0)))
      :value @(:value s)
      :error @(:error s)
-     :running? (running? s)}))
+     :running? running?}))
 
 (defn unknown-state
   "The state map for a session id nobody knows.
