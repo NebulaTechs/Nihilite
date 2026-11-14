@@ -505,6 +505,35 @@
           event  (assoc (->hook-event spec self args nil) :throwable throwable)]
       (walk-bucket bucket event spec-id))))
 
+(defn- call-matcher
+  "A predicate over a spec: does this spec serve a call with `pcnt`
+   arguments, at `position`?
+
+   The two lookup paths -- keyed by descriptor, and keyed by method name
+   alone -- ask the same two questions of every candidate, so the answers
+   live here rather than being written twice and having to stay in step.
+
+   - The arity has to agree, unless the spec declares none. A spec that
+     declares an arity names how many arguments its bridge receives, so a
+     call with a different count is not the call it was written for.
+
+   - The position has to agree, unless the caller did not say. A caller
+     that genuinely does not know the position gets the first spec whose
+     method and arity agree. A caller that DID say, and said something
+     the registry cannot read, matches NOTHING -- treating that as
+     \"match any\" would hand back a :redefine spec for an :entry call,
+     and the :redefine bridge -- which takes (self args method-name) --
+     would then be invoked with the 1-argument ctx and throw
+     ArityException."
+  [pcnt position]
+  (let [pos-kw (when position (reg/normalize-position position))
+        match-any? (nil? position)]
+    (fn [spec]
+      (let [ar (:arity spec)
+            sp (:position spec)]
+        (and (or (nil? ar) (= ar pcnt))
+             (or match-any? (= sp pos-kw)))))))
+
 (defn lookup-spec-for-call
   "Find the spec id that should handle a call to
    `class-internal`/`method-name` with `parameter-count` arguments.
@@ -529,35 +558,24 @@
    (let [mk (when (and (some? descriptor) (not (empty? descriptor)))
               (reg/method-key class-internal method-name descriptor))
          mb (when mk (.get (reg/get-by-method) mk))
-         pos-kw (when position (reg/normalize-position position))
-         match-any? (nil? position)]
+         matches? (call-matcher (int parameter-count) position)]
      (cond
        mb
-       (let [pcnt (int parameter-count)]
-         (some (fn [s]
-                 (let [ar (:arity s)
-                       sp (:position s)]
-                   (when (and (or (nil? ar) (= ar pcnt))
-                              (or match-any? (= sp pos-kw)))
-                     (:id s))))
-               mb))
+       (some (fn [s]
+               (when (matches? s)
+                 (:id s)))
+             mb)
        :else
        (lookup-spec-for-call class-internal method-name parameter-count position))))
   ([^String class-internal method-name parameter-count position]
    (let [b (index/live-bucket class-internal)
-         pos-kw (when position (reg/normalize-position position))
-         match-any? (nil? position)]
+         matches? (call-matcher (int parameter-count) position)]
      (when b
-       (let [iname (str method-name)
-             pcnt  (int parameter-count)]
+       (let [iname (str method-name)]
          (some (fn [s]
-                 (let [mn (:method-name s)
-                       ar (:arity s)
-                       sp (:position s)]
-                   (when (and (= mn iname)
-                              (or (nil? ar) (= ar pcnt))
-                              (or match-any? (= sp pos-kw)))
-                     (:id s))))
+                 (when (and (= (:method-name s) iname)
+                            (matches? s))
+                   (:id s)))
                b))))))
 
 (defn dispatch-redefine

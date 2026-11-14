@@ -8,6 +8,7 @@
    nihilite.builder.eval.protocol), and a process that wants a full control plane
    starts one in its own init script."
   (:require [nihilite.builder.eval :as ev]
+            [nihilite.builder.eval.session :as session]
             [nihilite.crafter.jul :as jul]
             [nihilite.builder.eval.protocol :as proto])
   (:import [java.util.concurrent.atomic AtomicBoolean]
@@ -24,23 +25,6 @@
 
 (defonce ^:private init-ran
   (AtomicBoolean. false))
-
-(defn- stream-text [snapshot stream]
-  (apply str (keep (fn [e] (when (= stream (:stream e)) (:text e)))
-                   (:events snapshot))))
-
-(defn- await-settled
-  "Waits up to timeout-ms for a session to stop running. Returns the snapshot
-   either way; :running? says which happened."
-  [sid timeout-ms]
-  (let [deadline (+ (System/nanoTime)
-                    (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS timeout-ms))]
-    (loop []
-      (let [s (ev/snapshot sid)]
-        (cond
-          (not (:running? s)) s
-          (> (System/nanoTime) deadline) s
-          :else (do (Thread/sleep 20) (recur)))))))
 
 (defn- eval-init!
   "Runs the form in the `nihilite.init` system property, if there is one, in
@@ -68,9 +52,9 @@
     (let [sid (ev/open-session)]
       (try
         (ev/eval-in sid form)
-        (let [s   (await-settled sid 30000)
-              out (stream-text s :out)
-              err (stream-text s :err)]
+        (let [s   (session/await-settled sid 30000)
+              out (session/stream-text s :out)
+              err (session/stream-text s :err)]
           (when (seq out) (print out) (flush))
           (when (seq err) (binding [*out* *err*] (print err)) (flush))
           (cond

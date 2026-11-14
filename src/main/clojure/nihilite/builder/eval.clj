@@ -47,9 +47,7 @@
    why deriving it from the page alone would be wrong."
   ([sid] (snapshot sid nil))
   ([sid since]
-   (if-let [s (session/lookup sid)]
-     (session/read-state s since)
-     {:session sid :error "unknown session" :running? false})))
+   (session/state sid since)))
 
 (defn interrupt
   "Asks the session to stop what it is doing.

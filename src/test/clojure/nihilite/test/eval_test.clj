@@ -7,18 +7,14 @@
 (defn- settle
   "Polls a session until it stops running. eval-in is asynchronous, so a
    test that reads :value straight after calling it would be racing the
-   thread it just started."
+   thread it just started.
+
+   The polling loop itself lives in nihilite.builder.eval.session -- the same
+   one the eval protocol uses -- so a test cannot pass against a loop that
+   behaves differently from the production one."
   ([sid] (settle sid 2000))
   ([sid timeout-ms]
-   (let [deadline (+ (System/nanoTime)
-                     (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS
-                               timeout-ms))]
-     (loop []
-       (let [s (ev/snapshot sid)]
-         (cond
-           (not (:running? s)) s
-           (> (System/nanoTime) deadline) s
-           :else (do (Thread/sleep 5) (recur))))))))
+   (session/await-settled sid timeout-ms)))
 
 (defn- text-of [snapshot]
   (apply str (map :text (:events snapshot))))

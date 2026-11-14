@@ -23,7 +23,15 @@
 
    Invariants 1-3 are about the output machinery, which is why they live here
    rather than in the API namespace. The API's own rationale is in
-   nihilite.builder.eval."
+   nihilite.builder.eval.
+
+   The read side is here too: snapshot, stream-text and await-settled. They
+   are the three questions a caller asks of a session -- what does it hold,
+   what was written to one of its streams, and has it finished -- and all
+   three were written twice: once here for the eval protocol and once in
+   nihilite.builder.boot, which reads the same session for the init script.
+   Two copies of the read side meant two copies of the polling loop, and the
+   copies had drifted: one slept 20ms between polls and the other 10ms."
   (:import [java.io Writer]
            [java.util.concurrent LinkedBlockingQueue]
            [java.util.concurrent.atomic AtomicLong]))
@@ -325,6 +333,60 @@
      :value @(:value s)
      :error @(:error s)
      :running? (running? s)}))
+
+(defn unknown-state
+  "The state map for a session id nobody knows.
+
+   Same shape as read-state, so a caller reading a dead session's snapshot
+   gets :running? false rather than an exception -- a session that was closed
+   or never existed is not running, and a poll must be able to stop on it."
+  [sid]
+  {:session sid :error "unknown session" :running? false})
+
+(defn state
+  "Reads the state of a session by id. Returns the unknown-session map when
+   the id belongs to no session.
+
+   This is the one place that knows what reading an unknown session means, so
+   the snapshot API and the polling loop below cannot drift apart on it."
+  [sid since]
+  (if-let [s (lookup sid)]
+    (read-state s since)
+    (unknown-state sid)))
+
+(defn stream-text
+  "Concatenates the text of every chunk written to one stream of a snapshot.
+
+   The session keeps out and err in ONE ordered log, so this filters that log
+   rather than reading two buffers; the interleaving is recorded upstream and
+   this only recovers one side of it."
+  [snapshot stream]
+  (apply str (keep (fn [e] (when (= stream (:stream e)) (:text e)))
+                   (:events snapshot))))
+
+(def ^:private poll-interval-ms
+  "How long a poll waits between reads of a session's state.
+
+   The polling loop existed twice and the copies had drifted -- one waited
+   20ms and the other 10ms. One value now."
+  10)
+
+(defn await-settled
+  "Waits up to timeout-ms for a session to stop running. Returns the snapshot
+   either way; :running? says which happened.
+
+   The wait is bounded by the deadline rather than by the poll count, so a
+   session that never settles costs exactly the timeout and no more."
+  [sid timeout-ms]
+  (let [deadline (+ (System/nanoTime)
+                    (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS
+                              (long timeout-ms)))]
+    (loop []
+      (let [s (state sid nil)]
+        (cond
+          (not (:running? s)) s
+          (> (System/nanoTime) deadline) s
+          :else (do (Thread/sleep poll-interval-ms) (recur)))))))
 
 (defn stop!
   "Closes the session: interrupts its thread, drops any queued work, and

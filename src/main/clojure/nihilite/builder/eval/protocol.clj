@@ -59,7 +59,8 @@
    storage first."
   (:require [clojure.string :as str]
             [clojure.tools.logging :as log]
-            [nihilite.builder.eval :as ev])
+            [nihilite.builder.eval :as ev]
+            [nihilite.builder.eval.session :as session])
   (:import [java.net InetSocketAddress Socket]
            [java.util Base64]))
 
@@ -164,24 +165,12 @@
     :tcp    (read-tcp-code! source)
     (throw (ex-info "unknown eval code source" {:code-source source}))))
 
-(defn- stream-text [snapshot stream]
-  (apply str (keep (fn [e] (when (= stream (:stream e)) (:text e)))
-                   (:events snapshot))))
-
 (defn- await-done
   "Waits up to wait-ms for the session to stop running. Returns the snapshot
    either way; :running? says which happened."
   ([sid] (await-done sid default-wait-ms))
   ([sid wait-ms]
-   (let [deadline (+ (System/nanoTime)
-                     (.toNanos java.util.concurrent.TimeUnit/MILLISECONDS
-                               (long wait-ms)))]
-     (loop []
-       (let [s (ev/snapshot sid)]
-         (cond
-           (not (:running? s)) s
-           (> (System/nanoTime) deadline) s
-           :else (do (Thread/sleep 10) (recur))))))))
+   (session/await-settled sid wait-ms)))
 
 (defn run-request!
   "Evaluates the request's code in a fresh session and returns the reply map.
@@ -202,8 +191,8 @@
                :ns (:ns s)
                :value (:value s)
                :error (:error s)
-               :out (stream-text s :out)
-               :err (stream-text s :err)
+               :out (session/stream-text s :out)
+               :err (session/stream-text s :err)
                :done done}]
     (when done
       (ev/close-session sid))

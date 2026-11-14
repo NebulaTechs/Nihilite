@@ -149,6 +149,30 @@
   [^MethodType mt]
   (ConstantCallSite. (noop-handle mt)))
 
+(defn- resolve-advice-handle
+  "Resolves the static advice method named `name` in `advice-class-name`
+   and caches the handle under that class name.
+
+   The method is found by name and by being static, and its descriptor
+   is read from the class rather than passed in, so the handle always
+   matches the advice that was actually generated.
+
+   The lookup has to come from the agent loader: a Lookup taken from the
+   instrumented class would not be granted access to the advice class."
+  [^String name ^String advice-class-name]
+  (let [cl (ClassLoader/getSystemClassLoader)
+        advice (Class/forName advice-class-name true cl)
+        m (first (filter (fn [^java.lang.reflect.Method x]
+                           (and (= name (.getName x))
+                                (Modifier/isStatic (.getModifiers x))))
+                         (.getDeclaredMethods advice)))
+        advice-type (MethodType/methodType (.getReturnType m)
+                                            (into-array Class
+                                                        (.getParameterTypes m)))
+        mh (.findStatic (MethodHandles/lookup) advice name advice-type)]
+    (swap! advice-handles assoc advice-class-name mh)
+    mh))
+
 (defn- advice-handle
   "Resolves the advice method the call site should end up pointing at.
 
@@ -161,25 +185,11 @@
    its bytes through java.io.FileInputStream, which is one of the classes being
    instrumented, so the nested link would recurse until the stack overflows.
    The advice class is therefore resolved and cached by preload-advice! at
-   premain time, and this only ever looks the cache up.
-
-   The lookup has to come from the agent loader: a Lookup taken from the
-   instrumented class would not be granted access to the advice class."
+   premain time, and this only ever looks the cache up."
   [^String name ^String advice-class-name ^MethodType mt]
   (if-let [cached (get @advice-handles advice-class-name)]
     (.asType ^MethodHandle cached mt)
-    (let [cl (ClassLoader/getSystemClassLoader)
-          advice (Class/forName advice-class-name true cl)
-          m (first (filter (fn [^java.lang.reflect.Method x]
-                             (and (= name (.getName x))
-                                  (Modifier/isStatic (.getModifiers x))))
-                           (.getDeclaredMethods advice)))
-          advice-type (MethodType/methodType (.getReturnType m)
-                                              (into-array Class
-                                                          (.getParameterTypes m)))
-          mh (.findStatic (MethodHandles/lookup) advice name advice-type)]
-      (swap! advice-handles assoc advice-class-name mh)
-      (.asType mh mt))))
+    (.asType ^MethodHandle (resolve-advice-handle name advice-class-name) mt)))
 
 (defn preload-advice!
   "Resolves an advice class now, while it is safe to load classes, so the
@@ -187,17 +197,7 @@
    the class rather than passed in, so it always matches the advice that was
    actually generated."
   [^String advice-class-name ^String method-name]
-  (let [cl (ClassLoader/getSystemClassLoader)
-        advice (Class/forName advice-class-name true cl)
-        m (first (filter (fn [^java.lang.reflect.Method x]
-                           (and (= method-name (.getName x))
-                                (Modifier/isStatic (.getModifiers x))))
-                         (.getDeclaredMethods advice)))
-        advice-type (MethodType/methodType (.getReturnType m)
-                                            (into-array Class
-                                                        (.getParameterTypes m)))]
-    (swap! advice-handles assoc advice-class-name
-           (.findStatic (MethodHandles/lookup) advice method-name advice-type))))
+  (resolve-advice-handle method-name advice-class-name))
 
 (defn iab-bootstrap
   "Agent-side bootstrap. Reached from the bootstrap-side dispatcher through

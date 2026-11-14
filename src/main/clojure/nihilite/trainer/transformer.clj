@@ -113,28 +113,33 @@
                       [n bs]))]
     (ClassFileLocator$Simple. pairs)))
 
+(defn- advice-implementation
+  "The advice class named `advice-class-name`, ready to be applied to a
+   builder.
+
+   Every position wires its advice the same way: withCustomMapping so
+   the advice reaches the dispatcher through the indy call site, the
+   AssignReturned post-processor so @AssignReturned.ToReturned is
+   honoured, and the locator so the class comes from the bytes that were
+   injected rather than off the classpath.
+
+   What the caller does with it is what makes the positions differ:
+   visit-advice instruments the existing body in place, wrap-redefine
+   replaces the body outright."
+  [^String advice-class-name]
+  (let [wcm (indy/wire (Advice/withCustomMapping) advice-class-name)
+        ppf (post-processor-factory)
+        loc (advice-locator)]
+    (.to (.with wcm ppf)
+         (Class/forName advice-class-name)
+         loc)))
+
 (defn- visit-advice [builder position-keys matcher-class-name]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) matcher-class-name)
-          ppf (post-processor-factory)
-          loc (advice-locator)
-          advice (.to (.with wcm ppf)
-                      (Class/forName matcher-class-name)
-                      loc)]
+          advice (advice-implementation matcher-class-name)]
       (.visit builder (.on advice matcher)))
     builder))
-
-(defn- visit-return-advice [builder position-keys]
-  (if (seq position-keys)
-    (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) (advice/advice-class-name :return))
-          advice (.to (.with wcm (post-processor-factory))
-                      (Class/forName (advice/advice-class-name :return))
-                      (advice-locator))]
-      (.visit builder (.on advice matcher)))
-    builder))
-
 
 (defn- apply-advice-transformer
   "Clojure body of the generated advice-transformer stub. Visits the
@@ -149,14 +154,14 @@
    ^java.lang.ClassLoader _class-loader
    ^net.bytebuddy.utility.JavaModule _module
    ^java.security.ProtectionDomain _protection-domain]
-   (if-let [buckets (bucket/collect-buckets type-description)]
-     (let [entry-b   (:entry buckets)
-           return-b  (:return buckets)
-           throw-b   (:throw buckets)
-            b (visit-advice builder entry-b (advice/advice-class-name :entry))
-            b2 (visit-return-advice b return-b)]
-        (visit-advice b2 throw-b (advice/advice-class-name :throw)))
-     builder))
+  (if-let [buckets (bucket/collect-buckets type-description)]
+    (let [entry-b  (:entry buckets)
+          return-b (:return buckets)
+          throw-b  (:throw buckets)
+          b  (visit-advice builder entry-b (advice/advice-class-name :entry))
+          b2 (visit-advice b return-b (advice/advice-class-name :return))]
+      (visit-advice b2 throw-b (advice/advice-class-name :throw)))
+    builder))
 
 (defn- wrap-redefine
   "True method-body replacement for the :redefine position.
@@ -178,12 +183,7 @@
   [builder position-keys]
   (if (seq position-keys)
     (let [matcher (bucket/matcher-for position-keys)
-          wcm (indy/wire (Advice/withCustomMapping) (advice/advice-class-name :redefine))
-          ppf (post-processor-factory)
-          loc (advice-locator)
-          advice (.to (.with wcm ppf)
-                      (Class/forName (advice/advice-class-name :redefine))
-                      loc)
+          advice (advice-implementation (advice/advice-class-name :redefine))
           replacement (.wrap advice
                              ^net.bytebuddy.implementation.Implementation
                              net.bytebuddy.implementation.StubMethod/INSTANCE)]
