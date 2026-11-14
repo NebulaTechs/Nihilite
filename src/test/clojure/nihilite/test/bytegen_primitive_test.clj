@@ -131,7 +131,28 @@
     (is (= 42 (invoke-static @probe-class "echoShort" Short/TYPE (short 41))))
     (is (= 42 (invoke-static @probe-class "echoByte" Byte/TYPE (byte 41))))
     (is (= \b (invoke-static @probe-class "echoChar" Character/TYPE \a)))
-    (is (false? (invoke-static @probe-class "echoBoolean" Boolean/TYPE true)))))
+    ;; Value equality, not false?. false? is (identical? x false), and
+    ;; reflection does not hand back the Boolean singleton on every JDK: up
+    ;; to JDK 17 a primitive boolean return is boxed into a NEW Boolean, so
+    ;; identical? says false for a correct result. The VALUE is what the
+    ;; generator owes the caller, so that is what is asserted.
+    (is (= false (invoke-static @probe-class "echoBoolean" Boolean/TYPE true)))))
+
+(deftest every-primitive-method-declares-a-primitive-return
+  ;; The value assertions above cannot tell a narrowed primitive return from
+  ;; a boxed one: reflection boxes a primitive boolean into a
+  ;; java.lang.Boolean, which is exactly what a method declared to return
+  ;; Boolean would have produced. The DESCRIPTOR is what says which one the
+  ;; generator emitted, and it is the only version-independent witness.
+  ;;
+  ;; The probe declares the same type as its parameter and its return, so
+  ;; the parameter's Class is the return's Class here.
+  (doseq [[type param-type _ _] primitive-cases]
+    (let [m (.getMethod @probe-class (str "echo" (str/capitalize type))
+                        (into-array Class [param-type]))]
+      (is (identical? param-type (.getReturnType m))
+          (str "the " type " method must declare a primitive " type
+               " return, not the box type")))))
 
 (deftest a-primitive-argument-on-an-instance-method-is-boxed-too
   (testing "the receiver sits in local slot 0, so the primitive argument is
