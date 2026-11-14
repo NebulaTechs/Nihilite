@@ -20,8 +20,8 @@
         org.clojure/spec.alpha {:mvn/version "0.6.249"}
         org.clojure/core.specs.alpha {:mvn/version "0.5.81"}
         org.clojure/tools.logging {:mvn/version "1.3.1"}
-        net.bytebuddy/byte-buddy {:mvn/version "1.18.14"}
-        net.bytebuddy/byte-buddy-agent {:mvn/version "1.18.14"}}
+        net.bytebuddy/byte-buddy {:mvn/version "1.18.17"}
+        net.bytebuddy/byte-buddy-agent {:mvn/version "1.18.17"}}
 
 :aliases
   {;; :dev adds the test sources so an editor or REPL sees them. Together with
@@ -43,6 +43,6 @@
    :dev {:extra-paths ["src/test/clojure"]}
 
    :build {:deps {io.github.clojure/tools.build
-                  {:git/tag "v0.10.10"
-                   :git/sha "deedd62"}}
+                  {:git/tag "v0.10.14"
+                   :git/sha "1176afd38dc39cb1880bd990d85718d4a61e194d"}}
            :ns-default build}}}
