@@ -13,6 +13,7 @@
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [nihilite.builder.registry.index :as index]
+            [nihilite.builder.registry.runtime :as runtime]
             [nihilite.builder.registry.stats :as stats]
             [nihilite.builder.target :as target])
   (:import [java.util.concurrent ConcurrentHashMap CopyOnWriteArrayList]
@@ -167,20 +168,20 @@
    on a cold JVM, so this is generous by two orders of magnitude."
   5000)
 
-(defonce ^{:doc "The IFN the :redefine advice calls to reach a :redefine bridge.
-  nil until the worker installs one. Lives here, not in dispatch, because
-  install! has to wait on it and dispatch cannot be required from here --
-  dispatch requires registry. dispatch reaches it downward through
+(def ^{:doc "The IFN the :redefine advice calls to reach a :redefine bridge.
+  nil until the worker installs one. This public var aliases
+  nihilite.builder.registry.runtime/redefine-dispatcher-ref, so both names
+  refer to the same atom. The state lives in the dependency-free runtime
+  leaf; install! waits on it here and dispatch reaches it downward through
   set-redefine-dispatcher!."}
   redefine-dispatcher-ref
-  (atom nil))
+  runtime/redefine-dispatcher-ref)
 
 (defn set-redefine-dispatcher!
   "Publishes the :redefine dispatch IFN. Called by
    nihilite.builder.registry.dispatch/install-redefine-dispatcher!."
   [dispatch-ifn]
-  (reset! redefine-dispatcher-ref dispatch-ifn)
-  dispatch-ifn)
+  (runtime/set-redefine-dispatcher! dispatch-ifn))
 
 (defn- redefine-dispatcher-ready?
   "Whether the :redefine advice has something to call."
@@ -254,12 +255,14 @@
   (.retransformClasses inst (into-array Class [c]))
   c)
 
-(defonce ^{:doc "The Instrumentation that armed the AgentBuilder, published by
+(def ^{:doc "The Instrumentation that armed the AgentBuilder, published by
   trainer's agent-registerInstrumentation -- the single choke point premain,
   agentmain and the drivers all pass through. nil in a JVM that never mounted
-  the agent, which is the same situation as no Instrumentation at all."}
+  the agent, which is the same situation as no Instrumentation at all. This
+  public var aliases nihilite.builder.registry.runtime/instrumentation-ref, so
+  both names refer to the same atom."}
   instrumentation-ref
-  (atom nil))
+  runtime/instrumentation-ref)
 
 (defn register-instrumentation!
   "Publishes the live Instrumentation. Called from
@@ -267,8 +270,7 @@
    place an Instrumentation is ever accepted -- premain, agentmain and the
    drivers that hand one straight to install all route through it."
   [^Instrumentation inst]
-  (when inst (reset! instrumentation-ref inst))
-  inst)
+  (runtime/register-instrumentation! inst))
 
 (defn- verify-target-method!
   "Contract: see `nihilite.builder.api/install!`."
@@ -840,20 +842,21 @@
     (verify-target-method! spec-id spec-target spec-method spec-desc)
     (index-and-weave! norm-spec)))
 
-(defonce ^{:doc "The Trainer's uninstall-with-retransform entry point, published
+(def ^{:doc "The Trainer's uninstall-with-retransform entry point, published
   when nihilite.trainer.installer loads. Stays nil in a JVM that never loaded
   the installer, which is the same situation as no Instrumentation: nothing to
-  retransform, so the count is 0 and the zero branch below says so."}
+  retransform, so the count is 0 and the zero branch below says so. This
+  public var aliases nihilite.builder.registry.runtime/uninstaller-ref, so both
+  names refer to the same atom."}
   uninstaller-ref
-  (atom nil))
+  runtime/uninstaller-ref)
 
 (defn register-uninstaller!
   "Publishes the Trainer-side uninstall entry point. Called at load time from
-   nihilite.trainer.installer, which requires this namespace downward, so the
-   dependency only ever points one way."
+   nihilite.trainer.installer through the dependency-free runtime leaf, so the
+   registry does not have to load the installer."
   [uninstaller]
-  (reset! uninstaller-ref uninstaller)
-  uninstaller)
+  (runtime/register-uninstaller! uninstaller))
 
 (defn uninstall!
   [id]
