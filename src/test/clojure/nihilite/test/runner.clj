@@ -41,7 +41,8 @@
    "nihilite.test.bytegen-primitive-test"
    "nihilite.test.position-validation-test"
    "nihilite.test.spec-validation-test"
-   "nihilite.test.eval-test"])
+   "nihilite.test.eval-test"
+   "nihilite.test.module-dependency-test"])
 
 (defn- safe-deref
   [r]
