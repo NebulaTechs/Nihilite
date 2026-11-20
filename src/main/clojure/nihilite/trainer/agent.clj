@@ -27,7 +27,7 @@
    the java.lang.instrument.Instrumentation parameter type."
   (:require [clojure.tools.logging :as log]
             [clojure.tools.logging.impl :as logimpl]
-            [nihilite.builder.registry :as reg]
+            [nihilite.builder.registry.runtime :as runtime]
             [nihilite.crafter.classgen :as cg]
             [nihilite.crafter.jul :as jul])
   (:import [java.lang.instrument Instrumentation]
@@ -49,16 +49,16 @@
 (defonce ^:private registered-on
   (AtomicReference.))
 
-(defonce ^{:doc "Which entry point armed the agent: :premain, :agentmain, or
-  nil when the agent was not armed by an entry point.
+(def ^{:doc "Which entry point armed the agent: :premain, :agentmain, or
+   nil when the agent was not armed by an entry point.
 
-  Published here rather than inferred, because the difference is not
-  cosmetic: premain runs on the application's main thread and agentmain
-  runs on the Attach Listener, and the two have different classloader and
-  timing behaviour. nihilite.builder.capability reads this to say where
-  the agent came from instead of guessing."}
+   Published here rather than inferred, because the difference is not
+   cosmetic: premain runs on the application's main thread and agentmain
+   runs on the Attach Listener, and the two have different classloader and
+   timing behaviour. nihilite.builder.capability reads this to say where
+   the agent came from instead of guessing."}
   entry-point
-  (atom nil))
+  runtime/entry-point-ref)
 
 (defonce ^:private worker-started
   (AtomicBoolean. false))
@@ -80,20 +80,20 @@
    true when this call installed it, false when another Instrumentation was
    already registered.
 
-   Also hands the winner to reg/register-instrumentation!. This function
+   Also hands the winner to runtime/register-instrumentation!. This function
    is the only place an Instrumentation is ever accepted -- premain, agentmain,
    and a driver calling install directly with a ByteBuddyAgent-obtained
    Instrumentation all route through it -- so publishing from here is what makes
-   the same Instrumentation visible to reg/retransform-loaded-matching! and
-   the advice classes. Without it, install! could never report a non-zero
-   :woven-count on the driver path, and hooks installed through the public
-   api would silently skip retransforming already-loaded classes."
+   the same Instrumentation visible to the runtime and the advice classes.
+   Without it, install! could never report a non-zero :woven-count on the
+   driver path, and hooks installed through the public api would silently skip
+   retransforming already-loaded classes."
   [^Instrumentation inst]
   (boolean
    (and inst
         (let [won? (.compareAndSet ^java.util.concurrent.atomic.AtomicReference
                                     registered-on nil inst)]
-          (reg/register-instrumentation!
+          (runtime/register-instrumentation!
            (.get ^java.util.concurrent.atomic.AtomicReference registered-on))
           won?))))
 
@@ -246,7 +246,7 @@
   (extend-system-class-loader-search inst)
   (let [fresh? (agent-registerInstrumentation inst)]
     (when fresh?
-      (reset! entry-point (keyword label))
+      (runtime/set-entry-point! (keyword label))
       (require (quote nihilite.trainer.installer))
       ((resolve (quote nihilite.trainer.installer/install)) inst)
       (jul/info agent-log (str "[Nihilite Agent] " label

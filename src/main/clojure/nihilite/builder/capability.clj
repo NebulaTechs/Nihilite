@@ -32,7 +32,8 @@
    this is a report: a JVM that will not answer a question about itself
    gets :unknown for that answer, not an exception that would replace the
    report with a stack trace."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [nihilite.builder.registry.runtime :as runtime])
   (:import [java.lang.instrument Instrumentation]
            [java.lang.management ManagementFactory]
            [java.lang ModuleLayer]))
@@ -107,43 +108,19 @@
     {:redefine-classes-supported? (.isRedefineClassesSupported inst)
      :retransform-classes-supported? (.isRetransformClassesSupported inst)}))
 
-(defn- loaded-var
-  "The var named by `sym`, when its namespace is ALREADY loaded, or nil.
-
-   Deliberately not a `require`. Loading a namespace to read a var out of
-   it is a side effect, and this report promises to have none: a require
-   here would pull in a namespace, and with it the classes that namespace
-   mentions, on a JVM where the report was supposed to change nothing.
-   The namespace is loaded in every JVM that armed the agent, which is
-   exactly the case this var answers for.
-
-   find-ns takes a SYMBOL, and namespace/ hands back a string, so the
-   symbol is built explicitly. Getting that wrong throws inside find-ns,
-   and the catch below turns the throw into a nil -- which would read as
-   \"the agent is not armed\" rather than as the error it is."
-  [sym]
-  (try
-    (when-let [ns-sym (namespace sym)]
-      (when (find-ns (symbol ns-sym))
-        (resolve sym)))
-    (catch Throwable _ nil)))
-
 (defn- agent-state
   "The agent's own state, read without touching it.
 
-   The Instrumentation is read through the registry's holder, which is the
-   same one install! uses, so what the report says about the agent is what
-   the registry believes. The entry-point label is read from the trainer,
+   The Instrumentation is read through the registry's runtime holder, which is
+   the same one install! uses, so what the report says about the agent is what
+   the registry believes. The entry-point label is read from the runtime leaf,
    which records it when it arms."
   []
-  (let [reg-var (loaded-var 'nihilite.builder.registry/instrumentation-ref)
-        holder (when (instance? clojure.lang.Var reg-var) @reg-var)
-        inst (when (instance? clojure.lang.Atom holder) @holder)
-        ep-var (loaded-var 'nihilite.trainer.agent/entry-point)
-        ep-holder (when (instance? clojure.lang.Var ep-var) @ep-var)]
+  (let [inst @runtime/instrumentation-ref
+        entry-point @runtime/entry-point-ref]
     {:instrumentation-present? (some? inst)
      :instrumentation inst
-     :entry-point (when (instance? clojure.lang.Atom ep-holder) @ep-holder)}))
+     :entry-point entry-point}))
 
 (def report-key-doc
   "Every key the capability report carries, and what that key says.

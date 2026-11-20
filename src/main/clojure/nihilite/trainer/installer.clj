@@ -7,7 +7,7 @@
    (both in nihilite.trainer.transformer). This file owns the AgentBuilder
    wiring and the install / uninstall / uninstall-spec-with-target! entry points
    that the registry and the agent worker call into."
-  (:require [nihilite.builder.registry :as reg]
+  (:require [nihilite.builder.registry.runtime :as runtime]
             [nihilite.crafter.jul :as jul]
             [nihilite.trainer.advice :as advice]
             [nihilite.trainer.indy :as indy]
@@ -161,7 +161,7 @@
       (do (jul/warn installer-log "HookInstaller uninstall-spec: no Instrumentation for spec id=" spec-id)
           0))))
 
-;; Publish the uninstall entry point upward. registry cannot require this
-;; namespace, so the capability is handed over here at load time instead of
-;; being looked up on every uninstall.
-(reg/register-uninstaller! uninstall-spec-with-target!)
+;; Publish the uninstall entry point upward. The runtime leaf cannot require
+;; this namespace, so the capability is handed over here at load time instead
+;; of being looked up on every uninstall.
+(runtime/register-uninstaller! uninstall-spec-with-target!)
